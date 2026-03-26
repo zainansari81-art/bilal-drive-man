@@ -1,36 +1,27 @@
-import { getDb, saveDb } from '../../data/store';
+import { getDrives, addHistory } from '../../lib/supabase';
 
-export default function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   }
 
-  const db = getDb();
+  try {
+    const drives = await getDrives();
 
-  db.drives.forEach(drive => {
-    let totalUsed = 0;
-    drive.clients.forEach(client => {
-      client.couples.forEach(couple => {
-        totalUsed += couple.size;
-      });
+    await addHistory({
+      event_type: 'scan_triggered',
+      volume_label: 'All Drives',
+      details: `Manual scan triggered. ${drives.length} drives in database.`,
     });
-    drive.used = totalUsed;
-    drive.free = drive.total - totalUsed;
-  });
 
-  db.activities.unshift({
-    type: 'connected',
-    drive: 'All Drives',
-    folder: '',
-    time: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }),
-  });
-
-  saveDb(db);
-
-  return res.status(200).json({
-    success: true,
-    message: 'Scan complete. Drive data updated.',
-    drives: db.drives,
-  });
+    return res.status(200).json({
+      success: true,
+      message: 'Scan complete. Drive data updated.',
+      driveCount: drives.length,
+    });
+  } catch (err) {
+    console.error('Scan API error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 }

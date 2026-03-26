@@ -1,31 +1,32 @@
-import { getDb, saveDb } from '../../data/store';
+import { getDrivesWithClients, formatDrivesForFrontend, upsertDrive } from '../../lib/supabase';
 
-export default function handler(req, res) {
-  if (req.method === 'GET') {
-    const db = getDb();
-    return res.status(200).json(db.drives);
-  }
-
-  if (req.method === 'POST') {
-    const db = getDb();
-    const drive = req.body;
-
-    if (drive.id) {
-      const idx = db.drives.findIndex(d => d.id === drive.id);
-      if (idx !== -1) {
-        db.drives[idx] = { ...db.drives[idx], ...drive };
-      } else {
-        return res.status(404).json({ error: 'Drive not found' });
-      }
-    } else {
-      drive.id = db.drives.length > 0 ? Math.max(...db.drives.map(d => d.id)) + 1 : 1;
-      db.drives.push(drive);
+export default async function handler(req, res) {
+  try {
+    if (req.method === 'GET') {
+      const drives = await getDrivesWithClients();
+      const formatted = await formatDrivesForFrontend(drives);
+      return res.status(200).json(formatted);
     }
 
-    saveDb(db);
-    return res.status(200).json(drive);
-  }
+    if (req.method === 'POST') {
+      const drive = req.body;
+      const result = await upsertDrive({
+        volume_label: drive.name || drive.volume_label,
+        total_size_bytes: drive.total || drive.total_size_bytes || 0,
+        used_bytes: drive.used || drive.used_bytes || 0,
+        free_bytes: drive.free || drive.free_bytes || 0,
+        is_connected: drive.connected !== undefined ? drive.connected : drive.is_connected,
+        drive_letter: drive.letter || drive.drive_letter || null,
+        last_seen: new Date().toISOString(),
+        last_scan: new Date().toISOString(),
+      });
+      return res.status(200).json(result);
+    }
 
-  res.setHeader('Allow', ['GET', 'POST']);
-  return res.status(405).json({ error: `Method ${req.method} not allowed` });
+    res.setHeader('Allow', ['GET', 'POST']);
+    return res.status(405).json({ error: `Method ${req.method} not allowed` });
+  } catch (err) {
+    console.error('Drives API error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 }

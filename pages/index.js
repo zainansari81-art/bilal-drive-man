@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Head from 'next/head';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -10,23 +10,13 @@ import ActivityList from '../components/ActivityList';
 import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
-import { getDb } from '../data/store';
 
-export async function getServerSideProps() {
-  const db = getDb();
-  return {
-    props: {
-      initialDrives: db.drives,
-      initialActivities: db.activities,
-    },
-  };
-}
-
-export default function Home({ initialDrives, initialActivities }) {
+export default function Home() {
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [drives, setDrives] = useState(initialDrives || []);
-  const [activities, setActivities] = useState(initialActivities || []);
+  const [drives, setDrives] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
     try {
@@ -36,12 +26,21 @@ export default function Home({ initialDrives, initialActivities }) {
       ]);
       const drivesData = await drivesRes.json();
       const historyData = await historyRes.json();
-      setDrives(drivesData);
-      setActivities(historyData);
+      setDrives(Array.isArray(drivesData) ? drivesData : []);
+      setActivities(Array.isArray(historyData) ? historyData : []);
     } catch (err) {
       console.error('Failed to fetch data:', err);
+    } finally {
+      setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchData();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleNavigate = (page) => {
     if (page !== 'search') {
@@ -90,16 +89,19 @@ export default function Home({ initialDrives, initialActivities }) {
           />
 
           <div className="content">
-            {/* Dashboard */}
-            {currentPage === 'dashboard' && (
+            {loading && (
+              <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
+                <p style={{ fontSize: '18px' }}>Loading dashboard...</p>
+              </div>
+            )}
+
+            {!loading && currentPage === 'dashboard' && (
               <div>
                 <StatCards drives={drives} />
-
                 <div className="charts-row">
                   <BarChart drives={drives} />
                   <DonutChart drives={drives} />
                 </div>
-
                 <div className="bottom-row">
                   <DrivesList drives={drives} />
                   <ActivityList activities={activities} />
@@ -107,18 +109,15 @@ export default function Home({ initialDrives, initialActivities }) {
               </div>
             )}
 
-            {/* Drives */}
-            {currentPage === 'drives' && (
+            {!loading && currentPage === 'drives' && (
               <DrivesPage drives={drives} />
             )}
 
-            {/* Search */}
-            {currentPage === 'search' && (
+            {!loading && currentPage === 'search' && (
               <SearchPage initialQuery={searchQuery} />
             )}
 
-            {/* History */}
-            {currentPage === 'history' && (
+            {!loading && currentPage === 'history' && (
               <HistoryPage />
             )}
           </div>
