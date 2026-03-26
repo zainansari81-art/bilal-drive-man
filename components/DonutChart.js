@@ -2,7 +2,7 @@ export default function DonutChart({ drives }) {
   const total = drives.length;
   const connected = drives.filter(d => d.connected).length;
   const disconnected = total - connected;
-  const lowSpace = drives.filter(d => d.free < 500).length;
+  const lowSpace = drives.filter(d => d.connected && d.free < 500).length;
 
   const connPct = total > 0 ? Math.round((connected / total) * 100) : 0;
   const discPct = total > 0 ? Math.round((disconnected / total) * 100) : 0;
@@ -11,8 +11,8 @@ export default function DonutChart({ drives }) {
   // SVG donut math
   const r = 65;
   const circumference = 2 * Math.PI * r;
-  const connArc = (connected / total) * circumference;
-  const discArc = (disconnected / total) * circumference;
+  const connArc = total > 0 ? (connected / total) * circumference : 0;
+  const discArc = total > 0 ? (disconnected / total) * circumference : 0;
 
   return (
     <div className="chart-card">

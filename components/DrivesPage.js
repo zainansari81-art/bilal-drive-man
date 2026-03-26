@@ -4,6 +4,15 @@ export default function DrivesPage({ drives }) {
   const connected = drives.filter(d => d.connected);
   const disconnected = drives.filter(d => !d.connected);
 
+  if (drives.length === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
+        <p style={{ fontSize: 18 }}>No drives found yet.</p>
+        <p style={{ fontSize: 14 }}>Connect an external drive and run the scanner to get started.</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       {connected.length > 0 && (
@@ -24,7 +33,7 @@ export default function DrivesPage({ drives }) {
 
 function DriveCard({ drive }) {
   const d = drive;
-  const pct = Math.round(d.used / d.total * 100);
+  const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
   const barColor = pct < 70 ? '#22c55e' : pct < 90 ? '#eab308' : '#ef4444';
   const statusColor = d.connected ? '#22c55e' : '#ef4444';
   const statusText = d.connected ? `Connected (${d.letter})` : 'Disconnected';
@@ -42,7 +51,7 @@ function DriveCard({ drive }) {
       <div className="drive-progress-bar">
         <div className="drive-progress-fill" style={{ background: barColor, width: `${pct}%` }}></div>
       </div>
-      {d.free < 500 && (
+      {d.free > 0 && d.free < 500 && (
         <div className="low-space-warning">
           {'\u26A0'} LOW SPACE: Only {d.free} GB remaining!
         </div>

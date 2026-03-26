@@ -13,7 +13,7 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan })
     { id: 'dashboard', label: 'Dashboard', icon: '\u25A6' },
     { id: 'drives', label: 'Drives', icon: '\u26C1', badge: driveCount },
     { id: 'search', label: 'Search', icon: '\u2315' },
-    { id: 'history', label: 'History', icon: '\u29D6', badge: 12 },
+    { id: 'history', label: 'History', icon: '\u29D6' },
   ];
 
   return (
