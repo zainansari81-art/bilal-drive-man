@@ -1,0 +1,176 @@
+{
+  "drives": [
+    {
+      "id": 1,
+      "name": "Texas",
+      "connected": true,
+      "letter": "E:",
+      "total": 4000,
+      "used": 3200,
+      "free": 800,
+      "clients": [
+        {
+          "name": "Moonlight Films",
+          "couples": [
+            { "name": "Smith & Johnson", "size": 480 },
+            { "name": "Garcia & Lee", "size": 520 }
+          ]
+        },
+        {
+          "name": "Golden Hour Studio",
+          "couples": [
+            { "name": "Williams & Brown", "size": 610 },
+            { "name": "Davis & Wilson", "size": 390 },
+            { "name": "Martinez & Taylor", "size": 450 }
+          ]
+        },
+        {
+          "name": "Vow Films",
+          "couples": [
+            { "name": "Parker & Reed", "size": 370 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "California",
+      "connected": true,
+      "letter": "F:",
+      "total": 4000,
+      "used": 3600,
+      "free": 400,
+      "clients": [
+        {
+          "name": "Sunset Weddings",
+          "couples": [
+            { "name": "Anderson & Thomas", "size": 550 },
+            { "name": "Jackson & White", "size": 480 }
+          ]
+        },
+        {
+          "name": "Pacific Love Films",
+          "couples": [
+            { "name": "Harris & Martin", "size": 620 },
+            { "name": "Thompson & Robinson", "size": 510 }
+          ]
+        },
+        {
+          "name": "Dreamy Visuals",
+          "couples": [
+            { "name": "Clark & Lewis", "size": 440 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Florida",
+      "connected": true,
+      "letter": "G:",
+      "total": 2000,
+      "used": 1500,
+      "free": 500,
+      "clients": [
+        {
+          "name": "Beach Wedding Co",
+          "couples": [
+            { "name": "Walker & Hall", "size": 380 },
+            { "name": "Allen & Young", "size": 420 }
+          ]
+        },
+        {
+          "name": "Tropical Lens",
+          "couples": [
+            { "name": "King & Wright", "size": 350 },
+            { "name": "Lopez & Hill", "size": 290 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "New York",
+      "connected": true,
+      "letter": "H:",
+      "total": 4000,
+      "used": 2800,
+      "free": 1200,
+      "clients": [
+        {
+          "name": "Manhattan Films",
+          "couples": [
+            { "name": "Scott & Green", "size": 530 },
+            { "name": "Adams & Baker", "size": 470 }
+          ]
+        },
+        {
+          "name": "Brooklyn Stories",
+          "couples": [
+            { "name": "Nelson & Carter", "size": 610 },
+            { "name": "Mitchell & Perez", "size": 390 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Ohio",
+      "connected": false,
+      "letter": "-",
+      "total": 2000,
+      "used": 1800,
+      "free": 200,
+      "clients": [
+        {
+          "name": "Heartland Weddings",
+          "couples": [
+            { "name": "Roberts & Turner", "size": 580 },
+            { "name": "Phillips & Campbell", "size": 520 }
+          ]
+        },
+        {
+          "name": "Midwest Love",
+          "couples": [
+            { "name": "Evans & Edwards", "size": 440 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Georgia",
+      "connected": false,
+      "letter": "-",
+      "total": 4000,
+      "used": 3100,
+      "free": 900,
+      "clients": [
+        {
+          "name": "Peach State Films",
+          "couples": [
+            { "name": "Collins & Stewart", "size": 490 },
+            { "name": "Sanchez & Morris", "size": 560 }
+          ]
+        },
+        {
+          "name": "Southern Charm Video",
+          "couples": [
+            { "name": "Rogers & Reed", "size": 410 },
+            { "name": "Cook & Morgan", "size": 380 }
+          ]
+        }
+      ]
+    }
+  ],
+  "activities": [
+    { "type": "connected", "drive": "Texas", "folder": "", "time": "Mar 20, 2:30 PM" },
+    { "type": "added", "drive": "Texas", "folder": "Golden Hour Studio / Davis & Wilson", "time": "Mar 20, 2:31 PM" },
+    { "type": "disconnected", "drive": "Ohio", "folder": "", "time": "Mar 20, 1:15 PM" },
+    { "type": "size_changed", "drive": "California", "folder": "Pacific Love Films / Harris & Martin", "time": "Mar 19, 6:45 PM" },
+    { "type": "added", "drive": "Florida", "folder": "Tropical Lens / Lopez & Hill", "time": "Mar 19, 4:20 PM" },
+    { "type": "removed", "drive": "New York", "folder": "OldClient / OldCouple", "time": "Mar 19, 11:00 AM" },
+    { "type": "connected", "drive": "California", "folder": "", "time": "Mar 18, 9:30 AM" },
+    { "type": "added", "drive": "Georgia", "folder": "Southern Charm Video / Cook & Morgan", "time": "Mar 17, 3:15 PM" }
+  ]
+}
