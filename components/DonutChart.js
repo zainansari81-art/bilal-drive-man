@@ -2,7 +2,7 @@ export default function DonutChart({ drives }) {
   const total = drives.length;
   const connected = drives.filter(d => d.connected).length;
   const disconnected = total - connected;
-  const lowSpace = drives.filter(d => d.connected && d.free < 500).length;
+  const lowSpace = drives.filter(d => d.connected && d.free < 100 * 1024 * 1024 * 1024).length;
 
   const connPct = total > 0 ? Math.round((connected / total) * 100) : 0;
   const discPct = total > 0 ? Math.round((disconnected / total) * 100) : 0;

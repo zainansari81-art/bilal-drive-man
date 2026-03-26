@@ -1,6 +1,8 @@
+import { formatTB } from '../lib/format';
+
 export default function BarChart({ drives }) {
-  const maxDriveGB = drives.length > 0 ? Math.max(...drives.map(d => d.total)) : 4000;
-  const maxGB = Math.ceil(maxDriveGB / 1000) * 1000; // Round up to nearest 1000 GB
+  const maxDriveBytes = drives.length > 0 ? Math.max(...drives.map(d => d.total)) : 4e12;
+  const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12; // Round up to nearest TB
   const totalUsed = drives.reduce((s, d) => s + d.used, 0);
   const totalFree = drives.reduce((s, d) => s + d.free, 0);
   const steps = 4;
@@ -15,11 +17,11 @@ export default function BarChart({ drives }) {
       <div className="chart-stats">
         <div>
           <div className="chart-stat-label">Total Used</div>
-          <div className="chart-stat-value">{(totalUsed / 1000).toFixed(1)} TB</div>
+          <div className="chart-stat-value">{formatTB(totalUsed)}</div>
         </div>
         <div>
           <div className="chart-stat-label">Total Free</div>
-          <div className="chart-stat-value">{(totalFree / 1000).toFixed(1)} TB</div>
+          <div className="chart-stat-value">{formatTB(totalFree)}</div>
         </div>
       </div>
 
@@ -31,9 +33,8 @@ export default function BarChart({ drives }) {
         <div className="bar-chart">
           <div className="bar-chart-y-axis">
             {Array.from({ length: steps + 1 }, (_, i) => {
-              const val = maxGB - (maxGB / steps) * i;
-              const label = val >= 1000 ? `${(val / 1000).toFixed(0)} TB` : `${val} GB`;
-              return <div className="bar-chart-y-label" key={i}>{val === 0 ? '0' : label}</div>;
+              const val = maxBytes - (maxBytes / steps) * i;
+              return <div className="bar-chart-y-label" key={i}>{val === 0 ? '0' : formatTB(val)}</div>;
             })}
           </div>
           <div className="bar-chart-area">
@@ -43,15 +44,15 @@ export default function BarChart({ drives }) {
               ))}
             </div>
             {drives.map((d, i) => {
-              const usedH = maxGB > 0 ? (d.used / maxGB) * 170 : 0;
-              const freeH = maxGB > 0 ? (d.free / maxGB) * 170 : 0;
+              const usedH = maxBytes > 0 ? (d.used / maxBytes) * 170 : 0;
+              const freeH = maxBytes > 0 ? (d.free / maxBytes) * 170 : 0;
               return (
                 <div className="bar-group" key={i}>
                   <div className="bar used" style={{ height: usedH }}>
-                    <div className="bar-tooltip">{(d.used / 1000).toFixed(1)} TB Used</div>
+                    <div className="bar-tooltip">{formatTB(d.used)} Used</div>
                   </div>
                   <div className="bar free" style={{ height: freeH }}>
-                    <div className="bar-tooltip">{(d.free / 1000).toFixed(1)} TB Free</div>
+                    <div className="bar-tooltip">{formatTB(d.free)} Free</div>
                   </div>
                   <div className="bar-label">
                     {d.name}

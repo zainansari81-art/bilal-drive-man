@@ -1,3 +1,5 @@
+import { formatTB, formatSize } from '../lib/format';
+
 export default function DrivesList({ drives }) {
   if (!drives || drives.length === 0) {
     return (
@@ -39,7 +41,7 @@ export default function DrivesList({ drives }) {
                   ({d.clients ? d.clients.length : 0} clients, {couples} couples)
                 </span>
               </div>
-              <div className="drive-usage">{(d.used / 1000).toFixed(1)} / {(d.total / 1000).toFixed(1)} TB</div>
+              <div className="drive-usage">{formatTB(d.used)} / {formatTB(d.total)}</div>
               <div className={`drive-pct ${pctCls}`}>{pct}%</div>
               <div className="drive-minibar">
                 <div className="drive-minibar-fill" style={{ width: `${pct}%`, background: barColor }}></div>

@@ -1,3 +1,5 @@
+import { formatTB } from '../lib/format';
+
 export default function StatCards({ drives }) {
   const totalStorage = drives.reduce((sum, d) => sum + d.total, 0);
   const totalUsed = drives.reduce((sum, d) => sum + d.used, 0);
@@ -16,7 +18,7 @@ export default function StatCards({ drives }) {
           <div className="stat-card-arrow">{'\u2197'}</div>
         </div>
         <div className="stat-card-label">Total Storage</div>
-        <div className="stat-card-value">{(totalStorage / 1000).toFixed(1)} TB</div>
+        <div className="stat-card-value">{formatTB(totalStorage)}</div>
         <div className="stat-card-sub">Across all drives</div>
       </div>
 
@@ -27,7 +29,7 @@ export default function StatCards({ drives }) {
         </div>
         <div className="stat-card-label">Space Used</div>
         <div className="stat-card-value">{usedPct}%</div>
-        <div className="stat-card-sub">{(totalUsed / 1000).toFixed(1)} TB of {(totalStorage / 1000).toFixed(1)} TB</div>
+        <div className="stat-card-sub">{formatTB(totalUsed)} of {formatTB(totalStorage)}</div>
       </div>
 
       <div className="stat-card">

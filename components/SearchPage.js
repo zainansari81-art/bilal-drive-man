@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { formatSize } from '../lib/format';
 
 export default function SearchPage({ initialQuery }) {
   const [query, setQuery] = useState(initialQuery || '');
@@ -24,7 +25,7 @@ export default function SearchPage({ initialQuery }) {
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery.trim())}`);
       const data = await res.json();
-      setResults(data);
+      setResults(Array.isArray(data) ? data : []);
     } catch {
       setResults([]);
     }
@@ -75,7 +76,7 @@ export default function SearchPage({ initialQuery }) {
                 <div>
                   <div className="result-name">{r.couple}</div>
                   <div className="result-meta">
-                    Client: <strong>{r.client}</strong> &nbsp;|&nbsp; Drive: <strong>{r.drive}</strong> &nbsp;|&nbsp; Size: {r.size} GB
+                    Client: <strong>{r.client}</strong> &nbsp;|&nbsp; Drive: <strong>{r.drive}</strong> &nbsp;|&nbsp; Size: {formatSize(r.size)}
                   </div>
                 </div>
                 <div className={`result-status ${r.connected ? 'connected' : 'disconnected'}`}>

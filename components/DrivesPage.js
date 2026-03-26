@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatSize, formatTB } from '../lib/format';
 
 export default function DrivesPage({ drives }) {
   const connected = drives.filter(d => d.connected);
@@ -38,6 +39,7 @@ function DriveCard({ drive }) {
   const statusColor = d.connected ? '#22c55e' : '#ef4444';
   const statusText = d.connected ? `Connected (${d.letter})` : 'Disconnected';
   const totalCouples = d.clients ? d.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
+  const lowThreshold = 100 * 1024 * 1024 * 1024; // 100 GB in bytes
 
   return (
     <div className="drive-detail-card">
@@ -46,14 +48,14 @@ function DriveCard({ drive }) {
         <span className="drive-detail-status" style={{ color: statusColor }}>{statusText}</span>
       </div>
       <div className="drive-detail-meta">
-        Used: {(d.used / 1000).toFixed(1)} TB &nbsp;|&nbsp; Free: {(d.free / 1000).toFixed(1)} TB &nbsp;|&nbsp; Total: {(d.total / 1000).toFixed(1)} TB &nbsp;|&nbsp; {pct}% &nbsp;|&nbsp; {d.clients ? d.clients.length : 0} Clients, {totalCouples} Couples
+        Used: {formatTB(d.used)} &nbsp;|&nbsp; Free: {formatTB(d.free)} &nbsp;|&nbsp; Total: {formatTB(d.total)} &nbsp;|&nbsp; {pct}% &nbsp;|&nbsp; {d.clients ? d.clients.length : 0} Clients, {totalCouples} Couples
       </div>
       <div className="drive-progress-bar">
         <div className="drive-progress-fill" style={{ background: barColor, width: `${pct}%` }}></div>
       </div>
-      {d.free > 0 && d.free < 500 && (
+      {d.free > 0 && d.free < lowThreshold && (
         <div className="low-space-warning">
-          {'\u26A0'} LOW SPACE: Only {d.free} GB remaining!
+          {'\u26A0'} LOW SPACE: Only {formatSize(d.free)} remaining!
         </div>
       )}
       <details style={{ marginTop: 12 }} open>
@@ -71,7 +73,7 @@ function DriveCard({ drive }) {
 }
 
 function ClientBlock({ client }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const clientTotal = client.couples.reduce((s, c) => s + c.size, 0);
 
   return (
@@ -80,7 +82,7 @@ function ClientBlock({ client }) {
         <div className="client-icon">{open ? '\u25BC' : '\u25B6'}</div>
         <span className="client-name">{client.name}</span>
         <span className="client-count">({client.couples.length} couples)</span>
-        <span className="client-size">{clientTotal} GB</span>
+        <span className="client-size">{formatSize(clientTotal)}</span>
       </div>
       {open && (
         <div className="couple-list">
@@ -88,7 +90,7 @@ function ClientBlock({ client }) {
             <div className="couple-row" key={i}>
               <div className="couple-dot"></div>
               <span className="couple-name">{couple.name}</span>
-              <span className="couple-size">{couple.size} GB</span>
+              <span className="couple-size">{formatSize(couple.size)}</span>
             </div>
           ))}
         </div>
