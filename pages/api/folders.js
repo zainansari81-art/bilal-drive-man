@@ -1,19 +1,8 @@
-import fs from 'fs';
-import path from 'path';
-
-const dbPath = path.join(process.cwd(), 'data', 'db.json');
-
-function readDb() {
-  return JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
-}
-
-function writeDb(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
+import { getDb, saveDb } from '../../data/store';
 
 export default function handler(req, res) {
   if (req.method === 'GET') {
-    const db = readDb();
+    const db = getDb();
     const driveId = parseInt(req.query.drive_id);
 
     if (!driveId) {
@@ -32,7 +21,7 @@ export default function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const db = readDb();
+    const db = getDb();
     const { drive_id, client_name, couple_name, couple_size } = req.body;
 
     const drive = db.drives.find(d => d.id === drive_id);
@@ -53,7 +42,6 @@ export default function handler(req, res) {
       }
     }
 
-    // Add activity
     db.activities.unshift({
       type: 'added',
       drive: drive.name,
@@ -61,7 +49,7 @@ export default function handler(req, res) {
       time: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }),
     });
 
-    writeDb(db);
+    saveDb(db);
     return res.status(200).json({ success: true });
   }
 

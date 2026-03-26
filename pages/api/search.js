@@ -1,7 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-
-const dbPath = path.join(process.cwd(), 'data', 'db.json');
+import { getDb } from '../../data/store';
 
 export default function handler(req, res) {
   if (req.method !== 'GET') {
@@ -14,7 +11,7 @@ export default function handler(req, res) {
     return res.status(200).json([]);
   }
 
-  const db = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+  const db = getDb();
   const results = [];
 
   db.drives.forEach(drive => {

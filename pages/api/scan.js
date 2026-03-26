@@ -1,7 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-
-const dbPath = path.join(process.cwd(), 'data', 'db.json');
+import { getDb, saveDb } from '../../data/store';
 
 export default function handler(req, res) {
   if (req.method !== 'POST') {
@@ -9,9 +6,8 @@ export default function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   }
 
-  const db = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+  const db = getDb();
 
-  // Simulate scan: recalculate used/free based on actual couple sizes
   db.drives.forEach(drive => {
     let totalUsed = 0;
     drive.clients.forEach(client => {
@@ -23,7 +19,6 @@ export default function handler(req, res) {
     drive.free = drive.total - totalUsed;
   });
 
-  // Add scan activity
   db.activities.unshift({
     type: 'connected',
     drive: 'All Drives',
@@ -31,7 +26,7 @@ export default function handler(req, res) {
     time: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }),
   });
 
-  fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+  saveDb(db);
 
   return res.status(200).json({
     success: true,

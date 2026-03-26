@@ -1,25 +1,13 @@
-import fs from 'fs';
-import path from 'path';
-
-const dbPath = path.join(process.cwd(), 'data', 'db.json');
-
-function readDb() {
-  const raw = fs.readFileSync(dbPath, 'utf-8');
-  return JSON.parse(raw);
-}
-
-function writeDb(data) {
-  fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
-}
+import { getDb, saveDb } from '../../data/store';
 
 export default function handler(req, res) {
   if (req.method === 'GET') {
-    const db = readDb();
+    const db = getDb();
     return res.status(200).json(db.drives);
   }
 
   if (req.method === 'POST') {
-    const db = readDb();
+    const db = getDb();
     const drive = req.body;
 
     if (drive.id) {
@@ -34,7 +22,7 @@ export default function handler(req, res) {
       db.drives.push(drive);
     }
 
-    writeDb(db);
+    saveDb(db);
     return res.status(200).json(drive);
   }
 
