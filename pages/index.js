@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Head from 'next/head';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -10,11 +10,22 @@ import ActivityList from '../components/ActivityList';
 import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
+import { getDb } from '../data/store';
 
-export default function Home() {
+export async function getServerSideProps() {
+  const db = getDb();
+  return {
+    props: {
+      initialDrives: db.drives,
+      initialActivities: db.activities,
+    },
+  };
+}
+
+export default function Home({ initialDrives, initialActivities }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [drives, setDrives] = useState([]);
-  const [activities, setActivities] = useState([]);
+  const [drives, setDrives] = useState(initialDrives || []);
+  const [activities, setActivities] = useState(initialActivities || []);
   const [searchQuery, setSearchQuery] = useState('');
 
   const fetchData = async () => {
@@ -31,10 +42,6 @@ export default function Home() {
       console.error('Failed to fetch data:', err);
     }
   };
-
-  useEffect(() => {
-    fetchData();
-  }, []);
 
   const handleNavigate = (page) => {
     if (page !== 'search') {
