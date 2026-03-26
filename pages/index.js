@@ -10,8 +10,17 @@ import ActivityList from '../components/ActivityList';
 import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
+import { getSessionFromRequest } from '../lib/auth';
 
-export default function Home() {
+export async function getServerSideProps(context) {
+  const session = getSessionFromRequest(context.req);
+  if (!session) {
+    return { redirect: { destination: '/login', permanent: false } };
+  }
+  return { props: { username: session.username } };
+}
+
+export default function Home({ username }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [drives, setDrives] = useState([]);
   const [activities, setActivities] = useState([]);
@@ -79,6 +88,7 @@ export default function Home() {
           onNavigate={handleNavigate}
           driveCount={drives.length}
           onScan={handleScan}
+          username={username}
         />
 
         <main className="main">

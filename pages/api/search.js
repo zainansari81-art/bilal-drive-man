@@ -1,6 +1,7 @@
 import { searchCouples } from '../../lib/supabase';
+import { requireAuth } from '../../lib/auth';
 
-export default async function handler(req, res) {
+export default requireAuth(async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
@@ -18,4 +19,4 @@ export default async function handler(req, res) {
     console.error('Search API error:', err);
     return res.status(500).json({ error: err.message });
   }
-}
+});

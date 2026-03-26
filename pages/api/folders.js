@@ -1,4 +1,5 @@
 import { getClientsForDrive, getCouplesForClient, getDriveById, addHistory } from '../../lib/supabase';
+import { requireAuth } from '../../lib/auth';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dialxndobebudwexsubr.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpYWx4bmRvYmVidWR3ZXhzdWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTcwMTYsImV4cCI6MjA5MDA5MzAxNn0.XE2b_M3uyUe5VPnon-X8fspQGnNjSPyXbis57qYQxn4';
@@ -19,7 +20,7 @@ async function supabasePost(path, body, headers = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-export default async function handler(req, res) {
+export default requireAuth(async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const driveId = parseInt(req.query.drive_id);
@@ -94,4 +95,4 @@ export default async function handler(req, res) {
     console.error('Folders API error:', err);
     return res.status(500).json({ error: err.message });
   }
-}
+});

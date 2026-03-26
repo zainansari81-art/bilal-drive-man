@@ -1,7 +1,12 @@
 import { useState } from 'react';
 
-export default function Sidebar({ currentPage, onNavigate, driveCount, onScan }) {
+export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, username }) {
   const [scanning, setScanning] = useState(false);
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+  };
 
   const handleScan = async () => {
     setScanning(true);
@@ -46,6 +51,31 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan })
             {scanning ? 'Scanning...' : 'Scan Now'}
           </button>
         </div>
+        <button
+          onClick={handleLogout}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            width: '100%',
+            marginTop: '12px',
+            padding: '10px 16px',
+            background: 'none',
+            border: '1px solid #e5e7eb',
+            borderRadius: '10px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: 500,
+            color: '#8c8ca1',
+            fontFamily: 'inherit',
+            transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#f7f8fa'; e.currentTarget.style.color = '#4a4a6a'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#8c8ca1'; }}
+        >
+          <span style={{ fontSize: '16px' }}>{'\u2190'}</span>
+          Logout{username ? ` (${username})` : ''}
+        </button>
       </div>
     </aside>
   );
