@@ -58,7 +58,7 @@ function DriveCard({ drive }) {
           {'\u26A0'} LOW SPACE: Only {formatSize(d.free)} remaining!
         </div>
       )}
-      <details style={{ marginTop: 12 }} open>
+      <details style={{ marginTop: 12 }}>
         <summary style={{ cursor: 'pointer', fontSize: 13, color: '#1a1a2e', fontWeight: 600, marginBottom: 8 }}>
           Clients &amp; Couples ({d.clients ? d.clients.length : 0} clients, {totalCouples} couples)
         </summary>
@@ -73,7 +73,7 @@ function DriveCard({ drive }) {
 }
 
 function ClientBlock({ client }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const clientTotal = client.couples.reduce((s, c) => s + c.size, 0);
 
   return (
