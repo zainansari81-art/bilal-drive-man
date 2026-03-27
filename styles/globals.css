@@ -151,13 +151,13 @@ body {
 }
 
 .stat-card.accent {
-  background: linear-gradient(135deg, #c8e600 0%, #d4f020 100%);
-  border: none;
+  background: #fff;
+  border: 1px solid #e5e7eb;
 }
 
-.stat-card.accent .stat-card-label { color: #3a3a2e; }
+.stat-card.accent .stat-card-label { color: #8c8ca1; }
 .stat-card.accent .stat-card-value { color: #1a1a2e; }
-.stat-card.accent .stat-card-sub { color: #4a4a2e; }
+.stat-card.accent .stat-card-sub { color: #8c8ca1; }
 
 .stat-card-top {
   display: flex; justify-content: space-between; align-items: center;
@@ -170,16 +170,14 @@ body {
   font-size: 16px;
 }
 
-.stat-card.accent .stat-card-icon { background: rgba(0,0,0,0.1); }
-.stat-card:not(.accent) .stat-card-icon { background: #f0f2f5; }
+.stat-card .stat-card-icon { background: #f0f2f5; }
 
 .stat-card-arrow {
   width: 30px; height: 30px; border-radius: 50%; display: flex;
   align-items: center; justify-content: center; font-size: 14px;
 }
 
-.stat-card.accent .stat-card-arrow { background: rgba(0,0,0,0.1); color: #1a1a2e; }
-.stat-card:not(.accent) .stat-card-arrow { background: #f0f2f5; color: #4a4a6a; }
+.stat-card .stat-card-arrow { background: #f0f2f5; color: #4a4a6a; }
 
 .stat-card-label {
   font-size: 12px; color: #8c8ca1; font-weight: 500; margin-bottom: 4px;
@@ -865,41 +863,48 @@ details[open] > div {
   transition: background 0.3s ease, color 0.3s ease;
 }
 
-/* White cards -> green bg on hover */
-.stat-card:not(.accent):hover {
+/* ALL stat cards -> green bg on hover */
+.stat-card:hover {
+  background: #c8e600 !important;
+  border-color: #c8e600 !important;
+}
+
+.stat-card:hover .stat-card-label { color: #3a3a2e !important; }
+.stat-card:hover .stat-card-value { color: #1a1a2e !important; }
+.stat-card:hover .stat-card-sub { color: #4a4a2e !important; }
+.stat-card:hover .stat-card-icon { background: rgba(0,0,0,0.1) !important; }
+.stat-card:hover .stat-card-arrow { background: rgba(0,0,0,0.1) !important; color: #1a1a2e !important; }
+
+/* Chart and list cards -> green border + tint on hover */
+.chart-card:hover,
+.list-card:hover {
+  border-color: #c8e600;
+  background: linear-gradient(135deg, #fff 60%, #f8fde0 100%);
+}
+
+/* Drive detail card -> green bg on hover */
+.drive-detail-card {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+.drive-detail-card:hover {
   background: #c8e600;
   border-color: #c8e600;
 }
 
-.stat-card:not(.accent):hover .stat-card-label { color: #3a3a2e; }
-.stat-card:not(.accent):hover .stat-card-value { color: #1a1a2e; }
-.stat-card:not(.accent):hover .stat-card-sub { color: #4a4a2e; }
-.stat-card:not(.accent):hover .stat-card-icon { background: rgba(0,0,0,0.1); }
-.stat-card:not(.accent):hover .stat-card-arrow { background: rgba(0,0,0,0.1); color: #1a1a2e; }
-
-/* Green (accent) card -> dark bg on hover */
-.stat-card.accent:hover {
-  background: #1a1a2e !important;
+.drive-detail-card .drive-detail-name,
+.drive-detail-card .drive-detail-meta {
+  transition: color 0.3s ease;
 }
 
-.stat-card.accent:hover .stat-card-label { color: #94a3b8; }
-.stat-card.accent:hover .stat-card-value { color: #c8e600; }
-.stat-card.accent:hover .stat-card-sub { color: #8c8ca1; }
-.stat-card.accent:hover .stat-card-icon { background: rgba(200,230,0,0.15); }
-.stat-card.accent:hover .stat-card-arrow { background: rgba(200,230,0,0.15); color: #c8e600; }
-
-/* Chart and list cards -> green accent on hover */
-.chart-card:hover,
-.list-card:hover {
-  border-color: #c8e600;
-}
-
-/* Drive detail card -> subtle green border on hover */
-.drive-detail-card:hover {
-  border-color: #c8e600;
-}
+.drive-detail-card:hover .drive-detail-name { color: #1a1a2e; }
+.drive-detail-card:hover .drive-detail-meta { color: #3a3a2e; }
 
 /* Result card -> green bg on hover */
+.result-card {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
 .result-card:hover {
   background: #c8e600;
   border-color: #c8e600;
@@ -912,6 +917,47 @@ details[open] > div {
 
 .result-card:hover .result-name { color: #1a1a2e; }
 .result-card:hover .result-meta { color: #3a3a2e; }
+
+/* History row -> green bg on hover */
+.history-row {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+.history-row:hover {
+  background: #c8e600;
+  border-color: #c8e600;
+}
+
+.history-row .history-drive,
+.history-row .history-folder,
+.history-row .history-time {
+  transition: color 0.3s ease;
+}
+
+.history-row:hover .history-drive { color: #1a1a2e; }
+.history-row:hover .history-folder { color: #3a3a2e; }
+.history-row:hover .history-time { color: #4a4a2e; }
+
+/* Drive row -> green bg on hover */
+.drive-row:hover {
+  background: #f0fde0;
+}
+
+/* Activity row -> green bg on hover */
+.activity-row:hover {
+  background: #f0fde0;
+}
+
+/* Nav item -> green bg on hover */
+.nav-item:hover {
+  background: #f0fde0 !important;
+}
+
+.nav-item.active {
+  background: #c8e600 !important;
+  color: #1a1a2e !important;
+  font-weight: 700;
+}
 
 /* Logout button hover */
 .sidebar-bottom button:hover {
