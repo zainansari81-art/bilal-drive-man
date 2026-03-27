@@ -4,8 +4,11 @@ import { requireApiKey } from '../../lib/auth';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dialxndobebudwexsubr.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpYWx4bmRvYmVidWR3ZXhzdWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTcwMTYsImV4cCI6MjA5MDA5MzAxNn0.XE2b_M3uyUe5VPnon-X8fspQGnNjSPyXbis57qYQxn4';
 
-async function supabasePost(path, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+async function supabasePost(path, body, onConflict) {
+  const url = onConflict
+    ? `${SUPABASE_URL}/rest/v1/${path}?on_conflict=${onConflict}`
+    : `${SUPABASE_URL}/rest/v1/${path}`;
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'apikey': SUPABASE_KEY,
@@ -16,6 +19,9 @@ async function supabasePost(path, body) {
     body: JSON.stringify(body),
   });
   const text = await res.text();
+  if (!res.ok) {
+    console.error(`Supabase POST ${path} error ${res.status}:`, text);
+  }
   return text ? JSON.parse(text) : null;
 }
 
@@ -68,7 +74,7 @@ export default requireApiKey(async function handler(req, res) {
       drive_letter: drive.drive_letter || null,
       last_seen: new Date().toISOString(),
       last_scan: new Date().toISOString(),
-    });
+    }, 'volume_label');
 
     const driveId = driveResult?.[0]?.id;
     if (!driveId) {
@@ -87,7 +93,7 @@ export default requireApiKey(async function handler(req, res) {
         const clientResult = await supabasePost('clients', {
           drive_id: driveId,
           client_name: client.name,
-        });
+        }, 'drive_id,client_name');
         const clientId = clientResult?.[0]?.id;
         if (!clientId) continue;
 
@@ -129,7 +135,7 @@ export default requireApiKey(async function handler(req, res) {
               first_seen: new Date().toISOString(),
               last_seen: new Date().toISOString(),
               is_present: true,
-            });
+            }, 'client_id,couple_name');
 
             await addHistory({
               drive_id: driveId,
