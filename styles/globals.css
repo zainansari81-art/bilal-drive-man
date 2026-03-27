@@ -849,18 +849,69 @@ details[open] > div {
   transform: translateX(4px);
 }
 
-/* Stat card value counter feel */
-.stat-card-value {
+/* Stat card color swap on hover */
+.stat-card {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+.stat-card .stat-card-label,
+.stat-card .stat-card-value,
+.stat-card .stat-card-sub {
   transition: color 0.3s ease;
 }
 
-.stat-card:hover .stat-card-value {
-  color: #c8e600;
+.stat-card .stat-card-icon,
+.stat-card .stat-card-arrow {
+  transition: background 0.3s ease, color 0.3s ease;
 }
 
-.stat-card.accent:hover .stat-card-value {
-  color: #1a1a2e;
+/* White cards -> green bg on hover */
+.stat-card:not(.accent):hover {
+  background: #c8e600;
+  border-color: #c8e600;
 }
+
+.stat-card:not(.accent):hover .stat-card-label { color: #3a3a2e; }
+.stat-card:not(.accent):hover .stat-card-value { color: #1a1a2e; }
+.stat-card:not(.accent):hover .stat-card-sub { color: #4a4a2e; }
+.stat-card:not(.accent):hover .stat-card-icon { background: rgba(0,0,0,0.1); }
+.stat-card:not(.accent):hover .stat-card-arrow { background: rgba(0,0,0,0.1); color: #1a1a2e; }
+
+/* Green (accent) card -> dark bg on hover */
+.stat-card.accent:hover {
+  background: #1a1a2e !important;
+}
+
+.stat-card.accent:hover .stat-card-label { color: #94a3b8; }
+.stat-card.accent:hover .stat-card-value { color: #c8e600; }
+.stat-card.accent:hover .stat-card-sub { color: #8c8ca1; }
+.stat-card.accent:hover .stat-card-icon { background: rgba(200,230,0,0.15); }
+.stat-card.accent:hover .stat-card-arrow { background: rgba(200,230,0,0.15); color: #c8e600; }
+
+/* Chart and list cards -> green accent on hover */
+.chart-card:hover,
+.list-card:hover {
+  border-color: #c8e600;
+}
+
+/* Drive detail card -> subtle green border on hover */
+.drive-detail-card:hover {
+  border-color: #c8e600;
+}
+
+/* Result card -> green bg on hover */
+.result-card:hover {
+  background: #c8e600;
+  border-color: #c8e600;
+}
+
+.result-card .result-name,
+.result-card .result-meta {
+  transition: color 0.3s ease;
+}
+
+.result-card:hover .result-name { color: #1a1a2e; }
+.result-card:hover .result-meta { color: #3a3a2e; }
 
 /* Logout button hover */
 .sidebar-bottom button:hover {
