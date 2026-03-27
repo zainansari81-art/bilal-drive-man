@@ -25,9 +25,9 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
   return (
     <aside className="sidebar">
       <div className="logo">
-        <div className="logo-circle">T</div>
+        <div className="logo-circle">B</div>
         <div>
-          <div className="logo-text">Drive Man</div>
+          <div className="logo-text">Bilal - Drive Man</div>
           <div className="logo-sub">by TXB</div>
         </div>
       </div>
