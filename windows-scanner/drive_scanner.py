@@ -33,7 +33,7 @@ logging.basicConfig(
 # Default config
 DEFAULT_CONFIG = {
     'api_url': 'https://bilal-drive-man.vercel.app',
-    'scan_interval': 300,  # 5 minutes
+    'scan_interval': 600,  # 10 minutes (longer to avoid blocking file copies)
     'check_interval': 10,  # 10 seconds to check for new drives
     'low_space_gb': 100,
 }
@@ -142,6 +142,8 @@ def get_folder_size(path):
                         file_count += 1
                 except (OSError, PermissionError):
                     pass
+            # Small pause between directories to avoid blocking file copies
+            time.sleep(0.01)
     except (OSError, PermissionError):
         pass
     return total_size, file_count
@@ -341,6 +343,16 @@ class DriveMonitor:
         self.known_drives = current_labels
 
     def _scan_and_sync(self, drive):
+        # Set low I/O priority so scanning doesn't block file copies
+        try:
+            import ctypes
+            BELOW_NORMAL = 0x00004000
+            ctypes.windll.kernel32.SetPriorityClass(
+                ctypes.windll.kernel32.GetCurrentProcess(), BELOW_NORMAL
+            )
+        except:
+            pass
+
         self.status(f"Scanning {drive['label']} ({drive['letter']})...")
         clients = scan_drive_folders(drive['letter'])
 
