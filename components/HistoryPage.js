@@ -58,7 +58,7 @@ export default function HistoryPage() {
       {activities.map((a, i) => {
         const color = eventColors[a.type] || '#8c8ca1';
         return (
-          <div className="history-row" key={i}>
+          <div className="history-row scroll-reveal" key={i} style={{ transitionDelay: `${Math.min(i * 40, 400)}ms` }}>
             <span className="history-badge" style={{ background: color }}>
               {eventLabels[a.type] || a.type}
             </span>

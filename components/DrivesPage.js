@@ -19,13 +19,13 @@ export default function DrivesPage({ drives }) {
       {connected.length > 0 && (
         <>
           <h3 style={{ color: '#22c55e', margin: '10px 0' }}>Connected ({connected.length})</h3>
-          {connected.map((d, i) => <DriveCard key={i} drive={d} />)}
+          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} /></div>)}
         </>
       )}
       {disconnected.length > 0 && (
         <>
           <h3 style={{ color: '#8c8ca1', margin: '20px 0 10px' }}>Disconnected ({disconnected.length})</h3>
-          {disconnected.map((d, i) => <DriveCard key={i} drive={d} />)}
+          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} /></div>)}
         </>
       )}
     </div>

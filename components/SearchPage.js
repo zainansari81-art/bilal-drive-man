@@ -72,7 +72,7 @@ export default function SearchPage({ initialQuery }) {
               Found {results.length} result(s) for &quot;{query}&quot;
             </p>
             {results.map((r, i) => (
-              <div className="result-card" key={i}>
+              <div className="result-card scroll-reveal" key={i} style={{ transitionDelay: `${i * 50}ms` }}>
                 <div>
                   <div className="result-name">{r.couple}</div>
                   <div className="result-meta">

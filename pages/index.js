@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Head from 'next/head';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -74,6 +74,32 @@ export default function Home({ username, initialDrives, initialActivities }) {
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // Scroll reveal observer
+  const contentRef = useRef(null);
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      },
+      { root: container, threshold: 0.1 }
+    );
+    const observe = () => {
+      const els = container.querySelectorAll('.scroll-reveal');
+      els.forEach((el) => observer.observe(el));
+    };
+    observe();
+    // Re-observe on page change
+    const mo = new MutationObserver(observe);
+    mo.observe(container, { childList: true, subtree: true });
+    return () => { observer.disconnect(); mo.disconnect(); };
+  }, [currentPage]);
+
   const handleNavigate = (page) => {
     if (page !== 'search') {
       setSearchQuery('');
@@ -121,7 +147,7 @@ export default function Home({ username, initialDrives, initialActivities }) {
             onQuickSearch={handleQuickSearch}
           />
 
-          <div className="content">
+          <div className="content" ref={contentRef}>
             <div key={currentPage} className="page-transition">
               {currentPage === 'dashboard' && (
                 <div>
