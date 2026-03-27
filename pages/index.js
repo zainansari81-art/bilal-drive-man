@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Head from 'next/head';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -11,23 +11,48 @@ import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
 import { getSessionFromRequest } from '../lib/auth';
+import { getDrivesWithClients, formatDrivesForFrontend, getHistory } from '../lib/supabase';
 
 export async function getServerSideProps(context) {
   const session = getSessionFromRequest(context.req);
   if (!session) {
     return { redirect: { destination: '/login', permanent: false } };
   }
-  return { props: { username: session.username } };
+
+  // Fetch data server-side for instant page load
+  try {
+    const [rawDrives, rawHistory] = await Promise.all([
+      getDrivesWithClients(),
+      getHistory(50),
+    ]);
+    const drives = formatDrivesForFrontend(rawDrives);
+    return {
+      props: {
+        username: session.username,
+        initialDrives: drives,
+        initialActivities: rawHistory,
+      },
+    };
+  } catch (err) {
+    console.error('SSR data fetch error:', err);
+    return {
+      props: {
+        username: session.username,
+        initialDrives: [],
+        initialActivities: [],
+      },
+    };
+  }
 }
 
-export default function Home({ username }) {
+export default function Home({ username, initialDrives, initialActivities }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
-  const [drives, setDrives] = useState([]);
-  const [activities, setActivities] = useState([]);
+  const [drives, setDrives] = useState(initialDrives || []);
+  const [activities, setActivities] = useState(initialActivities || []);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [drivesRes, historyRes] = await Promise.all([
         fetch('/api/drives'),
@@ -39,17 +64,14 @@ export default function Home({ username }) {
       setActivities(Array.isArray(historyData) ? historyData : []);
     } catch (err) {
       console.error('Failed to fetch data:', err);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchData();
-    // Auto-refresh every 30 seconds
+    // Auto-refresh every 30 seconds (data already loaded from server)
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
 
   const handleNavigate = (page) => {
     if (page !== 'search') {
@@ -99,13 +121,7 @@ export default function Home({ username }) {
           />
 
           <div className="content">
-            {loading && (
-              <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
-                <p style={{ fontSize: '18px' }}>Loading dashboard...</p>
-              </div>
-            )}
-
-            {!loading && currentPage === 'dashboard' && (
+            {currentPage === 'dashboard' && (
               <div>
                 <StatCards drives={drives} />
                 <div className="charts-row">
@@ -119,15 +135,15 @@ export default function Home({ username }) {
               </div>
             )}
 
-            {!loading && currentPage === 'drives' && (
+            {currentPage === 'drives' && (
               <DrivesPage drives={drives} />
             )}
 
-            {!loading && currentPage === 'search' && (
+            {currentPage === 'search' && (
               <SearchPage initialQuery={searchQuery} />
             )}
 
-            {!loading && currentPage === 'history' && (
+            {currentPage === 'history' && (
               <HistoryPage />
             )}
           </div>
