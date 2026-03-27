@@ -46,7 +46,7 @@ export default function LoginPage() {
       <Head>
         <title>Login - Bilal Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💾</text></svg>" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23c8e600'/><text x='50' y='68' text-anchor='middle' font-family='Arial' font-weight='900' font-size='55' fill='%231a1a2e'>B</text></svg>" />
       </Head>
 
       <div style={styles.wrapper}>

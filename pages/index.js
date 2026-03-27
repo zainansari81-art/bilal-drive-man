@@ -102,7 +102,7 @@ export default function Home({ username, initialDrives, initialActivities }) {
       <Head>
         <title>Bilal - Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💾</text></svg>" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23c8e600'/><text x='50' y='68' text-anchor='middle' font-family='Arial' font-weight='900' font-size='55' fill='%231a1a2e'>B</text></svg>" />
       </Head>
 
       <div className="app-layout">
@@ -122,35 +122,43 @@ export default function Home({ username, initialDrives, initialActivities }) {
           />
 
           <div className="content">
-            {currentPage === 'dashboard' && (
-              <div>
-                <StatCards drives={drives} />
-                <div className="charts-row">
-                  <BarChart drives={drives} />
-                  <DonutChart drives={drives} />
+            <div key={currentPage} className="page-transition">
+              {currentPage === 'dashboard' && (
+                <div>
+                  <div className="animate-in" style={{ animationDelay: '0ms' }}>
+                    <StatCards drives={drives} />
+                  </div>
+                  <div className="animate-in" style={{ animationDelay: '80ms' }}>
+                    <div className="charts-row">
+                      <BarChart drives={drives} />
+                      <DonutChart drives={drives} />
+                    </div>
+                  </div>
+                  <div className="animate-in" style={{ animationDelay: '160ms' }}>
+                    <div className="bottom-row">
+                      <DrivesList drives={drives} />
+                      <ActivityList activities={activities} />
+                    </div>
+                  </div>
                 </div>
-                <div className="bottom-row">
-                  <DrivesList drives={drives} />
-                  <ActivityList activities={activities} />
-                </div>
-              </div>
-            )}
+              )}
 
-            {currentPage === 'drives' && (
-              <DrivesPage drives={drives} />
-            )}
+              {currentPage === 'drives' && (
+                <DrivesPage drives={drives} />
+              )}
 
-            {currentPage === 'devices' && (
-              <DevicesPage drives={drives} />
-            )}
+              {currentPage === 'devices' && (
+                <DevicesPage drives={drives} />
+              )}
 
-            {currentPage === 'search' && (
-              <SearchPage initialQuery={searchQuery} />
-            )}
+              {currentPage === 'search' && (
+                <SearchPage initialQuery={searchQuery} />
+              )}
 
-            {currentPage === 'history' && (
-              <HistoryPage />
-            )}
+              {currentPage === 'history' && (
+                <HistoryPage />
+              )}
+            </div>
           </div>
         </main>
       </div>
