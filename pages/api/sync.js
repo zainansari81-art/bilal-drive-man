@@ -64,6 +64,8 @@ export default requireApiKey(async function handler(req, res) {
       return res.status(400).json({ error: 'drive.volume_label is required' });
     }
 
+    const machineName = drive.source_machine || 'Unknown';
+
     // Upsert drive
     const driveResult = await supabasePost('drives', {
       volume_label: drive.volume_label,
@@ -89,96 +91,133 @@ export default requireApiKey(async function handler(req, res) {
     if (clients && Array.isArray(clients)) {
       const currentCoupleKeys = new Set();
 
+      // Batch upsert all clients at once
+      const clientRows = clients.map(c => ({
+        drive_id: driveId,
+        client_name: c.name,
+      }));
+      const clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name');
+
+      // Build client name -> id map
+      const clientMap = {};
+      if (Array.isArray(clientResults)) {
+        for (const cr of clientResults) {
+          clientMap[cr.client_name] = cr.id;
+        }
+      }
+
+      // Batch upsert all couples at once
+      const coupleRows = [];
+      const coupleInfo = []; // track client name for history
       for (const client of clients) {
-        // Upsert client
-        const clientResult = await supabasePost('clients', {
-          drive_id: driveId,
-          client_name: client.name,
-        }, 'drive_id,client_name');
-        const clientId = clientResult?.[0]?.id;
+        const clientId = clientMap[client.name];
         if (!clientId) continue;
 
         for (const couple of client.couples || []) {
           currentCoupleKeys.add(`${clientId}:${couple.name}`);
-
-          // Check if couple exists
-          const existing = await supabaseGet(
-            `couples?client_id=eq.${clientId}&couple_name=eq.${encodeURIComponent(couple.name)}`
-          );
-
-          if (existing.length > 0) {
-            const old = existing[0];
-            const sizeChanged = Math.abs((old.size_bytes || 0) - (couple.size || 0)) > 1024 * 1024;
-
-            await supabasePatch(`couples?id=eq.${old.id}`, {
-              size_bytes: couple.size || 0,
-              file_count: couple.file_count || 0,
-              last_seen: new Date().toISOString(),
-              is_present: true,
-            });
-
-            if (sizeChanged) {
-              await addHistory({
-                drive_id: driveId,
-                volume_label: drive.volume_label,
-                event_type: 'size_changed',
-                folder_name: `${client.name} / ${couple.name}`,
-                details: `Size changed on ${drive.volume_label}`,
-              });
-            }
-            foldersUpdated++;
-          } else {
-            await supabasePost('couples', {
-              client_id: clientId,
-              couple_name: couple.name,
-              size_bytes: couple.size || 0,
-              file_count: couple.file_count || 0,
-              first_seen: new Date().toISOString(),
-              last_seen: new Date().toISOString(),
-              is_present: true,
-            }, 'client_id,couple_name');
-
-            await addHistory({
-              drive_id: driveId,
-              volume_label: drive.volume_label,
-              event_type: 'folder_added',
-              folder_name: `${client.name} / ${couple.name}`,
-              details: `New couple added to ${drive.volume_label}`,
-            });
-            foldersAdded++;
-          }
+          coupleRows.push({
+            client_id: clientId,
+            couple_name: couple.name,
+            size_bytes: couple.size || 0,
+            file_count: couple.file_count || 0,
+            last_seen: new Date().toISOString(),
+            is_present: true,
+          });
+          coupleInfo.push({ clientName: client.name, coupleName: couple.name });
         }
       }
 
-      // Mark removed couples
-      const allClients = await supabaseGet(`clients?drive_id=eq.${driveId}`);
-      for (const cl of allClients) {
-        const couples = await supabaseGet(`couples?client_id=eq.${cl.id}&is_present=eq.true`);
-        for (const c of couples) {
-          if (!currentCoupleKeys.has(`${cl.id}:${c.couple_name}`)) {
-            await supabasePatch(`couples?id=eq.${c.id}`, {
+      // Get existing couples before upsert to detect changes
+      const existingCouples = await supabaseGet(`couples?client_id=in.(${Object.values(clientMap).join(',')})`);
+      const existingMap = {};
+      for (const ec of existingCouples) {
+        existingMap[`${ec.client_id}:${ec.couple_name}`] = ec;
+      }
+
+      // Upsert all couples in one batch
+      if (coupleRows.length > 0) {
+        // Add first_seen for new couples
+        for (const row of coupleRows) {
+          const key = `${row.client_id}:${row.couple_name}`;
+          if (!existingMap[key]) {
+            row.first_seen = new Date().toISOString();
+          }
+        }
+        await supabasePost('couples', coupleRows, 'client_id,couple_name');
+      }
+
+      // Log history for new and changed couples
+      const historyEntries = [];
+      for (let i = 0; i < coupleRows.length; i++) {
+        const row = coupleRows[i];
+        const info = coupleInfo[i];
+        const key = `${row.client_id}:${row.couple_name}`;
+        const existing = existingMap[key];
+
+        if (!existing) {
+          foldersAdded++;
+          historyEntries.push({
+            drive_id: driveId,
+            volume_label: drive.volume_label,
+            event_type: 'folder_added',
+            folder_name: `${info.clientName} / ${info.coupleName}`,
+            details: `New couple added to ${drive.volume_label} from ${machineName}`,
+          });
+        } else {
+          const sizeChanged = Math.abs((existing.size_bytes || 0) - (row.size_bytes || 0)) > 1024 * 1024;
+          if (sizeChanged) {
+            historyEntries.push({
+              drive_id: driveId,
+              volume_label: drive.volume_label,
+              event_type: 'size_changed',
+              folder_name: `${info.clientName} / ${info.coupleName}`,
+              details: `Size changed on ${drive.volume_label} from ${machineName}`,
+            });
+          }
+          foldersUpdated++;
+        }
+      }
+
+      // Check for removed couples
+      for (const ec of existingCouples) {
+        if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
+          foldersRemoved++;
+          // Find client name for this couple
+          const clientName = Object.entries(clientMap).find(([, id]) => id === ec.client_id)?.[0] || '';
+          historyEntries.push({
+            drive_id: driveId,
+            volume_label: drive.volume_label,
+            event_type: 'folder_removed',
+            folder_name: `${clientName} / ${ec.couple_name}`,
+            details: `Removed from ${drive.volume_label} (${machineName})`,
+          });
+        }
+      }
+
+      // Mark removed couples in one batch per client
+      if (foldersRemoved > 0) {
+        for (const ec of existingCouples) {
+          if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
+            await supabasePatch(`couples?id=eq.${ec.id}`, {
               is_present: false,
               last_seen: new Date().toISOString(),
             });
-
-            await addHistory({
-              drive_id: driveId,
-              volume_label: drive.volume_label,
-              event_type: 'folder_removed',
-              folder_name: `${cl.client_name} / ${c.couple_name}`,
-              details: `Removed from ${drive.volume_label}`,
-            });
-            foldersRemoved++;
           }
         }
       }
+
+      // Batch insert all history entries
+      if (historyEntries.length > 0) {
+        await supabasePost('history', historyEntries);
+      }
     }
 
+    // Log drive connection
     await addHistory({
       drive_id: driveId,
       volume_label: drive.volume_label,
       event_type: 'drive_connected',
-      details: `Drive scanned. Added: ${foldersAdded}, Updated: ${foldersUpdated}, Removed: ${foldersRemoved}`,
+      details: `Drive scanned from ${machineName}. Added: ${foldersAdded}, Updated: ${foldersUpdated}, Removed: ${foldersRemoved}`,
     });
 
     return res.status(200).json({
