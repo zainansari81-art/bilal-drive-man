@@ -44,16 +44,19 @@ export default function LoginPage() {
   return (
     <>
       <Head>
-        <title>Login - Bilal Drive Man</title>
+        <title>Login - TXB Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23c8e600'/><text x='50' y='68' text-anchor='middle' font-family='Arial' font-weight='900' font-size='55' fill='%231a1a2e'>B</text></svg>" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23c8e600'/><text x='50' y='68' text-anchor='middle' font-family='Arial' font-weight='900' font-size='48' fill='%231a1a2e'>T</text></svg>" />
       </Head>
 
       <div style={styles.wrapper}>
         <div style={styles.card}>
           <div style={styles.logoRow}>
-            <div style={styles.logoCircle}>B</div>
-            <div style={styles.logoText}>Bilal - Drive Man</div>
+            <div style={styles.logoCircle}>T</div>
+            <div>
+              <div style={styles.logoText}>TXB Drive Man</div>
+              <div style={styles.logoSub}>by TXB</div>
+            </div>
           </div>
           <p style={styles.subtitle}>Sign in to your account</p>
 
@@ -98,7 +101,7 @@ export default function LoginPage() {
 const styles = {
   wrapper: {
     minHeight: '100vh',
-    background: '#f0f2f5',
+    background: '#f4f5f7',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -110,8 +113,8 @@ const styles = {
     padding: '40px',
     width: '100%',
     maxWidth: '400px',
-    border: '1px solid #e5e7eb',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.06)',
+    border: '1px solid #e8eaed',
+    boxShadow: '0 4px 24px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
   },
   logoRow: {
     display: 'flex',
@@ -135,6 +138,14 @@ const styles = {
     fontSize: '18px',
     fontWeight: 800,
     color: '#1a1a2e',
+  },
+  logoSub: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#8c8ca1',
+    letterSpacing: '1.5px',
+    textTransform: 'uppercase',
+    marginTop: '1px',
   },
   subtitle: {
     fontSize: '14px',

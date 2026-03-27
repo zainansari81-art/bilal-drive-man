@@ -36,7 +36,7 @@ export default function Header({ currentPage, onNavigate, onQuickSearch }) {
           <div className="status-dot"></div>
           Monitoring
         </div>
-        <div className="user-avatar">B</div>
+        <div className="user-avatar">T</div>
       </div>
     </div>
   );

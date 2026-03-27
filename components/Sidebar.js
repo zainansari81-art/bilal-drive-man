@@ -25,8 +25,11 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
   return (
     <aside className="sidebar">
       <div className="logo">
-        <div className="logo-circle">B</div>
-        <div className="logo-text">Bilal - Drive Man</div>
+        <div className="logo-circle">T</div>
+        <div>
+          <div className="logo-text">Drive Man</div>
+          <div className="logo-sub">by TXB</div>
+        </div>
       </div>
       <div className="sidebar-divider"></div>
 
@@ -52,6 +55,7 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
             {scanning ? 'Scanning...' : 'Scan Now'}
           </button>
         </div>
+        <div className="sidebar-brand">Powered by TXB</div>
         <button
           onClick={handleLogout}
           style={{

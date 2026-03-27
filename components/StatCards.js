@@ -14,7 +14,7 @@ export default function StatCards({ drives }) {
     <div className="stat-cards">
       <div className="stat-card accent">
         <div className="stat-card-top">
-          <div className="stat-card-icon">{'\uD83D\uDCBE'}</div>
+          <div className="stat-card-icon" style={{ background: '#f0fde0' }}>{'\uD83D\uDCBE'}</div>
           <div className="stat-card-arrow">{'\u2197'}</div>
         </div>
         <div className="stat-card-label">Total Storage</div>
@@ -24,7 +24,7 @@ export default function StatCards({ drives }) {
 
       <div className="stat-card">
         <div className="stat-card-top">
-          <div className="stat-card-icon">{'\uD83D\uDCC8'}</div>
+          <div className="stat-card-icon" style={{ background: '#eff6ff' }}>{'\uD83D\uDCC8'}</div>
           <div className="stat-card-arrow">{'\u2197'}</div>
         </div>
         <div className="stat-card-label">Space Used</div>
@@ -34,7 +34,7 @@ export default function StatCards({ drives }) {
 
       <div className="stat-card">
         <div className="stat-card-top">
-          <div className="stat-card-icon">{'\uD83D\uDD0C'}</div>
+          <div className="stat-card-icon" style={{ background: '#f0fdf4' }}>{'\uD83D\uDD0C'}</div>
           <div className="stat-card-arrow">{'\u2197'}</div>
         </div>
         <div className="stat-card-label">Connected</div>
@@ -46,7 +46,7 @@ export default function StatCards({ drives }) {
 
       <div className="stat-card">
         <div className="stat-card-top">
-          <div className="stat-card-icon">{'\uD83D\uDC65'}</div>
+          <div className="stat-card-icon" style={{ background: '#fdf4ff' }}>{'\uD83D\uDC65'}</div>
           <div className="stat-card-arrow">{'\u2197'}</div>
         </div>
         <div className="stat-card-label">Total Clients</div>

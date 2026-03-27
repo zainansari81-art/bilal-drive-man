@@ -4,7 +4,7 @@
 
 body {
   font-family: 'Inter', 'Segoe UI', sans-serif;
-  background: #f0f2f5;
+  background: #f4f5f7;
   color: #1a1a2e;
 }
 
@@ -18,8 +18,8 @@ body {
 /* ===== SIDEBAR ===== */
 .sidebar {
   width: 260px;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+  border-right: 1px solid #e8eaed;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -43,6 +43,11 @@ body {
 
 .logo-text {
   font-size: 16px; font-weight: 800; color: #1a1a2e;
+}
+
+.logo-sub {
+  font-size: 10px; font-weight: 600; color: #8c8ca1;
+  letter-spacing: 1.5px; text-transform: uppercase; margin-top: 1px;
 }
 
 .sidebar-divider {
@@ -80,6 +85,12 @@ body {
 
 .sidebar-bottom { padding: 15px; }
 
+.sidebar-brand {
+  text-align: center; font-size: 10px; font-weight: 600;
+  color: #b0b0c0; letter-spacing: 1px; text-transform: uppercase;
+  margin-top: 10px; padding: 4px 0;
+}
+
 .scan-card {
   background: #c8e600; border-radius: 14px; padding: 18px;
 }
@@ -111,7 +122,8 @@ body {
 
 .search-box {
   display: flex; align-items: center; background: #fff;
-  border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px 14px; gap: 8px;
+  border: 1px solid #e8eaed; border-radius: 10px; padding: 8px 14px; gap: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .search-box input {
@@ -130,9 +142,10 @@ body {
 }
 
 .user-avatar {
-  width: 36px; height: 36px; border-radius: 50%; background: #e5e7eb;
+  width: 36px; height: 36px; border-radius: 50%; background: #f0fde0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: 700; color: #4a4a6a;
+  font-size: 13px; font-weight: 800; color: #1a1a2e;
+  border: 2px solid #c8e600;
 }
 
 .content {
@@ -147,7 +160,8 @@ body {
 
 .stat-card {
   background: #fff; border-radius: 14px; padding: 20px 22px;
-  border: 1px solid #e5e7eb; position: relative; overflow: hidden;
+  border: 1px solid #e8eaed; position: relative; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .stat-card.accent {
@@ -199,7 +213,8 @@ body {
 
 .chart-card {
   background: #fff; border-radius: 14px; padding: 20px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e8eaed;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .chart-header {
@@ -340,7 +355,8 @@ body {
 
 .list-card {
   background: #fff; border-radius: 14px; padding: 20px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e8eaed;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .list-header {
@@ -409,8 +425,9 @@ body {
 /* ===== SEARCH PAGE ===== */
 .search-bar-large {
   display: flex; align-items: center; background: #fff;
-  border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 18px;
+  border: 1px solid #e8eaed; border-radius: 12px; padding: 12px 18px;
   gap: 12px; margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .search-bar-large input {
@@ -426,8 +443,9 @@ body {
 
 .result-card {
   background: #fff; border-radius: 12px; padding: 16px 20px;
-  border: 1px solid #e5e7eb; margin-bottom: 10px;
+  border: 1px solid #e8eaed; margin-bottom: 10px;
   display: flex; justify-content: space-between; align-items: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .result-name { font-size: 15px; font-weight: 700; color: #1a1a2e; }
@@ -475,8 +493,9 @@ body {
 
 /* ===== DRIVE DETAIL CARD ===== */
 .drive-detail-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+  background: #fff; border: 1px solid #e8eaed; border-radius: 12px;
   padding: 18px 22px; margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .drive-detail-top {
@@ -503,9 +522,10 @@ body {
 
 /* ===== HISTORY ROW ===== */
 .history-row {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+  background: #fff; border: 1px solid #e8eaed; border-radius: 10px;
   padding: 12px 18px; margin-bottom: 6px; display: flex;
   align-items: center; gap: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .history-badge {
@@ -524,7 +544,8 @@ body {
 
 .device-card {
   background: #fff; border-radius: 14px; padding: 20px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e8eaed;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
 }
 
@@ -1063,4 +1084,175 @@ details[open] > div {
 /* Logout button hover */
 .sidebar-bottom button:hover {
   transform: translateX(3px) !important;
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+
+/* Tablet - sidebar collapses to icons */
+@media (max-width: 1024px) {
+  .stat-cards { grid-template-columns: repeat(2, 1fr); }
+  .charts-row { grid-template-columns: 1fr; }
+  .bottom-row { grid-template-columns: 1fr; }
+  .sidebar { width: 220px; }
+  .content { padding: 10px 20px 30px; }
+  .header { padding: 16px 20px 8px; }
+  .devices-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+
+/* Mobile - sidebar becomes top bar or hamburger */
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid #e8eaed;
+    flex-shrink: 0;
+    overflow: visible;
+  }
+
+  .logo { padding: 16px 16px 12px; }
+
+  .nav-items {
+    display: flex;
+    overflow-x: auto;
+    padding: 0 8px 8px;
+    gap: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav-items::-webkit-scrollbar { display: none; }
+
+  .nav-item {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    gap: 6px;
+    margin-bottom: 0;
+  }
+
+  .nav-item:hover,
+  .nav-item.active {
+    transform: none;
+  }
+
+  .nav-item.active::before { display: none; }
+
+  .sidebar-bottom { display: none; }
+
+  .sidebar-divider { display: none; }
+
+  .main { overflow: auto; }
+
+  .header { padding: 14px 16px 6px; }
+  .header h1 { font-size: 20px; }
+
+  .header-right { gap: 10px; }
+
+  .search-box { display: none; }
+
+  .content { padding: 8px 16px 24px; }
+
+  .stat-cards { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  .stat-card { padding: 14px 16px; border-radius: 12px; }
+  .stat-card-value { font-size: 22px; }
+  .stat-card-icon { width: 30px; height: 30px; font-size: 14px; }
+  .stat-card-arrow { width: 26px; height: 26px; font-size: 12px; }
+
+  .charts-row { grid-template-columns: 1fr; gap: 12px; }
+
+  .chart-card { padding: 16px; }
+  .chart-stat-value { font-size: 22px; }
+
+  .bar-chart { height: 160px; }
+
+  .donut-wrapper { width: 150px; height: 150px; }
+  .donut-svg { width: 150px; height: 150px; }
+  .donut-center-value { font-size: 26px; }
+
+  .bottom-row { grid-template-columns: 1fr; gap: 12px; }
+
+  .list-card { padding: 16px; }
+
+  .drive-detail-card { padding: 14px 16px; }
+  .drive-detail-name { font-size: 14px; }
+
+  .search-bar-large { padding: 10px 14px; }
+  .search-bar-large input { font-size: 14px; }
+  .search-bar-large button { padding: 8px 16px; font-size: 12px; }
+
+  .result-card { padding: 12px 16px; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+  .history-row { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
+  .history-badge { font-size: 10px; padding: 3px 8px; }
+  .history-time { margin-left: 0; width: 100%; margin-top: 4px; }
+
+  .devices-grid { grid-template-columns: 1fr; gap: 12px; }
+  .device-card { padding: 16px; }
+
+  /* Disable zoom-on-hover for touch devices */
+  .stat-card:hover,
+  .chart-card:hover,
+  .list-card:hover,
+  .drive-detail-card:hover,
+  .result-card:hover,
+  .device-card:hover {
+    transform: none;
+  }
+
+  .history-row:hover {
+    transform: none;
+  }
+
+  .drive-row:hover,
+  .activity-row:hover {
+    transform: none;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  .stat-cards { grid-template-columns: 1fr; gap: 8px; }
+  .stat-card { padding: 12px 14px; }
+  .stat-card-value { font-size: 20px; }
+
+  .header h1 { font-size: 18px; }
+
+  .logo-text { font-size: 14px; }
+  .logo-circle { width: 36px; height: 36px; font-size: 11px; }
+
+  .chart-stats { gap: 16px; }
+  .chart-stat-value { font-size: 20px; }
+
+  .bar-chart { height: 140px; gap: 6px; }
+  .bar { width: 14px; }
+  .bar-label { font-size: 8px; }
+
+  .donut-wrapper { width: 130px; height: 130px; }
+  .donut-svg { width: 130px; height: 130px; }
+  .donut-center-value { font-size: 22px; }
+
+  .drive-detail-meta { font-size: 11px; }
+
+  .device-drive-row { padding: 8px 10px; }
+
+  .result-card .result-name { font-size: 14px; }
+  .result-card .result-meta { font-size: 11px; }
+
+  .content { padding: 6px 12px 20px; }
+}
+
+/* Large screens */
+@media (min-width: 1440px) {
+  .stat-cards { grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .content { padding: 10px 40px 30px; max-width: 1400px; margin: 0 auto; }
+  .header { padding: 20px 40px 10px; }
 }
