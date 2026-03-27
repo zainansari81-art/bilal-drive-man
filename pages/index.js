@@ -128,7 +128,7 @@ export default function Home({ username, initialDrives, initialActivities }) {
       <Head>
         <title>Bilal - Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23c8e600'/><text x='50' y='68' text-anchor='middle' font-family='Arial' font-weight='900' font-size='55' fill='%231a1a2e'>B</text></svg>" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='5' y='15' width='90' height='70' rx='10' fill='%231a1a2e'/><rect x='12' y='22' width='76' height='40' rx='5' fill='%23c8e600'/><circle cx='30' cy='72' r='5' fill='%23c8e600'/><circle cx='45' cy='72' r='5' fill='%23c8e600'/><rect x='60' y='68' width='22' height='8' rx='3' fill='%23c8e600'/></svg>" />
       </Head>
 
       <div className="app-layout">
