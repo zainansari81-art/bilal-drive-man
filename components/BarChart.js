@@ -1,8 +1,8 @@
 import { formatTB } from '../lib/format';
 
 export default function BarChart({ drives }) {
-  const maxDriveBytes = drives.length > 0 ? Math.max(...drives.map(d => d.total)) : 4e12;
-  const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12; // Round up to nearest TB
+  const maxDriveBytes = drives.length > 0 ? Math.max(...drives.map(d => d.total || 0)) : 4e12;
+  const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12 || 4e12; // Round up to nearest TB, fallback 4TB
   const totalUsed = drives.reduce((s, d) => s + d.used, 0);
   const totalFree = drives.reduce((s, d) => s + d.free, 0);
   const steps = 4;
