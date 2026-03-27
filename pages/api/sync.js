@@ -72,6 +72,7 @@ export default requireApiKey(async function handler(req, res) {
       free_bytes: drive.free_bytes || 0,
       is_connected: true,
       drive_letter: drive.drive_letter || null,
+      source_machine: drive.source_machine || null,
       last_seen: new Date().toISOString(),
       last_scan: new Date().toISOString(),
     }, 'volume_label');

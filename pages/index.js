@@ -10,6 +10,7 @@ import ActivityList from '../components/ActivityList';
 import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
+import DevicesPage from '../components/DevicesPage';
 import { getSessionFromRequest } from '../lib/auth';
 import { getDrivesWithClients, formatDrivesForFrontend, getHistory } from '../lib/supabase';
 
@@ -137,6 +138,10 @@ export default function Home({ username, initialDrives, initialActivities }) {
 
             {currentPage === 'drives' && (
               <DrivesPage drives={drives} />
+            )}
+
+            {currentPage === 'devices' && (
+              <DevicesPage drives={drives} />
             )}
 
             {currentPage === 'search' && (

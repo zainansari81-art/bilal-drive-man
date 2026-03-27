@@ -205,6 +205,18 @@ def api_request(config, endpoint, data):
         return None
 
 
+def get_machine_name():
+    """Get this Mac's computer name."""
+    try:
+        result = subprocess.run(['scutil', '--get', 'ComputerName'], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except:
+        pass
+    import socket
+    return socket.gethostname()
+
+
 def sync_drive(config, drive_info, clients):
     data = {
         'drive': {
@@ -213,6 +225,7 @@ def sync_drive(config, drive_info, clients):
             'used_bytes': drive_info['used'],
             'free_bytes': drive_info['free'],
             'drive_letter': drive_info.get('path', ''),
+            'source_machine': get_machine_name(),
         },
         'clients': clients,
     }

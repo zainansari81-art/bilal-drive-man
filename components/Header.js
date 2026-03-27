@@ -3,6 +3,7 @@ import { useState } from 'react';
 const pageTitles = {
   dashboard: 'Dashboard',
   drives: 'Drives',
+  devices: 'Devices',
   search: 'Search Couples',
   history: 'History',
 };

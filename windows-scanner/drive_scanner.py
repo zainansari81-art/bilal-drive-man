@@ -228,6 +228,12 @@ def api_request(config, endpoint, data):
         return None
 
 
+def get_machine_name():
+    """Get this PC's computer name."""
+    import socket
+    return os.environ.get('COMPUTERNAME', socket.gethostname())
+
+
 def sync_drive(config, drive_info, clients):
     """Push drive data to the online dashboard."""
     data = {
@@ -237,6 +243,7 @@ def sync_drive(config, drive_info, clients):
             'used_bytes': drive_info['used'],
             'free_bytes': drive_info['free'],
             'drive_letter': drive_info['letter'],
+            'source_machine': get_machine_name(),
         },
         'clients': clients,
     }
