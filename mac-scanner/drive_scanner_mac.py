@@ -16,6 +16,35 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
+# ─── Auto-Update ─────────────────────────────────────────────────────────────
+
+GITHUB_RAW_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/mac-scanner/drive_scanner_mac.py'
+
+def auto_update():
+    """Check GitHub for newer version and replace self if updated."""
+    try:
+        script_path = os.path.abspath(__file__)
+        with open(script_path, 'r') as f:
+            current = f.read()
+
+        req = urllib.request.Request(GITHUB_RAW_URL)
+        req.add_header('Cache-Control', 'no-cache')
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            latest = resp.read().decode('utf-8')
+
+        if latest.strip() != current.strip() and len(latest) > 100:
+            with open(script_path, 'w') as f:
+                f.write(latest)
+            print("[AUTO-UPDATE] Updated to latest version. Restarting...")
+            logging.info("Auto-updated from GitHub. Restarting...")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        else:
+            logging.info("Auto-update check: already up to date")
+    except Exception as e:
+        logging.error(f"Auto-update check failed (will retry next start): {e}")
+
+auto_update()
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 CONFIG_DIR = os.path.expanduser('~/Library/Application Support/BilalDriveMan')
@@ -56,10 +85,52 @@ def save_config(config):
 
 # ─── macOS Drive Detection ──────────────────────────────────────────────────
 
+def _get_internal_volume_names():
+    """Use diskutil to find internal volume names so we can skip them."""
+    internal = set()
+    try:
+        result = subprocess.run(
+            ['diskutil', 'list', '-plist'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            import plistlib
+            plist = plistlib.loads(result.stdout.encode())
+            for disk_name in plist.get('AllDisksAndPartitions', []):
+                # Check if this disk is internal
+                dev = disk_name.get('DeviceIdentifier', '')
+                try:
+                    info_result = subprocess.run(
+                        ['diskutil', 'info', '-plist', dev],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if info_result.returncode == 0:
+                        info = plistlib.loads(info_result.stdout.encode())
+                        if info.get('Internal', False):
+                            # Add all volume names from this internal disk
+                            vol_name = info.get('VolumeName', '')
+                            if vol_name:
+                                internal.add(vol_name)
+                            # Check APFS sub-volumes
+                            for part in disk_name.get('APFSVolumes', []) + disk_name.get('Partitions', []):
+                                vn = part.get('VolumeName', '') or part.get('MountPoint', '').split('/')[-1]
+                                if vn:
+                                    internal.add(vn)
+                except Exception:
+                    pass
+    except Exception as e:
+        logging.error(f"diskutil error: {e}")
+
+    # Always skip these known internal names as fallback
+    internal.update({'Macintosh HD', 'Macintosh HD - Data', 'Preboot', 'Recovery', 'VM'})
+    return internal
+
+
 def get_external_drives():
-    """Detect external drives on macOS via /Volumes."""
+    """Detect external drives on macOS via /Volumes, filtering out internal disks."""
     drives = []
     volumes_path = '/Volumes'
+    internal_names = _get_internal_volume_names()
 
     try:
         entries = os.listdir(volumes_path)
@@ -71,8 +142,8 @@ def get_external_drives():
         if not os.path.ismount(vol_path):
             continue
 
-        # Skip the boot volume
-        if vol_path == '/' or name == 'Macintosh HD' or name == 'Macintosh HD - Data':
+        # Skip internal volumes
+        if vol_path == '/' or name in internal_names:
             continue
 
         try:
@@ -121,6 +192,8 @@ def get_folder_size(path):
                         file_count += 1
                 except (OSError, PermissionError):
                     pass
+            # Small pause between directories to avoid hogging I/O
+            time.sleep(0.01)
     except (OSError, PermissionError):
         pass
     return total_size, file_count
@@ -243,6 +316,16 @@ def sync_drive(config, drive_info, clients):
     return False
 
 
+def send_heartbeat(config, connected_drive_labels):
+    """Send heartbeat to dashboard so device shows as online."""
+    data = {
+        'machine_name': get_machine_name(),
+        'platform': 'mac',
+        'connected_drives': connected_drive_labels,
+    }
+    api_request(config, 'heartbeat', data)
+
+
 def disconnect_drive(config, volume_label):
     result = api_request(config, 'disconnect', {'volume_label': volume_label})
     if result and result.get('success'):
@@ -271,6 +354,7 @@ class DriveMonitor:
         self.running = False
         self.known_drives = {}
         self.last_scan = {}
+        self.last_update_check = 0
         self.on_status = on_status
 
     def status(self, msg):
@@ -322,7 +406,21 @@ class DriveMonitor:
 
         self.known_drives = current_labels
 
+        # Send heartbeat
+        connected_labels = [d['label'] for d in current]
+        send_heartbeat(self.config, connected_labels)
+
+        # Check for updates every 5 minutes
+        if time.time() - self.last_update_check > 300:
+            self.last_update_check = time.time()
+            threading.Thread(target=auto_update, daemon=True).start()
+
     def _scan_and_sync(self, drive):
+        # Set low priority so scanning doesn't affect workflow
+        try:
+            os.nice(10)  # Lower CPU priority
+        except OSError:
+            pass
         self.status(f"Scanning {drive['label']} ({drive['path']})...")
         clients = scan_drive_folders(drive['path'])
 

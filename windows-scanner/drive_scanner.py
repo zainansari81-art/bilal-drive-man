@@ -16,6 +16,35 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+# ─── Auto-Update ─────────────────────────────────────────────────────────────
+
+GITHUB_RAW_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/windows-scanner/drive_scanner.py'
+
+def auto_update():
+    """Check GitHub for newer version and replace self if updated."""
+    try:
+        script_path = os.path.abspath(__file__)
+        with open(script_path, 'r') as f:
+            current = f.read()
+
+        req = urllib.request.Request(GITHUB_RAW_URL)
+        req.add_header('Cache-Control', 'no-cache')
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            latest = resp.read().decode('utf-8')
+
+        if latest.strip() != current.strip() and len(latest) > 100:
+            with open(script_path, 'w') as f:
+                f.write(latest)
+            print("[AUTO-UPDATE] Updated to latest version. Restarting...")
+            logging.info("Auto-updated from GitHub. Restarting...")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        else:
+            logging.info("Auto-update check: already up to date")
+    except Exception as e:
+        logging.error(f"Auto-update check failed (will retry next start): {e}")
+
+auto_update()
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 CONFIG_DIR = os.path.join(os.getenv('APPDATA', ''), 'BilalDriveMan')
@@ -263,6 +292,16 @@ def sync_drive(config, drive_info, clients):
     return False
 
 
+def send_heartbeat(config, connected_drive_labels):
+    """Send heartbeat to dashboard so device shows as online."""
+    data = {
+        'machine_name': get_machine_name(),
+        'platform': 'windows',
+        'connected_drives': connected_drive_labels,
+    }
+    api_request(config, 'heartbeat', data)
+
+
 def disconnect_drive(config, volume_label):
     result = api_request(config, 'disconnect', {'volume_label': volume_label})
     if result and result.get('success'):
@@ -291,6 +330,7 @@ class DriveMonitor:
         self.running = False
         self.known_drives = {}
         self.last_scan = {}
+        self.last_update_check = 0
         self.on_status = on_status
 
     def status(self, msg):
@@ -341,6 +381,15 @@ class DriveMonitor:
                 self._scan_and_sync(drive)
 
         self.known_drives = current_labels
+
+        # Send heartbeat
+        connected_labels = [d['label'] for d in current]
+        send_heartbeat(self.config, connected_labels)
+
+        # Check for updates every 5 minutes
+        if time.time() - self.last_update_check > 300:
+            self.last_update_check = time.time()
+            threading.Thread(target=auto_update, daemon=True).start()
 
     def _scan_and_sync(self, drive):
         # Set low I/O priority so scanning doesn't block file copies
