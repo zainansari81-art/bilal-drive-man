@@ -1,8 +1,10 @@
 """
-BILAL - DRIVE MAN: Windows Drive Scanner
+Windows Scanner V.3.29.3 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
+
+VERSION = '3.29.3'
 
 import os
 import sys
@@ -472,7 +474,7 @@ def run_with_tray():
         icon.stop()
 
     menu = pystray.Menu(
-        pystray.MenuItem("Bilal - Drive Man", None, enabled=False),
+        pystray.MenuItem(f"Windows Scanner V.{VERSION}", None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Scan Now", on_scan),
         pystray.MenuItem("Open Dashboard", on_open_dashboard),
@@ -480,7 +482,7 @@ def run_with_tray():
         pystray.MenuItem("Quit", on_quit),
     )
 
-    icon = pystray.Icon("BilalDriveMan", img, "Bilal - Drive Man", menu)
+    icon = pystray.Icon("BilalDriveMan", img, f"Windows Scanner V.{VERSION}", menu)
 
     monitor.start()
     icon.run()
@@ -490,7 +492,7 @@ def run_console():
     """Run in console mode (no tray icon needed)."""
     config = load_config()
     print("=" * 50)
-    print("  BILAL - DRIVE MAN: Scanner")
+    print(f"  Windows Scanner V.{VERSION} - BILAL DRIVE MAN")
     print(f"  Syncing to: {config['api_url']}")
     print("=" * 50)
     print()
@@ -524,7 +526,7 @@ if __name__ == '__main__':
     try:
         mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "BilalDriveMan_Mutex")
         if ctypes.windll.kernel32.GetLastError() == 183:
-            print("Bilal - Drive Man is already running!")
+            print(f"Windows Scanner V.{VERSION} is already running!")
             sys.exit(0)
     except:
         pass

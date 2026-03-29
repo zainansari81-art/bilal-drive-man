@@ -1,8 +1,10 @@
 """
-BILAL - DRIVE MAN: Mac Drive Scanner
+Mac Scanner V.3.29.3 - BILAL DRIVE MAN
 Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
+
+VERSION = '3.29.3'
 
 import os
 import sys
@@ -473,7 +475,7 @@ def run_menubar():
 
     class BilalDriveManApp(rumps.App):
         def __init__(self):
-            super().__init__("Bilal - Drive Man", icon=None, title="BD")
+            super().__init__(f"Mac Scanner V.{VERSION}", icon=None, title="BD")
             self.monitor = DriveMonitor(config, on_status=self._on_status)
             self.status_item = rumps.MenuItem("Status: Starting...")
             self.status_item.set_callback(None)
@@ -499,7 +501,7 @@ def run_menubar():
         def _scan_now(self, _):
             self.monitor.force_scan()
             rumps.notification(
-                "Bilal - Drive Man",
+                f"Mac Scanner V.{VERSION}",
                 "Scanning...",
                 "Scanning all connected drives"
             )
@@ -519,7 +521,7 @@ def run_console():
     """Run in console mode (no menu bar)."""
     config = load_config()
     print("=" * 50)
-    print("  BILAL - DRIVE MAN: Mac Scanner")
+    print(f"  Mac Scanner V.{VERSION} - BILAL DRIVE MAN")
     print(f"  Syncing to: {config['api_url']}")
     print("=" * 50)
     print()
