@@ -8,11 +8,11 @@ export default requireAuth(async function handler(req, res) {
   }
 
   try {
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const activities = await getHistory(limit);
     return res.status(200).json(activities);
   } catch (err) {
     console.error('History API error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });

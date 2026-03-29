@@ -442,7 +442,12 @@ class DriveMonitor:
         if drive['free'] < threshold:
             self.status(f"WARNING: {drive['label']} has only {format_size(drive['free'])} free!")
             try:
-                os.system(f'osascript -e \'display notification "{drive["label"]} has only {format_size(drive["free"])} free!" with title "Bilal - Drive Man" subtitle "Low Space Warning"\'')
+                label = drive['label'].replace('"', '')
+                free_str = format_size(drive['free'])
+                subprocess.run([
+                    'osascript', '-e',
+                    f'display notification "{label} has only {free_str} free!" with title "Bilal - Drive Man" subtitle "Low Space Warning"'
+                ], timeout=5)
             except:
                 pass
 

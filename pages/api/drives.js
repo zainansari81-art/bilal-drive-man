@@ -28,6 +28,6 @@ export default requireAuth(async function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   } catch (err) {
     console.error('Drives API error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -23,6 +23,6 @@ export default requireAuth(async function handler(req, res) {
     });
   } catch (err) {
     console.error('Scan API error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });

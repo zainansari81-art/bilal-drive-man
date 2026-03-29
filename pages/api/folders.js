@@ -1,31 +1,12 @@
-import { getClientsForDrive, getCouplesForClient, getDriveById, addHistory } from '../../lib/supabase';
-import { requireAuth } from '../../lib/auth';
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dialxndobebudwexsubr.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpYWx4bmRvYmVidWR3ZXhzdWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTcwMTYsImV4cCI6MjA5MDA5MzAxNn0.XE2b_M3uyUe5VPnon-X8fspQGnNjSPyXbis57qYQxn4';
-
-async function supabasePost(path, body, headers = {}) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method: 'POST',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation,resolution=merge-duplicates',
-      ...headers,
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
-}
+import { getClientsForDrive, getCouplesForClient, getDriveById, addHistory, supabasePost } from '../../lib/supabase';
+import { requireAuth, sanitizeString, validatePositiveNumber } from '../../lib/auth';
 
 export default requireAuth(async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const driveId = parseInt(req.query.drive_id);
-      if (!driveId) {
-        return res.status(400).json({ error: 'drive_id is required' });
+      if (!driveId || driveId <= 0) {
+        return res.status(400).json({ error: 'Valid drive_id is required' });
       }
 
       const drive = await getDriveById(driveId);
@@ -54,24 +35,29 @@ export default requireAuth(async function handler(req, res) {
     if (req.method === 'POST') {
       const { drive_id, client_name, couple_name, couple_size } = req.body;
 
+      if (!drive_id || !client_name) {
+        return res.status(400).json({ error: 'drive_id and client_name are required' });
+      }
+
+      const safeClientName = sanitizeString(client_name, 255);
+      const safeCoupleName = couple_name ? sanitizeString(couple_name, 255) : null;
+
       const drive = await getDriveById(drive_id);
       if (!drive) {
         return res.status(404).json({ error: 'Drive not found' });
       }
 
-      // Upsert client
       const clientResult = await supabasePost('clients', {
         drive_id,
-        client_name,
+        client_name: safeClientName,
       });
       const clientId = clientResult?.[0]?.id;
 
-      // Add couple if provided
-      if (couple_name && clientId) {
+      if (safeCoupleName && clientId) {
         await supabasePost('couples', {
           client_id: clientId,
-          couple_name,
-          size_bytes: couple_size || 0,
+          couple_name: safeCoupleName,
+          size_bytes: validatePositiveNumber(couple_size),
           first_seen: new Date().toISOString(),
           last_seen: new Date().toISOString(),
           is_present: true,
@@ -82,7 +68,7 @@ export default requireAuth(async function handler(req, res) {
         drive_id,
         volume_label: drive.volume_label,
         event_type: 'folder_added',
-        folder_name: `${client_name}${couple_name ? ' / ' + couple_name : ''}`,
+        folder_name: `${safeClientName}${safeCoupleName ? ' / ' + safeCoupleName : ''}`,
         details: `Added to ${drive.volume_label}`,
       });
 
@@ -90,9 +76,9 @@ export default requireAuth(async function handler(req, res) {
     }
 
     res.setHeader('Allow', ['GET', 'POST']);
-    return res.status(405).json({ error: `Method ${req.method} not allowed` });
+    return res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     console.error('Folders API error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });

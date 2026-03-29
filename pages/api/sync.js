@@ -1,60 +1,14 @@
-import { addHistory } from '../../lib/supabase';
-import { requireApiKey } from '../../lib/auth';
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dialxndobebudwexsubr.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRpYWx4bmRvYmVidWR3ZXhzdWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTcwMTYsImV4cCI6MjA5MDA5MzAxNn0.XE2b_M3uyUe5VPnon-X8fspQGnNjSPyXbis57qYQxn4';
-
-async function supabasePost(path, body, onConflict) {
-  const url = onConflict
-    ? `${SUPABASE_URL}/rest/v1/${path}?on_conflict=${onConflict}`
-    : `${SUPABASE_URL}/rest/v1/${path}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation,resolution=merge-duplicates',
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    console.error(`Supabase POST ${path} error ${res.status}:`, text);
-  }
-  return text ? JSON.parse(text) : null;
-}
+import { addHistory, supabasePost, supabasePatch, supabaseFetch } from '../../lib/supabase';
+import { requireApiKey, sanitizeString, validatePositiveNumber } from '../../lib/auth';
 
 async function supabaseGet(path) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-    },
-  });
-  const text = await res.text();
-  return text ? JSON.parse(text) : [];
-}
-
-async function supabasePatch(path, body) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method: 'PATCH',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'return=representation',
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  return supabaseFetch(path);
 }
 
 export default requireApiKey(async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: `Method ${req.method} not allowed` });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
@@ -64,17 +18,19 @@ export default requireApiKey(async function handler(req, res) {
       return res.status(400).json({ error: 'drive.volume_label is required' });
     }
 
-    const machineName = drive.source_machine || 'Unknown';
+    // Input validation
+    const volumeLabel = sanitizeString(drive.volume_label, 128);
+    const machineName = sanitizeString(drive.source_machine || 'Unknown', 128);
 
     // Upsert drive
     const driveResult = await supabasePost('drives', {
-      volume_label: drive.volume_label,
-      total_size_bytes: drive.total_size_bytes || 0,
-      used_bytes: drive.used_bytes || 0,
-      free_bytes: drive.free_bytes || 0,
+      volume_label: volumeLabel,
+      total_size_bytes: validatePositiveNumber(drive.total_size_bytes),
+      used_bytes: validatePositiveNumber(drive.used_bytes),
+      free_bytes: validatePositiveNumber(drive.free_bytes),
       is_connected: true,
-      drive_letter: drive.drive_letter || null,
-      source_machine: drive.source_machine || null,
+      drive_letter: sanitizeString(drive.drive_letter || '', 10),
+      source_machine: machineName,
       last_seen: new Date().toISOString(),
       last_scan: new Date().toISOString(),
     }, 'volume_label');
@@ -94,7 +50,7 @@ export default requireApiKey(async function handler(req, res) {
       // Batch upsert all clients at once
       const clientRows = clients.map(c => ({
         drive_id: driveId,
-        client_name: c.name,
+        client_name: sanitizeString(c.name, 255),
       }));
       const clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name');
 
@@ -108,18 +64,19 @@ export default requireApiKey(async function handler(req, res) {
 
       // Batch upsert all couples at once
       const coupleRows = [];
-      const coupleInfo = []; // track client name for history
+      const coupleInfo = [];
       for (const client of clients) {
-        const clientId = clientMap[client.name];
+        const clientId = clientMap[sanitizeString(client.name, 255)];
         if (!clientId) continue;
 
         for (const couple of client.couples || []) {
-          currentCoupleKeys.add(`${clientId}:${couple.name}`);
+          const coupleName = sanitizeString(couple.name, 255);
+          currentCoupleKeys.add(`${clientId}:${coupleName}`);
           coupleRows.push({
             client_id: clientId,
-            couple_name: couple.name,
-            size_bytes: couple.size || 0,
-            file_count: couple.file_count || 0,
+            couple_name: coupleName,
+            size_bytes: validatePositiveNumber(couple.size),
+            file_count: validatePositiveNumber(couple.file_count),
             last_seen: new Date().toISOString(),
             is_present: true,
           });
@@ -136,7 +93,6 @@ export default requireApiKey(async function handler(req, res) {
 
       // Upsert all couples in one batch
       if (coupleRows.length > 0) {
-        // Add first_seen for new couples
         for (const row of coupleRows) {
           const key = `${row.client_id}:${row.couple_name}`;
           if (!existingMap[key]) {
@@ -158,20 +114,20 @@ export default requireApiKey(async function handler(req, res) {
           foldersAdded++;
           historyEntries.push({
             drive_id: driveId,
-            volume_label: drive.volume_label,
+            volume_label: volumeLabel,
             event_type: 'folder_added',
             folder_name: `${info.clientName} / ${info.coupleName}`,
-            details: `New couple added to ${drive.volume_label} from ${machineName}`,
+            details: `New couple added to ${volumeLabel} from ${machineName}`,
           });
         } else {
           const sizeChanged = Math.abs((existing.size_bytes || 0) - (row.size_bytes || 0)) > 1024 * 1024;
           if (sizeChanged) {
             historyEntries.push({
               drive_id: driveId,
-              volume_label: drive.volume_label,
+              volume_label: volumeLabel,
               event_type: 'size_changed',
               folder_name: `${info.clientName} / ${info.coupleName}`,
-              details: `Size changed on ${drive.volume_label} from ${machineName}`,
+              details: `Size changed on ${volumeLabel} from ${machineName}`,
             });
           }
           foldersUpdated++;
@@ -182,19 +138,18 @@ export default requireApiKey(async function handler(req, res) {
       for (const ec of existingCouples) {
         if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
           foldersRemoved++;
-          // Find client name for this couple
           const clientName = Object.entries(clientMap).find(([, id]) => id === ec.client_id)?.[0] || '';
           historyEntries.push({
             drive_id: driveId,
-            volume_label: drive.volume_label,
+            volume_label: volumeLabel,
             event_type: 'folder_removed',
             folder_name: `${clientName} / ${ec.couple_name}`,
-            details: `Removed from ${drive.volume_label} (${machineName})`,
+            details: `Removed from ${volumeLabel} (${machineName})`,
           });
         }
       }
 
-      // Mark removed couples in one batch per client
+      // Mark removed couples
       if (foldersRemoved > 0) {
         for (const ec of existingCouples) {
           if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
@@ -215,7 +170,7 @@ export default requireApiKey(async function handler(req, res) {
     // Log drive connection
     await addHistory({
       drive_id: driveId,
-      volume_label: drive.volume_label,
+      volume_label: volumeLabel,
       event_type: 'drive_connected',
       details: `Drive scanned from ${machineName}. Added: ${foldersAdded}, Updated: ${foldersUpdated}, Removed: ${foldersRemoved}`,
     });
@@ -227,6 +182,6 @@ export default requireApiKey(async function handler(req, res) {
     });
   } catch (err) {
     console.error('Sync API error:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
