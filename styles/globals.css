@@ -1088,8 +1088,73 @@ details[open] > div {
 
 /* ===== RESPONSIVE DESIGN ===== */
 
-/* Tablet - sidebar collapses to icons */
-@media (max-width: 1024px) {
+/* Large desktop (1440px+) - content stays centered, scales up */
+@media (min-width: 1440px) {
+  .main {
+    max-width: 100%;
+  }
+  .header {
+    padding: 24px 48px 12px;
+  }
+  .content {
+    padding: 12px 48px 40px;
+  }
+  .stat-cards { grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .charts-row { gap: 20px; }
+  .bottom-row { gap: 20px; }
+  .stat-card { padding: 24px 26px; }
+  .stat-card-value { font-size: 30px; }
+  .chart-card { padding: 24px; }
+  .chart-stat-value { font-size: 28px; }
+  .bar-chart { height: 220px; }
+  .donut-wrapper { width: 200px; height: 200px; }
+  .donut-svg { width: 200px; height: 200px; }
+  .donut-center-value { font-size: 36px; }
+  .devices-grid { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+}
+
+/* Extra large (1920px+ / ultrawide) */
+@media (min-width: 1920px) {
+  .header {
+    padding: 28px 60px 14px;
+  }
+  .content {
+    padding: 14px 60px 50px;
+  }
+  .stat-cards { gap: 24px; }
+  .stat-card { padding: 28px 30px; }
+  .stat-card-value { font-size: 32px; }
+  .stat-card-label { font-size: 13px; }
+  .stat-card-sub { font-size: 12px; }
+  .charts-row { gap: 24px; }
+  .bottom-row { gap: 24px; }
+  .chart-card { padding: 28px; }
+  .chart-stat-value { font-size: 30px; }
+  .bar-chart { height: 250px; }
+  .bar { width: 22px; }
+  .donut-wrapper { width: 220px; height: 220px; }
+  .donut-svg { width: 220px; height: 220px; }
+  .donut-center-value { font-size: 40px; }
+  .list-card { padding: 24px; }
+  .drive-row { padding: 12px 0; }
+  .drive-name { font-size: 14px; }
+  .activity-title { font-size: 13px; }
+  .activity-detail { font-size: 12px; }
+  .header h1 { font-size: 30px; }
+  .search-box input { width: 240px; font-size: 14px; }
+  .devices-grid { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 24px; }
+  .device-card { padding: 24px; }
+  .device-name { font-size: 18px; }
+}
+
+/* Compact large (1200-1440px) */
+@media (min-width: 1200px) and (max-width: 1439px) {
+  .content { padding: 10px 36px 30px; }
+  .header { padding: 20px 36px 10px; }
+}
+
+/* Tablet landscape (1024-1199px) */
+@media (max-width: 1199px) {
   .stat-cards { grid-template-columns: repeat(2, 1fr); }
   .charts-row { grid-template-columns: 1fr; }
   .bottom-row { grid-template-columns: 1fr; }
@@ -1099,7 +1164,17 @@ details[open] > div {
   .devices-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 }
 
-/* Mobile - sidebar becomes top bar or hamburger */
+/* Tablet portrait (768-1023px) */
+@media (max-width: 1023px) {
+  .sidebar { width: 200px; }
+  .logo-text { font-size: 14px; }
+  .nav-item { font-size: 13px; padding: 10px 14px; }
+  .scan-card { padding: 14px; }
+  .scan-card h3 { font-size: 13px; }
+  .search-box input { width: 140px; }
+}
+
+/* Mobile (below 768px) - sidebar becomes top bar */
 @media (max-width: 768px) {
   .app-layout {
     flex-direction: column;
@@ -1146,7 +1221,7 @@ details[open] > div {
   .nav-item.active::before { display: none; }
 
   .sidebar-bottom { display: none; }
-
+  .sidebar-brand { display: none; }
   .sidebar-divider { display: none; }
 
   .main { overflow: auto; }
@@ -1248,11 +1323,4 @@ details[open] > div {
   .result-card .result-meta { font-size: 11px; }
 
   .content { padding: 6px 12px 20px; }
-}
-
-/* Large screens */
-@media (min-width: 1440px) {
-  .stat-cards { grid-template-columns: repeat(4, 1fr); gap: 20px; }
-  .content { padding: 10px 40px 30px; max-width: 1400px; margin: 0 auto; }
-  .header { padding: 20px 40px 10px; }
 }
