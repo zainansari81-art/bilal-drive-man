@@ -639,6 +639,95 @@ body {
 .device-drive-pct { font-size: 11px; color: #8c8ca1; min-width: 35px; text-align: right; }
 .device-drive-size { font-size: 11px; color: #8c8ca1; margin-top: 4px; }
 
+/* Device expand button */
+.device-expand-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; margin-top: 12px; padding: 10px 0;
+  background: none; border: 1px dashed #d0d5dd; border-radius: 8px;
+  font-size: 12px; font-weight: 600; color: #8c8ca1;
+  cursor: pointer; transition: all 0.2s ease; font-family: inherit;
+}
+.device-expand-btn:hover {
+  border-color: #c8e600; color: #1a1a2e; background: #f9fde6;
+}
+.device-expand-btn.expanded {
+  border-color: #c8e600; color: #1a1a2e; background: #f0fde0;
+}
+.device-expand-arrow {
+  font-size: 10px; transition: transform 0.2s ease;
+}
+
+/* Device details panel */
+.device-details-panel {
+  margin-top: 12px; display: flex; flex-direction: column; gap: 12px;
+  animation: slideDown 0.3s ease forwards;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; max-height: 0; transform: translateY(-10px); }
+  to { opacity: 1; max-height: 2000px; transform: translateY(0); }
+}
+
+.device-drive-detail {
+  background: #f7f8fa; border-radius: 10px; padding: 14px;
+  border: 1px solid #eee;
+}
+.device-card:hover .device-drive-detail {
+  background: rgba(255,255,255,0.5); border-color: rgba(0,0,0,0.1);
+}
+
+.device-drive-detail-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #e5e7eb;
+}
+.device-drive-detail-name { font-size: 14px; font-weight: 700; color: #1a1a2e; }
+.device-drive-detail-count { font-size: 12px; color: #8c8ca1; }
+
+.device-no-data {
+  font-size: 12px; color: #b0b0c0; text-align: center; padding: 10px 0;
+}
+
+/* Client blocks inside device details */
+.device-client-block { margin-bottom: 2px; }
+
+.device-client-header {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 8px; border-radius: 6px; border: none; background: none;
+  cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.device-client-header:hover { background: rgba(200, 230, 0, 0.1); }
+
+.device-client-arrow { font-size: 11px; color: #8c8ca1; width: 12px; }
+.device-client-icon { font-size: 14px; }
+.device-client-name { font-size: 13px; font-weight: 600; color: #1a1a2e; flex: 1; text-align: left; }
+.device-client-count { font-size: 11px; color: #8c8ca1; }
+.device-client-size { font-size: 11px; color: #8c8ca1; min-width: 65px; text-align: right; }
+
+/* Couple list inside client */
+.device-couple-list {
+  padding-left: 32px; margin: 2px 0 6px;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.device-couple-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; font-size: 12px;
+  border-radius: 4px; transition: background 0.15s;
+}
+.device-couple-row:hover { background: rgba(200, 230, 0, 0.08); }
+
+.device-couple-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #22c55e; flex-shrink: 0;
+}
+.device-couple-name { color: #4a4a6a; flex: 1; }
+.device-couple-size { color: #8c8ca1; min-width: 65px; text-align: right; }
+
 /* Scrollbar */
 .content::-webkit-scrollbar { width: 6px; }
 .content::-webkit-scrollbar-track { background: transparent; }

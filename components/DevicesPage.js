@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { formatTB, formatSize } from '../lib/format';
 
 export default function DevicesPage({ drives }) {
@@ -38,6 +39,7 @@ export default function DevicesPage({ drives }) {
 }
 
 function MachineCard({ machine }) {
+  const [expanded, setExpanded] = useState(false);
   const connectedDrives = machine.drives.filter(d => d.connected);
   const disconnectedDrives = machine.drives.filter(d => !d.connected);
   const isOnline = connectedDrives.length > 0;
@@ -82,6 +84,73 @@ function MachineCard({ machine }) {
           <DeviceDriveRow key={`d-${i}`} drive={d} />
         ))}
       </div>
+
+      <button
+        className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
+        {expanded ? 'Hide Details' : 'Show Clients & Couples'}
+      </button>
+
+      {expanded && (
+        <div className="device-details-panel">
+          {[...connectedDrives, ...disconnectedDrives].map((drive, di) => (
+            <DriveDetails key={di} drive={drive} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DriveDetails({ drive }) {
+  const [openClients, setOpenClients] = useState({});
+  const clients = drive.clients || [];
+  const totalCouples = clients.reduce((s, c) => s + (c.couples || []).length, 0);
+
+  const toggleClient = (idx) => {
+    setOpenClients(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  return (
+    <div className="device-drive-detail">
+      <div className="device-drive-detail-header">
+        <span className="device-drive-detail-name">{drive.name}</span>
+        <span className="device-drive-detail-count">{clients.length} clients, {totalCouples} couples</span>
+      </div>
+
+      {clients.length === 0 && (
+        <div className="device-no-data">No client data available</div>
+      )}
+
+      {clients.map((client, ci) => {
+        const isOpen = openClients[ci];
+        const clientSize = (client.couples || []).reduce((s, c) => s + (c.size || 0), 0);
+        return (
+          <div key={ci} className="device-client-block">
+            <button className="device-client-header" onClick={() => toggleClient(ci)}>
+              <span className="device-client-arrow">{isOpen ? '\u25BE' : '\u25B8'}</span>
+              <span className="device-client-icon">{'\uD83D\uDCC1'}</span>
+              <span className="device-client-name">{client.name}</span>
+              <span className="device-client-count">{(client.couples || []).length} couples</span>
+              <span className="device-client-size">{formatSize(clientSize)}</span>
+            </button>
+
+            {isOpen && (
+              <div className="device-couple-list">
+                {(client.couples || []).map((couple, coi) => (
+                  <div key={coi} className="device-couple-row">
+                    <span className="device-couple-dot"></span>
+                    <span className="device-couple-name">{couple.name}</span>
+                    <span className="device-couple-size">{formatSize(couple.size || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
