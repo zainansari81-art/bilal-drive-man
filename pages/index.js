@@ -46,12 +46,38 @@ export async function getServerSideProps(context) {
   }
 }
 
+const VALID_PAGES = ['dashboard', 'drives', 'devices', 'search', 'history'];
+
+function getPageFromHash() {
+  if (typeof window === 'undefined') return 'dashboard';
+  const hash = window.location.hash.replace('#', '');
+  return VALID_PAGES.includes(hash) ? hash : 'dashboard';
+}
+
 export default function Home({ username, initialDrives, initialActivities }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [drives, setDrives] = useState(initialDrives || []);
   const [activities, setActivities] = useState(initialActivities || []);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Restore page from URL hash on mount + listen for hash changes
+  useEffect(() => {
+    // Read hash on first client-side render
+    const page = getPageFromHash();
+    if (page !== 'dashboard') {
+      setCurrentPage(page);
+    }
+    if (!window.location.hash) {
+      window.history.replaceState(null, '', '#dashboard');
+    }
+
+    const onHashChange = () => {
+      setCurrentPage(getPageFromHash());
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -105,6 +131,7 @@ export default function Home({ username, initialDrives, initialActivities }) {
       setSearchQuery('');
     }
     setCurrentPage(page);
+    window.location.hash = page;
   };
 
   const handleQuickSearch = (query) => {

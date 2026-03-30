@@ -639,10 +639,15 @@ body {
 .device-drive-pct { font-size: 11px; color: #8c8ca1; min-width: 35px; text-align: right; }
 .device-drive-size { font-size: 11px; color: #8c8ca1; margin-top: 4px; }
 
+/* Device expand buttons row */
+.device-expand-buttons {
+  display: flex; gap: 8px; margin-top: 12px;
+}
+
 /* Device expand button */
 .device-expand-btn {
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%; margin-top: 12px; padding: 10px 0;
+  flex: 1; padding: 10px 0;
   background: none; border: 1px dashed #d0d5dd; border-radius: 8px;
   font-size: 12px; font-weight: 600; color: #8c8ca1;
   cursor: pointer; transition: all 0.2s ease; font-family: inherit;
@@ -727,6 +732,58 @@ body {
 }
 .device-couple-name { color: #4a4a6a; flex: 1; }
 .device-couple-size { color: #8c8ca1; min-width: 65px; text-align: right; }
+
+/* Hard Drive Detail in Device Dropdown */
+.device-hd-detail {
+  background: #f7f8fa; border-radius: 10px; padding: 16px;
+  border: 1px solid #eee;
+}
+.device-card:hover .device-hd-detail {
+  background: rgba(255,255,255,0.5); border-color: rgba(0,0,0,0.1);
+}
+
+.device-hd-header {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+}
+.device-hd-icon {
+  font-size: 28px; width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  background: #eef0f3; border-radius: 10px; flex-shrink: 0;
+}
+.device-hd-info { flex: 1; }
+.device-hd-name { font-size: 14px; font-weight: 700; color: #1a1a2e; }
+.device-hd-sub { font-size: 11px; color: #8c8ca1; margin-top: 2px; }
+
+.device-hd-bar-container {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.device-hd-bar {
+  flex: 1; height: 10px; background: #e5e7eb; border-radius: 5px; overflow: hidden;
+}
+.device-hd-bar-fill {
+  height: 100%; border-radius: 5px;
+  transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.device-hd-pct {
+  font-size: 13px; font-weight: 700; color: #1a1a2e; min-width: 40px; text-align: right;
+}
+
+.device-hd-stats {
+  display: flex; gap: 0; border-radius: 8px; overflow: hidden;
+  border: 1px solid #e5e7eb;
+}
+.device-hd-stat {
+  flex: 1; text-align: center; padding: 8px 6px;
+  background: #fff; border-right: 1px solid #e5e7eb;
+}
+.device-hd-stat:last-child { border-right: none; }
+.device-hd-stat-label {
+  font-size: 10px; font-weight: 600; color: #8c8ca1;
+  text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px;
+}
+.device-hd-stat-value {
+  font-size: 13px; font-weight: 700; color: #1a1a2e;
+}
 
 /* Scrollbar */
 .content::-webkit-scrollbar { width: 6px; }

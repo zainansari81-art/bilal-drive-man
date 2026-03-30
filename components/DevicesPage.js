@@ -40,6 +40,7 @@ export default function DevicesPage({ drives }) {
 
 function MachineCard({ machine }) {
   const [expanded, setExpanded] = useState(false);
+  const [showHardDrives, setShowHardDrives] = useState(false);
   const connectedDrives = machine.drives.filter(d => d.connected);
   const disconnectedDrives = machine.drives.filter(d => !d.connected);
   const isOnline = connectedDrives.length > 0;
@@ -85,13 +86,30 @@ function MachineCard({ machine }) {
         ))}
       </div>
 
-      <button
-        className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
-        {expanded ? 'Hide Details' : 'Show Clients & Couples'}
-      </button>
+      <div className="device-expand-buttons">
+        <button
+          className={`device-expand-btn ${showHardDrives ? 'expanded' : ''}`}
+          onClick={() => setShowHardDrives(!showHardDrives)}
+        >
+          <span className="device-expand-arrow">{showHardDrives ? '\u25B2' : '\u25BC'}</span>
+          {showHardDrives ? 'Hide Hard Drives' : 'Show Hard Drives'}
+        </button>
+        <button
+          className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
+          {expanded ? 'Hide Clients & Couples' : 'Show Clients & Couples'}
+        </button>
+      </div>
+
+      {showHardDrives && (
+        <div className="device-details-panel">
+          {[...connectedDrives, ...disconnectedDrives].map((drive, di) => (
+            <HardDriveDetail key={di} drive={drive} />
+          ))}
+        </div>
+      )}
 
       {expanded && (
         <div className="device-details-panel">
@@ -100,6 +118,57 @@ function MachineCard({ machine }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function HardDriveDetail({ drive }) {
+  const pct = drive.total > 0 ? Math.round(drive.used / drive.total * 100) : 0;
+  const barColor = pct < 70 ? '#22c55e' : pct < 90 ? '#eab308' : '#ef4444';
+  const free = drive.total - drive.used;
+
+  return (
+    <div className="device-hd-detail">
+      <div className="device-hd-header">
+        <div className="device-hd-icon">{'\uD83D\uDDB4'}</div>
+        <div className="device-hd-info">
+          <div className="device-hd-name">
+            {drive.name}
+            {drive.letter ? ` (${drive.letter}:)` : ''}
+            {!drive.connected && <span className="device-drive-disconnected"> (disconnected)</span>}
+          </div>
+          <div className="device-hd-sub">
+            Last scan: {drive.lastScan ? new Date(drive.lastScan).toLocaleString('en-US', {
+              month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+            }) : 'Never'}
+          </div>
+        </div>
+        <div className={`device-status ${drive.connected ? 'online' : 'offline'}`} style={{ fontSize: 11, padding: '3px 10px' }}>
+          {drive.connected ? 'Connected' : 'Disconnected'}
+        </div>
+      </div>
+
+      <div className="device-hd-bar-container">
+        <div className="device-hd-bar">
+          <div className="device-hd-bar-fill" style={{ width: `${pct}%`, background: barColor }}></div>
+        </div>
+        <span className="device-hd-pct">{pct}%</span>
+      </div>
+
+      <div className="device-hd-stats">
+        <div className="device-hd-stat">
+          <span className="device-hd-stat-label">Total</span>
+          <span className="device-hd-stat-value">{formatSize(drive.total)}</span>
+        </div>
+        <div className="device-hd-stat">
+          <span className="device-hd-stat-label">Used</span>
+          <span className="device-hd-stat-value">{formatSize(drive.used)}</span>
+        </div>
+        <div className="device-hd-stat">
+          <span className="device-hd-stat-label">Free</span>
+          <span className="device-hd-stat-value">{formatSize(free > 0 ? free : 0)}</span>
+        </div>
+      </div>
     </div>
   );
 }
