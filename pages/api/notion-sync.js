@@ -129,14 +129,20 @@ export default requireAuth(async function handler(req, res) {
 
     const clientNameCache = {};
     let synced = 0;
+    const errors = [];
 
     for (const page of allPages) {
       // Project name = "Name" (title column)
       const projectName = getTextValue(page, 'Name');
 
-      // Client name = resolve relation
+      // Client name = resolve relation (with fallback on failure)
       const clientRelation = page.properties['Client name']?.relation || [];
-      const clientName = await resolveRelationName(clientRelation, clientNameCache, NOTION_API_KEY);
+      let clientName = null;
+      try {
+        clientName = await resolveRelationName(clientRelation, clientNameCache, NOTION_API_KEY);
+      } catch (relErr) {
+        console.error('Failed to resolve client name:', relErr);
+      }
 
       // Raw Data = download link (Dropbox, Google Drive, WeTransfer)
       const downloadLink = getTextValue(page, 'Raw Data');
@@ -188,13 +194,18 @@ export default requireAuth(async function handler(req, res) {
         }
       }
 
-      await supabasePost('download_projects', projectData, 'notion_page_id');
-      synced++;
+      try {
+        await supabasePost('download_projects', projectData, 'notion_page_id');
+        synced++;
+      } catch (dbErr) {
+        console.error('Supabase upsert error for', projectName, ':', dbErr);
+        errors.push(`${projectName}: ${dbErr.message}`);
+      }
     }
 
-    return res.status(200).json({ synced, total: allPages.length });
+    return res.status(200).json({ synced, total: allPages.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('Notion Sync API error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });

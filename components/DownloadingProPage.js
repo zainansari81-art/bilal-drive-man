@@ -49,8 +49,12 @@ export default function DownloadingProPage({ drives }) {
     setSyncing(true);
     try {
       const res = await fetch('/api/notion-sync', { method: 'POST' });
-      if (!res.ok) throw new Error('Sync failed');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
       setLastSynced(new Date());
+      if (data.errors?.length > 0) {
+        setError(`Synced ${data.synced}/${data.total} — ${data.errors.length} errors`);
+      }
       await fetchProjects();
     } catch (err) {
       setError(err.message);
