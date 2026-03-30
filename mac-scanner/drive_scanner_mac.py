@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.29.3'
+VERSION = '3.30.0'
 
 import os
 import sys
@@ -165,6 +165,12 @@ def get_external_drives():
 
             # Skip tiny volumes (< 1GB) - likely system partitions
             if total < 1_000_000_000:
+                continue
+
+            # Skip Final Cut Pro / macOS temporary disk images
+            _skip_prefixes = ('msu-target-', 'fcpx-', 'com.apple.', '.disk_label')
+            if any(name.lower().startswith(p) for p in _skip_prefixes):
+                logging.info(f"Skipping temp volume: {name}")
                 continue
 
             drives.append({
