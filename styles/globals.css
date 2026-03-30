@@ -859,18 +859,37 @@ body {
 .dp-project-source.unknown { background: #f0f1f3; }
 
 .dp-project-names { flex: 1; }
-.dp-project-client { font-size: 15px; font-weight: 700; color: #1a1a2e; }
-.dp-project-couple { font-size: 13px; color: #6b7280; margin-top: 2px; }
+.dp-project-name { font-size: 16px; font-weight: 700; color: #1a1a2e; display: block; }
+.dp-project-client { font-size: 13px; color: #6b7280; margin-top: 2px; display: block; }
 
-/* Badges */
-.dp-cloud-badge {
+/* Project details row */
+.dp-project-details {
+  display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 0;
+  border-bottom: 1px solid #f0f1f3; margin-bottom: 8px;
+}
+.dp-detail-item {
+  font-size: 12px; color: #4a4a6a; display: flex; align-items: center; gap: 4px;
+  background: #f8f9fa; padding: 4px 10px; border-radius: 6px;
+}
+
+/* Link row */
+.dp-link-row { margin-bottom: 8px; }
+.dp-link-url {
+  font-size: 12px; color: #3b82f6; text-decoration: none; word-break: break-all;
+}
+.dp-link-url:hover { text-decoration: underline; }
+
+/* Status Badge */
+.dp-status-badge {
   padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.5px;
 }
-.dp-cloud-badge.pending { background: #f3f4f6; color: #8c8ca1; }
-.dp-cloud-badge.connected { background: #dcfce7; color: #16a34a; }
-.dp-cloud-badge.syncing { background: #dbeafe; color: #2563eb; }
-.dp-cloud-badge.error { background: #fee2e2; color: #dc2626; }
+.dp-status-badge.idle { background: #fef3c7; color: #92400e; }
+.dp-status-badge.queued { background: #fef9c3; color: #a16207; }
+.dp-status-badge.downloading { background: #dbeafe; color: #2563eb; }
+.dp-status-badge.copying { background: #e0e7ff; color: #4338ca; }
+.dp-status-badge.completed { background: #dcfce7; color: #16a34a; }
+.dp-status-badge.failed { background: #fee2e2; color: #dc2626; }
 
 .dp-download-badge {
   padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700;
@@ -904,7 +923,7 @@ body {
   margin-top: 14px; padding-top: 14px; border-top: 1px solid #f0f1f3;
   gap: 10px; flex-wrap: wrap;
 }
-.dp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.dp-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid #f0f1f3; margin-top: 4px; }
 
 .dp-action-btn {
   padding: 7px 14px; border-radius: 7px; font-size: 12px; font-weight: 600;
@@ -1051,12 +1070,12 @@ body {
 .dp-download-status.failed .dp-status-label { color: #dc2626; }
 
 /* Project card inner layout */
-.dp-project-inner { display: flex; flex-direction: column; gap: 4px; }
-.dp-project-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dp-project-inner { display: flex; flex-direction: column; gap: 6px; }
+.dp-project-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .dp-project-info { display: flex; flex-direction: column; }
-.dp-project-client { font-size: 15px; font-weight: 700; color: #1a1a2e; }
-.dp-project-couple { font-size: 13px; color: #6b7280; }
-.dp-project-badges { display: flex; align-items: center; gap: 8px; }
+.dp-project-name { font-size: 16px; font-weight: 700; color: #1a1a2e; }
+.dp-project-client { font-size: 13px; color: #6b7280; margin-top: 2px; }
+.dp-project-badges { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .dp-project-source { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
 .dp-project-source.dropbox { background: #e8f0fe; color: #1a56db; }
 .dp-project-source.gdrive { background: #fef3e2; color: #b45309; }

@@ -171,10 +171,10 @@ export default function DownloadingProPage({ drives }) {
 
   // Compute stats
   const totalCount = projects.length;
-  const downloadingCount = projects.filter(p => p.download_status === 'downloading').length;
-  const completedCount = projects.filter(p => p.download_status === 'completed').length;
-  const queuedCount = projects.filter(p => p.download_status === 'queued').length;
-  const queuedProjects = projects.filter(p => p.download_status === 'queued').sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
+  const notDownloadedCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'idle').length;
+  const downloadingCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'downloading').length;
+  const queuedCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'queued').length;
+  const queuedProjects = projects.filter(p => (p.download_status || p.downloadStatus) === 'queued').sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
 
   // Machines from projects
   const machineMap = {};
@@ -216,8 +216,8 @@ export default function DownloadingProPage({ drives }) {
       {/* Stats Bar */}
       <div className="dp-stats-bar">
         <StatCard label="Total Projects" value={totalCount} />
-        <StatCard label="Downloading" value={downloadingCount} accent />
-        <StatCard label="Completed" value={completedCount} />
+        <StatCard label="Not Downloaded" value={notDownloadedCount} accent />
+        <StatCard label="Downloading" value={downloadingCount} />
         <StatCard label="Queued" value={queuedCount} />
       </div>
 
@@ -371,7 +371,7 @@ export default function DownloadingProPage({ drives }) {
             <div key={project.id || i} className="dp-queue-item">
               <span className="dp-queue-position">#{i + 1}</span>
               <span className="dp-queue-name">
-                {project.client_name || project.clientName} &mdash; {project.couple_name || project.coupleName}
+                {project.couple_name || project.coupleName} — {project.client_name || project.clientName}
               </span>
               <span className="dp-queue-target">
                 {project.target_drive || project.targetDrive || 'No drive'}
@@ -429,49 +429,90 @@ function ProjectCard({
   onRemove,
   onTargetDriveChange,
 }) {
+  const projectName = project.couple_name || project.coupleName || 'Unknown Project';
   const clientName = project.client_name || project.clientName || 'Unknown Client';
-  const coupleName = project.couple_name || project.coupleName || 'Unknown Couple';
-  const cloudStatus = project.cloud_status || project.cloudStatus || 'pending';
   const downloadStatus = project.download_status || project.downloadStatus || 'idle';
-  const progress = project.progress || 0;
-  const queuePosition = project.queue_position || project.queuePosition;
-  const sourceLink = project.source_link || project.sourceLink || '';
+  const downloadLink = project.download_link || project.downloadLink || '';
   const targetDrive = project.target_drive || project.targetDrive || '';
   const assignedMachine = project.assigned_machine || project.assignedMachine || '';
+  const sizeGb = project.size_gb || project.sizeGb || '';
+  const projectDate = project.project_date || project.projectDate || '';
+  const progress = project.progress || 0;
+  const queuePosition = project.queue_position || project.queuePosition;
   const totalSize = project.total_size || project.totalSize || 0;
   const downloadedSize = project.downloaded_size || project.downloadedSize || 0;
   const projectId = project.id;
 
   // Detect source type from link
-  const isDropbox = /dropbox/i.test(sourceLink);
-  const isGDrive = /drive\.google|docs\.google/i.test(sourceLink);
-  const sourceType = isDropbox ? 'dropbox' : isGDrive ? 'gdrive' : 'unknown';
-  const sourceIcon = isDropbox ? '\uD83D\uDCE6' : isGDrive ? '\uD83D\uDCC1' : '\uD83D\uDD17';
-  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : 'Link';
+  const isDropbox = /dropbox/i.test(downloadLink);
+  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
+  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
+  const sourceType = isDropbox ? 'dropbox' : isGDrive ? 'gdrive' : isWeTransfer ? 'wetransfer' : downloadLink ? 'link' : 'none';
+  const sourceIcon = isDropbox ? '📦' : isGDrive ? '📁' : isWeTransfer ? '📨' : '🔗';
+  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : 'No Link';
+
+  // Format date nicely
+  const formattedDate = projectDate ? new Date(projectDate + 'T00:00:00').toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  }) : '';
 
   return (
     <div className="dp-project-inner">
       <div className="dp-project-header">
         <div className="dp-project-info">
+          <span className="dp-project-name">{projectName}</span>
           <span className="dp-project-client">{clientName}</span>
-          <span className="dp-project-couple">{coupleName}</span>
         </div>
         <div className="dp-project-badges">
           <span className={`dp-project-source ${sourceType}`}>
             {sourceIcon} {sourceLabel}
           </span>
-          <CloudBadge status={cloudStatus} />
+          <StatusBadge status={downloadStatus} />
         </div>
       </div>
 
+      {/* Project details row */}
+      <div className="dp-project-details">
+        {formattedDate && (
+          <span className="dp-detail-item">
+            📅 {formattedDate}
+          </span>
+        )}
+        {sizeGb && (
+          <span className="dp-detail-item">
+            💾 {sizeGb} {!sizeGb.toLowerCase().includes('gb') ? 'GB' : ''}
+          </span>
+        )}
+        {targetDrive && (
+          <span className="dp-detail-item">
+            💿 {targetDrive}
+          </span>
+        )}
+        {assignedMachine && (
+          <span className="dp-detail-item">
+            🖥️ {assignedMachine}
+          </span>
+        )}
+      </div>
+
       <div className="dp-project-body">
-        <DownloadStatusDisplay
-          status={downloadStatus}
-          progress={progress}
-          queuePosition={queuePosition}
-          totalSize={totalSize}
-          downloadedSize={downloadedSize}
-        />
+        {(downloadStatus === 'downloading' || downloadStatus === 'copying') && (
+          <DownloadStatusDisplay
+            status={downloadStatus}
+            progress={progress}
+            queuePosition={queuePosition}
+            totalSize={totalSize}
+            downloadedSize={downloadedSize}
+          />
+        )}
+
+        {downloadLink && (
+          <div className="dp-link-row">
+            <a href={downloadLink} target="_blank" rel="noopener noreferrer" className="dp-link-url">
+              {downloadLink.length > 60 ? downloadLink.substring(0, 60) + '...' : downloadLink}
+            </a>
+          </div>
+        )}
 
         <div className="dp-project-meta">
           <div className="dp-target-row">
@@ -487,66 +528,40 @@ function ProjectCard({
               ))}
             </select>
           </div>
-          {assignedMachine && (
-            <div className="dp-machine-row">
-              <span className="dp-machine-label">Machine:</span>
-              <span className="dp-machine-value">{assignedMachine}</span>
-            </div>
-          )}
         </div>
       </div>
 
       <div className="dp-actions">
-        {cloudStatus === 'pending' && cloudAccounts.length > 0 && (
-          <div className="dp-cloud-action-group">
-            <select
-              className="dp-target-select"
-              id={`cloud-select-${projectId}`}
-              defaultValue=""
-            >
-              <option value="" disabled>Select account...</option>
-              {cloudAccounts.filter(a => a.is_active).map(a => (
-                <option key={a.id} value={a.id}>
-                  {a.account_type === 'dropbox' ? '\uD83D\uDCE6' : '\uD83D\uDCC1'} {a.account_name}
-                </option>
-              ))}
-            </select>
+        {downloadStatus === 'idle' && (
+          <>
             <button
               className="dp-action-btn primary"
-              onClick={() => {
-                const sel = document.getElementById(`cloud-select-${projectId}`);
-                if (sel && sel.value) onCloudAction(projectId, 'add-to-cloud', sel.value);
-              }}
+              onClick={() => onDownloadNow(projectId)}
             >
-              Add to Cloud
+              Download Now
             </button>
-          </div>
+            <button
+              className="dp-action-btn queue"
+              onClick={() => onAddToQueue(projectId)}
+            >
+              Add to Queue
+            </button>
+          </>
         )}
-        {cloudStatus === 'pending' && cloudAccounts.length === 0 && (
-          <span style={{ fontSize: 12, color: '#8c8ca1' }}>Add a cloud account first</span>
-        )}
-        {cloudStatus === 'connected' && downloadStatus === 'idle' && (
-          <button
-            className="dp-action-btn primary"
-            onClick={() => onDownloadNow(projectId)}
-          >
-            Download Now
-          </button>
-        )}
-        {(downloadStatus === 'idle' || downloadStatus === 'completed' || downloadStatus === 'failed') && cloudStatus === 'connected' && (
-          <button
-            className="dp-action-btn queue"
-            onClick={() => onAddToQueue(projectId)}
-          >
-            Add to Queue
-          </button>
-        )}
-        {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
+        {downloadStatus === 'queued' && (
           <button
             className="dp-action-btn danger"
             onClick={() => onCancel(projectId)}
           >
             Cancel
+          </button>
+        )}
+        {downloadStatus === 'downloading' && (
+          <button
+            className="dp-action-btn danger"
+            onClick={() => onCancel(projectId)}
+          >
+            Cancel Download
           </button>
         )}
         <button
@@ -560,15 +575,18 @@ function ProjectCard({
   );
 }
 
-function CloudBadge({ status }) {
+function StatusBadge({ status }) {
   const config = {
-    pending: { label: 'Pending', className: 'pending' },
-    connected: { label: 'Connected', className: 'connected' },
-    error: { label: 'Error', className: 'error' },
+    idle: { label: 'Not Downloaded', className: 'idle' },
+    queued: { label: 'Queued', className: 'queued' },
+    downloading: { label: 'Downloading', className: 'downloading' },
+    copying: { label: 'Copying', className: 'copying' },
+    completed: { label: 'Completed', className: 'completed' },
+    failed: { label: 'Failed', className: 'failed' },
   };
-  const c = config[status] || config.pending;
+  const c = config[status] || config.idle;
   return (
-    <span className={`dp-cloud-badge ${c.className}`}>
+    <span className={`dp-status-badge ${c.className}`}>
       {c.label}
     </span>
   );

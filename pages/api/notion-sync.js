@@ -9,70 +9,65 @@ function detectLinkType(url) {
   return 'unknown';
 }
 
-function getPropertyValue(page, ...names) {
-  for (const name of names) {
-    const prop = page.properties[name];
-    if (!prop) continue;
+function getTextValue(page, propName) {
+  const prop = page.properties[propName];
+  if (!prop) return null;
 
-    if (prop.type === 'title' && prop.title?.length > 0) {
-      return prop.title[0].plain_text;
-    }
-    if (prop.type === 'rich_text' && prop.rich_text?.length > 0) {
-      // Check for href (link) first, then plain text
-      const item = prop.rich_text[0];
-      if (item.href) return item.href;
-      return item.plain_text;
-    }
-    if (prop.type === 'url' && prop.url) {
-      return prop.url;
-    }
-    if (prop.type === 'select' && prop.select) {
-      return prop.select.name;
-    }
-    if (prop.type === 'status' && prop.status) {
-      return prop.status.name;
-    }
-    if (prop.type === 'date' && prop.date) {
-      return prop.date.start;
-    }
-    if (prop.type === 'files' && prop.files?.length > 0) {
-      return prop.files[0].external?.url || prop.files[0].file?.url || null;
-    }
-    if (prop.type === 'multi_select' && prop.multi_select?.length > 0) {
-      return prop.multi_select.map(s => s.name).join(', ');
-    }
+  if (prop.type === 'title' && prop.title?.length > 0) {
+    return prop.title.map(t => t.plain_text).join('');
+  }
+  if (prop.type === 'rich_text' && prop.rich_text?.length > 0) {
+    // Check for href (clickable link) first
+    const withHref = prop.rich_text.find(t => t.href);
+    if (withHref) return withHref.href;
+    return prop.rich_text.map(t => t.plain_text).join('');
+  }
+  if (prop.type === 'url' && prop.url) {
+    return prop.url;
+  }
+  if (prop.type === 'select' && prop.select) {
+    return prop.select.name;
+  }
+  if (prop.type === 'status' && prop.status) {
+    return prop.status.name;
+  }
+  if (prop.type === 'date' && prop.date) {
+    return prop.date.start;
+  }
+  if (prop.type === 'multi_select' && prop.multi_select?.length > 0) {
+    return prop.multi_select.map(s => s.name).join(', ');
   }
   return null;
 }
 
-// Resolve relation IDs to page titles
-async function resolveRelationNames(relationIds, notionApiKey) {
-  if (!relationIds || relationIds.length === 0) return null;
+// Resolve relation IDs to page titles (with caching)
+async function resolveRelationName(relationArr, cache, notionApiKey) {
+  if (!relationArr || relationArr.length === 0) return null;
 
-  const names = [];
-  for (const rel of relationIds) {
-    try {
-      const response = await fetch(`https://api.notion.com/v1/pages/${rel.id}`, {
-        headers: {
-          'Authorization': `Bearer ${notionApiKey}`,
-          'Notion-Version': '2022-06-28',
-        },
-      });
-      if (response.ok) {
-        const page = await response.json();
-        // Find the title property
-        for (const prop of Object.values(page.properties)) {
-          if (prop.type === 'title' && prop.title?.length > 0) {
-            names.push(prop.title[0].plain_text);
-            break;
-          }
+  const id = relationArr[0].id;
+  if (cache[id]) return cache[id];
+
+  try {
+    const response = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+      headers: {
+        'Authorization': `Bearer ${notionApiKey}`,
+        'Notion-Version': '2022-06-28',
+      },
+    });
+    if (response.ok) {
+      const page = await response.json();
+      for (const prop of Object.values(page.properties)) {
+        if (prop.type === 'title' && prop.title?.length > 0) {
+          const name = prop.title.map(t => t.plain_text).join('');
+          cache[id] = name;
+          return name;
         }
       }
-    } catch (e) {
-      console.error('Failed to resolve relation:', rel.id, e);
     }
+  } catch (e) {
+    console.error('Failed to resolve relation:', id, e);
   }
-  return names.length > 0 ? names.join(', ') : null;
+  return null;
 }
 
 export default requireAuth(async function handler(req, res) {
@@ -89,13 +84,20 @@ export default requireAuth(async function handler(req, res) {
       return res.status(500).json({ error: 'Notion integration not configured' });
     }
 
-    // Query all pages from the Notion database
+    // Only fetch projects with "Not Downloaded" or "Downloading" status
+    const filter = {
+      or: [
+        { property: 'progress', status: { equals: 'Not Downloaded' } },
+        { property: 'progress', status: { equals: 'Downloading' } },
+      ],
+    };
+
     let allPages = [];
     let hasMore = true;
     let startCursor = undefined;
 
     while (hasMore) {
-      const body = { page_size: 100 };
+      const body = { page_size: 100, filter };
       if (startCursor) {
         body.start_cursor = startCursor;
       }
@@ -125,55 +127,38 @@ export default requireAuth(async function handler(req, res) {
       startCursor = data.next_cursor;
     }
 
-    // Cache resolved client names to avoid duplicate API calls
     const clientNameCache = {};
     let synced = 0;
-    let skipped = 0;
 
     for (const page of allPages) {
-      // "Name" is the title column (couple/project name)
-      const coupleName = getPropertyValue(page, 'Name');
+      // Project name = "Name" (title column)
+      const projectName = getTextValue(page, 'Name');
 
-      // "Client name" is a relation — resolve to actual name
+      // Client name = resolve relation
       const clientRelation = page.properties['Client name']?.relation || [];
-      let clientName = null;
-      if (clientRelation.length > 0) {
-        const cacheKey = clientRelation[0].id;
-        if (clientNameCache[cacheKey]) {
-          clientName = clientNameCache[cacheKey];
-        } else {
-          clientName = await resolveRelationNames(clientRelation, NOTION_API_KEY);
-          if (clientName) clientNameCache[cacheKey] = clientName;
-        }
-      }
+      const clientName = await resolveRelationName(clientRelation, clientNameCache, NOTION_API_KEY);
 
-      // "Raw Data" contains Dropbox/Google Drive/WeTransfer links
-      const downloadLink = getPropertyValue(page, 'Raw Data');
+      // Raw Data = download link (Dropbox, Google Drive, WeTransfer)
+      const downloadLink = getTextValue(page, 'Raw Data');
 
-      // "progress" is a status field
-      const progress = getPropertyValue(page, 'progress');
+      // Progress status
+      const progress = getTextValue(page, 'progress');
 
-      // "Due" is the due date
-      const dueDate = getPropertyValue(page, 'Due');
+      // Date
+      const projectDate = getTextValue(page, 'Date');
 
-      // "Hard Drive" is multi-select with drive names
-      const hardDrive = getPropertyValue(page, 'Hard Drive');
+      // Size in GBs
+      const sizeGb = getTextValue(page, 'Size in Gbs');
 
-      // "Size in Gbs"
-      const sizeGb = getPropertyValue(page, 'Size in Gbs');
+      // Hard Drive (target)
+      const hardDrive = getTextValue(page, 'Hard Drive');
 
-      // "Date" is the project date
-      const projectDate = getPropertyValue(page, 'Date');
-
-      if (!clientName && !coupleName) {
-        skipped++;
-        continue;
-      }
+      if (!projectName) continue;
 
       const projectData = {
         notion_page_id: page.id,
+        couple_name: sanitizeString(projectName),
         client_name: sanitizeString(clientName || 'Unknown'),
-        couple_name: sanitizeString(coupleName || 'Unknown'),
       };
 
       if (downloadLink) {
@@ -181,21 +166,25 @@ export default requireAuth(async function handler(req, res) {
         projectData.link_type = detectLinkType(downloadLink);
       }
 
+      if (projectDate) {
+        projectData.project_date = projectDate;
+      }
+
+      if (sizeGb) {
+        projectData.size_gb = sanitizeString(sizeGb);
+      }
+
       if (hardDrive) {
         projectData.target_drive = sanitizeString(hardDrive);
       }
 
-      // Map Notion progress status to download_status
+      // Map progress to download_status
       if (progress) {
         const p = progress.toLowerCase();
-        if (p.includes('downloaded') || p.includes('delivered') || p.includes('done') || p.includes('success')) {
-          projectData.download_status = 'completed';
-        } else if (p.includes('downloading')) {
-          projectData.download_status = 'downloading';
-        } else if (p.includes('not started') || p.includes('pending') || p.includes('not download')) {
+        if (p === 'not downloaded') {
           projectData.download_status = 'idle';
-        } else if (p.includes('in progress') || p.includes('editing') || p.includes('in revision')) {
-          projectData.download_status = 'completed'; // Already have the files
+        } else if (p === 'downloading') {
+          projectData.download_status = 'downloading';
         }
       }
 
@@ -203,7 +192,7 @@ export default requireAuth(async function handler(req, res) {
       synced++;
     }
 
-    return res.status(200).json({ synced, skipped, total: allPages.length });
+    return res.status(200).json({ synced, total: allPages.length });
   } catch (err) {
     console.error('Notion Sync API error:', err);
     return res.status(500).json({ error: 'Internal server error' });
