@@ -388,8 +388,8 @@ class DriveMonitor:
         connected_labels = [d['label'] for d in current]
         send_heartbeat(self.config, connected_labels)
 
-        # Check for updates every 5 minutes
-        if time.time() - self.last_update_check > 300:
+        # Check for updates every 60 seconds
+        if time.time() - self.last_update_check > 60:
             self.last_update_check = time.time()
             threading.Thread(target=auto_update, daemon=True).start()
 
