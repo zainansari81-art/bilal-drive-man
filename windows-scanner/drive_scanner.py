@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.29.3'
+VERSION = '3.31.0'
 
 import os
 import sys
@@ -262,6 +262,34 @@ def api_request(config, endpoint, data):
         return None
 
 
+def api_get(config, endpoint):
+    """GET request to dashboard API."""
+    url = f"{config['api_url']}/api/{endpoint}"
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('x-api-key', API_KEY)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        logging.error(f"API GET failed for {endpoint}: {e}")
+        return None
+
+
+def api_patch(config, endpoint, data):
+    """PATCH request to dashboard API."""
+    url = f"{config['api_url']}/api/{endpoint}"
+    body = json.dumps(data).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method='PATCH')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('x-api-key', API_KEY)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        logging.error(f"API PATCH failed for {endpoint}: {e}")
+        return None
+
+
 def get_machine_name():
     """Get this PC's computer name."""
     import socket
@@ -323,6 +351,110 @@ def format_size(size_bytes):
         size /= 1024
         i += 1
     return f"{size:.1f} {units[i]}"
+
+
+# ─── Download Command Processor ────────────────────────────────────────────
+
+import shutil
+
+def poll_download_commands(config, known_drives):
+    """Check for pending download commands from the dashboard."""
+    machine = get_machine_name()
+    commands = api_get(config, f'download-commands?machine={machine}')
+    if not commands or not isinstance(commands, list):
+        return
+
+    for cmd in commands:
+        cmd_id = cmd.get('id')
+        command = cmd.get('command')
+        project_id = cmd.get('project_id')
+        payload = cmd.get('payload', {})
+
+        logging.info(f"Received command: {command} for project {project_id}")
+
+        # Acknowledge
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'acked'
+        })
+
+        try:
+            if command == 'copy_to_drive':
+                handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id)
+            elif command == 'cancel_download':
+                api_patch(config, 'download-commands', {
+                    'id': cmd_id, 'status': 'completed'
+                })
+            else:
+                logging.info(f"Unhandled command: {command}")
+                api_patch(config, 'download-commands', {
+                    'id': cmd_id, 'status': 'completed'
+                })
+        except Exception as e:
+            logging.error(f"Command {command} failed: {e}")
+            api_patch(config, 'download-commands', {
+                'id': cmd_id, 'status': 'failed', 'error_message': str(e)[:500]
+            })
+
+
+def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
+    """Copy downloaded data from cloud sync folder to target external drive."""
+    source_path = payload.get('source_path', '')
+    target_drive_label = payload.get('target_drive', '')
+    client_name = payload.get('client_name', 'Unknown')
+    couple_name = payload.get('couple_name', 'Unknown')
+
+    if not source_path or not os.path.exists(source_path):
+        raise Exception(f"Source path not found: {source_path}")
+
+    # Find target drive
+    target_path = None
+    for label, drive in known_drives.items():
+        if label == target_drive_label:
+            target_path = f"{drive['letter']}:\\"
+            break
+
+    if not target_path:
+        raise Exception(f"Target drive not found: {target_drive_label}")
+
+    dest = os.path.join(target_path, client_name, couple_name)
+    os.makedirs(dest, exist_ok=True)
+
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': 'copying',
+        'progress_bytes': 0,
+    })
+
+    total_copied = 0
+    if os.path.isdir(source_path):
+        for item in os.listdir(source_path):
+            src = os.path.join(source_path, item)
+            dst = os.path.join(dest, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+            total_copied += os.path.getsize(src) if os.path.isfile(src) else 0
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'copying',
+                'progress_bytes': total_copied,
+            })
+            time.sleep(0.01)
+    else:
+        shutil.copy2(source_path, dest)
+
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': 'completed',
+        'progress_bytes': total_copied,
+    })
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id, 'status': 'completed'
+    })
+
+    logging.info(f"Copied {client_name}/{couple_name} to {target_drive_label} ({format_size(total_copied)})")
 
 
 # ─── Drive Monitor ──────────────────────────────────────────────────────────
@@ -388,6 +520,12 @@ class DriveMonitor:
         # Send heartbeat
         connected_labels = [d['label'] for d in current]
         send_heartbeat(self.config, connected_labels)
+
+        # Poll for download commands from dashboard
+        try:
+            poll_download_commands(self.config, self.known_drives)
+        except Exception as e:
+            logging.error(f"Download command poll error: {e}")
 
         # Check for updates every 60 seconds
         if time.time() - self.last_update_check > 60:
