@@ -18,6 +18,7 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
     { id: 'dashboard', label: 'Dashboard', icon: '\u25A6' },
     { id: 'drives', label: 'Drives', icon: '\u26C1', badge: driveCount },
     { id: 'devices', label: 'Devices', icon: '\uD83D\uDCBB' },
+    { id: 'downloading', label: 'Downloading-Pro', icon: '\u2B07' },
     { id: 'search', label: 'Search', icon: '\u2315' },
     { id: 'history', label: 'History', icon: '\u29D6' },
   ];

@@ -11,6 +11,7 @@ import DrivesPage from '../components/DrivesPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
 import DevicesPage from '../components/DevicesPage';
+import DownloadingProPage from '../components/DownloadingProPage';
 import { getSessionFromRequest } from '../lib/auth';
 import { getDrivesWithClients, formatDrivesForFrontend, getHistory } from '../lib/supabase';
 
@@ -46,7 +47,7 @@ export async function getServerSideProps(context) {
   }
 }
 
-const VALID_PAGES = ['dashboard', 'drives', 'devices', 'search', 'history'];
+const VALID_PAGES = ['dashboard', 'drives', 'devices', 'downloading', 'search', 'history'];
 
 function getPageFromHash() {
   if (typeof window === 'undefined') return 'dashboard';
@@ -202,6 +203,10 @@ export default function Home({ username, initialDrives, initialActivities }) {
 
               {currentPage === 'devices' && (
                 <DevicesPage drives={drives} />
+              )}
+
+              {currentPage === 'downloading' && (
+                <DownloadingProPage drives={drives} />
               )}
 
               {currentPage === 'search' && (
