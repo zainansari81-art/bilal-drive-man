@@ -6,23 +6,10 @@ export default function DownloadingProPage({ drives }) {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
-  const [autoSync, setAutoSync] = useState(true);
   const [error, setError] = useState(null);
-  const [cloudAccounts, setCloudAccounts] = useState([]);
-  const [showAddAccount, setShowAddAccount] = useState(false);
-  const [newAccount, setNewAccount] = useState({ account_name: '', account_type: 'dropbox', email: '', local_sync_path: '' });
+  const [filter, setFilter] = useState('all');
 
   const connectedDrives = drives.filter(d => d.connected);
-
-  const fetchCloudAccounts = useCallback(async () => {
-    try {
-      const res = await fetch('/api/cloud-accounts');
-      if (res.ok) {
-        const data = await res.json();
-        setCloudAccounts(data || []);
-      }
-    } catch (err) { /* silent */ }
-  }, []);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -40,20 +27,20 @@ export default function DownloadingProPage({ drives }) {
 
   useEffect(() => {
     fetchProjects();
-    fetchCloudAccounts();
     const interval = setInterval(fetchProjects, 10000);
     return () => clearInterval(interval);
-  }, [fetchProjects, fetchCloudAccounts]);
+  }, [fetchProjects]);
 
   const handleSync = async () => {
     setSyncing(true);
+    setError(null);
     try {
       const res = await fetch('/api/notion-sync', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sync failed');
       setLastSynced(new Date());
       if (data.errors?.length > 0) {
-        setError(`Synced ${data.synced}/${data.total} — ${data.errors.length} errors`);
+        setError(`Synced ${data.synced}/${data.total} with ${data.errors.length} errors`);
       }
       await fetchProjects();
     } catch (err) {
@@ -63,12 +50,12 @@ export default function DownloadingProPage({ drives }) {
     }
   };
 
-  const handleCloudAction = async (projectId, action, accountId) => {
+  const handleAction = async (projectId, action, extra = {}) => {
     try {
       await fetch('/api/download-projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, action, accountId }),
+        body: JSON.stringify({ projectId, action, ...extra }),
       });
       await fetchProjects();
     } catch (err) {
@@ -76,136 +63,18 @@ export default function DownloadingProPage({ drives }) {
     }
   };
 
-  const handleDownloadNow = async (projectId) => {
-    try {
-      await fetch('/api/download-commands', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, command: 'download' }),
-      });
-      await fetchProjects();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleAddToQueue = async (projectId) => {
-    try {
-      await fetch('/api/download-commands', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, command: 'queue' }),
-      });
-      await fetchProjects();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleCancel = async (projectId) => {
-    try {
-      await fetch('/api/download-commands', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, command: 'cancel' }),
-      });
-      await fetchProjects();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleRemove = async (projectId) => {
-    try {
-      await fetch('/api/download-projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, action: 'remove' }),
-      });
-      await fetchProjects();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleTargetDriveChange = async (projectId, driveName) => {
-    try {
-      await fetch('/api/download-projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, action: 'set-target', targetDrive: driveName }),
-      });
-      await fetchProjects();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleAddAccount = async () => {
-    if (!newAccount.account_name || !newAccount.account_type) return;
-    try {
-      await fetch('/api/cloud-accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'create', ...newAccount }),
-      });
-      setNewAccount({ account_name: '', account_type: 'dropbox', email: '', local_sync_path: '' });
-      setShowAddAccount(false);
-      await fetchCloudAccounts();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const handleDeleteAccount = async (id) => {
-    try {
-      await fetch('/api/cloud-accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', id }),
-      });
-      await fetchCloudAccounts();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const dropboxAccounts = cloudAccounts.filter(a => a.account_type === 'dropbox' && a.is_active);
-  const gdriveAccounts = cloudAccounts.filter(a => a.account_type === 'google_drive' && a.is_active);
-
-  // Compute stats
+  // Stats
   const totalCount = projects.length;
-  const notDownloadedCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'idle').length;
-  const downloadingCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'downloading').length;
-  const queuedCount = projects.filter(p => (p.download_status || p.downloadStatus) === 'queued').length;
-  const queuedProjects = projects.filter(p => (p.download_status || p.downloadStatus) === 'queued').sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
+  const notDownloadedCount = projects.filter(p => (p.download_status || 'idle') === 'idle').length;
+  const downloadingCount = projects.filter(p => (p.download_status) === 'downloading').length;
+  const queuedCount = projects.filter(p => (p.download_status) === 'queued').length;
 
-  // Machines from projects
-  const machineMap = {};
-  for (const p of projects) {
-    const machine = p.assigned_machine || p.assignedMachine;
-    if (machine) {
-      if (!machineMap[machine]) {
-        machineMap[machine] = { name: machine, downloadCount: 0, online: false };
-      }
-      if (p.download_status === 'downloading') {
-        machineMap[machine].downloadCount++;
-        machineMap[machine].online = true;
-      }
-    }
-  }
-  // Also mark machines as online if they appear in connected drives
-  for (const d of connectedDrives) {
-    const machine = d.sourceMachine;
-    if (machine) {
-      if (!machineMap[machine]) {
-        machineMap[machine] = { name: machine, downloadCount: 0, online: true };
-      } else {
-        machineMap[machine].online = true;
-      }
-    }
-  }
-  const machines = Object.values(machineMap);
+  // Filter
+  const filtered = filter === 'all' ? projects
+    : filter === 'idle' ? projects.filter(p => p.download_status === 'idle')
+    : filter === 'downloading' ? projects.filter(p => p.download_status === 'downloading')
+    : filter === 'queued' ? projects.filter(p => p.download_status === 'queued')
+    : projects;
 
   if (loading) {
     return (
@@ -216,418 +85,265 @@ export default function DownloadingProPage({ drives }) {
   }
 
   return (
-    <div className="dp-container">
-      {/* Stats Bar */}
-      <div className="dp-stats-bar">
-        <StatCard label="Total Projects" value={totalCount} />
-        <StatCard label="Not Downloaded" value={notDownloadedCount} accent />
-        <StatCard label="Downloading" value={downloadingCount} />
-        <StatCard label="Queued" value={queuedCount} />
+    <div>
+      {/* Stat Cards — same pattern as dashboard */}
+      <div className="stat-cards animate-in">
+        <div className={`stat-card ${filter === 'all' ? 'accent' : ''}`} onClick={() => setFilter('all')} style={{ cursor: 'pointer' }}>
+          <div className="stat-card-top">
+            <div className="stat-card-icon" style={{ background: '#f0fde0' }}>{'\u{1F4CB}'}</div>
+            <div className="stat-card-arrow">{'\u2197'}</div>
+          </div>
+          <div className="stat-card-label">Total Projects</div>
+          <div className="stat-card-value">{totalCount}</div>
+          <div className="stat-card-sub">From Notion sync</div>
+        </div>
+
+        <div className={`stat-card ${filter === 'idle' ? 'accent' : ''}`} onClick={() => setFilter('idle')} style={{ cursor: 'pointer' }}>
+          <div className="stat-card-top">
+            <div className="stat-card-icon" style={{ background: '#fef3c7' }}>{'\u{1F4E5}'}</div>
+            <div className="stat-card-arrow">{'\u2197'}</div>
+          </div>
+          <div className="stat-card-label">Not Downloaded</div>
+          <div className="stat-card-value">{notDownloadedCount}</div>
+          <div className="stat-card-sub">Waiting to download</div>
+        </div>
+
+        <div className={`stat-card ${filter === 'downloading' ? 'accent' : ''}`} onClick={() => setFilter('downloading')} style={{ cursor: 'pointer' }}>
+          <div className="stat-card-top">
+            <div className="stat-card-icon" style={{ background: '#dbeafe' }}>{'\u2B07'}</div>
+            <div className="stat-card-arrow">{'\u2197'}</div>
+          </div>
+          <div className="stat-card-label">Downloading</div>
+          <div className="stat-card-value">{downloadingCount}</div>
+          <div className="stat-card-sub">In progress now</div>
+        </div>
+
+        <div className={`stat-card ${filter === 'queued' ? 'accent' : ''}`} onClick={() => setFilter('queued')} style={{ cursor: 'pointer' }}>
+          <div className="stat-card-top">
+            <div className="stat-card-icon" style={{ background: '#fdf4ff' }}>{'\u{23F3}'}</div>
+            <div className="stat-card-arrow">{'\u2197'}</div>
+          </div>
+          <div className="stat-card-label">Queued</div>
+          <div className="stat-card-value">{queuedCount}</div>
+          <div className="stat-card-sub">Up next</div>
+        </div>
       </div>
 
-      {/* Sync Bar */}
-      <div className="dp-sync-bar">
-        <div className="dp-sync-left">
+      {/* Action bar — single line with sync + filter + timestamp */}
+      <div className="animate-in" style={{ animationDelay: '80ms' }}>
+        <div className="dp-toolbar">
           <button
-            className={`dp-sync-btn ${syncing ? 'syncing' : ''}`}
+            className={`dp-toolbar-btn primary ${syncing ? 'syncing' : ''}`}
             onClick={handleSync}
             disabled={syncing}
           >
-            {syncing ? 'Syncing...' : 'Sync from Notion'}
+            {syncing ? '\u{1F504} Syncing...' : '\u{1F504} Sync from Notion'}
           </button>
+
           {lastSynced && (
-            <span className="dp-sync-timestamp">
+            <span className="dp-toolbar-meta">
               Last synced: {lastSynced.toLocaleString('en-US', {
                 month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
               })}
             </span>
           )}
-        </div>
-        <div className="dp-sync-right">
-          <span className={`dp-auto-sync-indicator ${autoSync ? 'active' : ''}`}>
-            {autoSync ? '\u25CF' : '\u25CB'} Auto-sync {autoSync ? 'ON' : 'OFF'}
+
+          {error && (
+            <span className="dp-toolbar-error">
+              {error}
+              <button onClick={() => setError(null)} className="dp-toolbar-error-dismiss">{'\u2715'}</button>
+            </span>
+          )}
+
+          <span className="dp-toolbar-spacer" />
+
+          <span className="dp-toolbar-meta">
+            Showing {filtered.length} of {totalCount} projects
           </span>
-          <button
-            className="dp-auto-sync-toggle"
-            onClick={() => setAutoSync(!autoSync)}
-          >
-            {autoSync ? 'Disable' : 'Enable'}
-          </button>
         </div>
       </div>
 
-      {/* Cloud Accounts */}
-      <div className="dp-accounts-section">
-        <div className="dp-section-header">
-          <span>Cloud Accounts</span>
-          <span className="dp-section-count">{cloudAccounts.length}</span>
-          <button className="dp-action-btn primary" style={{ marginLeft: 'auto', padding: '5px 12px', fontSize: 11 }} onClick={() => setShowAddAccount(!showAddAccount)}>
-            {showAddAccount ? 'Cancel' : '+ Add Account'}
-          </button>
-        </div>
-
-        {showAddAccount && (
-          <div className="dp-add-account-form">
-            <select
-              className="dp-target-select"
-              value={newAccount.account_type}
-              onChange={e => setNewAccount({ ...newAccount, account_type: e.target.value })}
-            >
-              <option value="dropbox">Dropbox</option>
-              <option value="google_drive">Google Drive</option>
-            </select>
-            <input
-              className="dp-input"
-              placeholder="Account name (e.g. Main Dropbox)"
-              value={newAccount.account_name}
-              onChange={e => setNewAccount({ ...newAccount, account_name: e.target.value })}
-            />
-            <input
-              className="dp-input"
-              placeholder="Email (optional)"
-              value={newAccount.email}
-              onChange={e => setNewAccount({ ...newAccount, email: e.target.value })}
-            />
-            <input
-              className="dp-input"
-              placeholder="Local sync folder path (e.g. /Users/bilal/Dropbox)"
-              value={newAccount.local_sync_path}
-              onChange={e => setNewAccount({ ...newAccount, local_sync_path: e.target.value })}
-            />
-            <button className="dp-action-btn primary" onClick={handleAddAccount}>Save Account</button>
-          </div>
-        )}
-
-        {cloudAccounts.length > 0 && (
-          <div className="dp-accounts-grid">
-            {cloudAccounts.map(account => (
-              <div key={account.id} className="dp-account-card">
-                <div className="dp-account-icon">
-                  {account.account_type === 'dropbox' ? '\uD83D\uDCE6' : '\uD83D\uDCC1'}
-                </div>
-                <div className="dp-account-info">
-                  <div className="dp-account-name">{account.account_name}</div>
-                  <div className="dp-account-detail">
-                    {account.account_type === 'dropbox' ? 'Dropbox' : 'Google Drive'}
-                    {account.email ? ` \u2022 ${account.email}` : ''}
-                  </div>
-                  {account.local_sync_path && (
-                    <div className="dp-account-path">{account.local_sync_path}</div>
-                  )}
-                </div>
-                <button
-                  className="dp-action-btn danger"
-                  style={{ padding: '4px 10px', fontSize: 11 }}
-                  onClick={() => handleDeleteAccount(account.id)}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {cloudAccounts.length === 0 && !showAddAccount && (
-          <div style={{ textAlign: 'center', padding: '16px', color: '#8c8ca1', fontSize: 13 }}>
-            No cloud accounts added yet. Add your Dropbox and Google Drive accounts to get started.
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="dp-error-banner">
-          {error}
-          <button onClick={() => setError(null)} className="dp-error-dismiss">{'\u2715'}</button>
-        </div>
-      )}
-
-      {/* Projects List */}
-      <div className="dp-projects-list">
-        {projects.length === 0 ? (
-          <div className="dp-empty-state">
-            <p className="dp-empty-title">No projects yet</p>
-            <p className="dp-empty-subtitle">Sync from Notion to pull in your download projects.</p>
+      {/* Projects Grid — same grid as devices */}
+      <div className="animate-in" style={{ animationDelay: '160ms' }}>
+        {filtered.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
+            <p style={{ fontSize: 18 }}>
+              {totalCount === 0 ? 'No projects yet' : 'No projects match this filter'}
+            </p>
+            <p style={{ fontSize: 14, marginTop: 8 }}>
+              {totalCount === 0 ? 'Click "Sync from Notion" to pull in your download projects.' : 'Try selecting a different status above.'}
+            </p>
           </div>
         ) : (
-          projects.map((project, i) => (
-            <div key={project.id || i} className="dp-project-card scroll-reveal" style={{ transitionDelay: `${i * 40}ms` }}>
-              <ProjectCard
-                project={project}
-                connectedDrives={connectedDrives}
-                cloudAccounts={cloudAccounts}
-                onCloudAction={handleCloudAction}
-                onDownloadNow={handleDownloadNow}
-                onAddToQueue={handleAddToQueue}
-                onCancel={handleCancel}
-                onRemove={handleRemove}
-                onTargetDriveChange={handleTargetDriveChange}
-              />
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Queue Section */}
-      {queuedProjects.length > 0 && (
-        <div className="dp-queue-section">
-          <h3 className="dp-section-title">Download Queue</h3>
-          {queuedProjects.map((project, i) => (
-            <div key={project.id || i} className="dp-queue-item">
-              <span className="dp-queue-position">#{i + 1}</span>
-              <span className="dp-queue-name">
-                {project.couple_name || project.coupleName} — {project.client_name || project.clientName}
-              </span>
-              <span className="dp-queue-target">
-                {project.target_drive || project.targetDrive || 'No drive'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Download Machines Panel */}
-      {machines.length > 0 && (
-        <div className="dp-machines-panel">
-          <h3 className="dp-section-title">Download Machines</h3>
-          <div className="dp-machines-grid">
-            {machines.map((machine) => (
-              <div key={machine.name} className="dp-machine-card">
-                <div className="dp-machine-header">
-                  <span className="dp-machine-icon">{'\uD83D\uDCBB'}</span>
-                  <span className="dp-machine-name">{machine.name}</span>
-                  <span className={`dp-machine-status ${machine.online ? 'online' : 'offline'}`}>
-                    {machine.online ? 'Online' : 'Offline'}
-                  </span>
-                </div>
-                <div className="dp-machine-downloads">
-                  {machine.downloadCount > 0
-                    ? `${machine.downloadCount} active download${machine.downloadCount !== 1 ? 's' : ''}`
-                    : 'Idle'}
-                </div>
+          <div className="devices-grid">
+            {filtered.map((project, i) => (
+              <div key={project.id || i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}>
+                <ProjectCard
+                  project={project}
+                  connectedDrives={connectedDrives}
+                  onAction={handleAction}
+                />
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
-function StatCard({ label, value, accent }) {
-  return (
-    <div className={`dp-stat-card ${accent ? 'accent' : ''}`}>
-      <div className="dp-stat-value">{value}</div>
-      <div className="dp-stat-label">{label}</div>
-    </div>
-  );
-}
-
-function ProjectCard({
-  project,
-  connectedDrives,
-  cloudAccounts = [],
-  onCloudAction,
-  onDownloadNow,
-  onAddToQueue,
-  onCancel,
-  onRemove,
-  onTargetDriveChange,
-}) {
-  const projectName = project.couple_name || project.coupleName || 'Unknown Project';
-  const clientName = project.client_name || project.clientName || 'Unknown Client';
-  const downloadStatus = project.download_status || project.downloadStatus || 'idle';
-  const downloadLink = project.download_link || project.downloadLink || '';
-  const targetDrive = project.target_drive || project.targetDrive || '';
-  const assignedMachine = project.assigned_machine || project.assignedMachine || '';
-  const sizeGb = project.size_gb || project.sizeGb || '';
-  const projectDate = project.project_date || project.projectDate || '';
-  const progress = project.progress || 0;
-  const queuePosition = project.queue_position || project.queuePosition;
-  const totalSize = project.total_size || project.totalSize || 0;
-  const downloadedSize = project.downloaded_size || project.downloadedSize || 0;
+function ProjectCard({ project, connectedDrives, onAction }) {
+  const projectName = project.couple_name || 'Unknown Project';
+  const clientName = project.client_name || 'Unknown Client';
+  const downloadStatus = project.download_status || 'idle';
+  const downloadLink = project.download_link || '';
+  const targetDrive = project.target_drive || '';
+  const sizeGb = project.size_gb || '';
+  const projectDate = project.project_date || '';
+  const progress = project.download_progress_bytes || 0;
+  const totalSize = project.cloud_size_bytes || 0;
   const projectId = project.id;
 
-  // Detect source type from link
+  // Source detection
   const isDropbox = /dropbox/i.test(downloadLink);
   const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
   const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
-  const sourceType = isDropbox ? 'dropbox' : isGDrive ? 'gdrive' : isWeTransfer ? 'wetransfer' : downloadLink ? 'link' : 'none';
-  const sourceIcon = isDropbox ? '📦' : isGDrive ? '📁' : isWeTransfer ? '📨' : '🔗';
-  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : 'No Link';
 
-  // Format date nicely
+  // Status config
+  const statusConfig = {
+    idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7', dot: '#f59e0b' },
+    queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3', dot: '#eab308' },
+    downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe', dot: '#3b82f6' },
+    copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff', dot: '#6366f1' },
+    completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7', dot: '#22c55e' },
+    failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2', dot: '#ef4444' },
+  };
+  const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
+
   const formattedDate = projectDate ? new Date(projectDate + 'T00:00:00').toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
   }) : '';
 
   return (
-    <div className="dp-project-inner">
-      <div className="dp-project-header">
-        <div className="dp-project-info">
-          <span className="dp-project-name">{projectName}</span>
-          <span className="dp-project-client">{clientName}</span>
-        </div>
-        <div className="dp-project-badges">
-          <span className={`dp-project-source ${sourceType}`}>
-            {sourceIcon} {sourceLabel}
-          </span>
-          <StatusBadge status={downloadStatus} />
-        </div>
-      </div>
-
-      {/* Project details row */}
-      <div className="dp-project-details">
-        {formattedDate && (
-          <span className="dp-detail-item">
-            📅 {formattedDate}
-          </span>
-        )}
-        {sizeGb && (
-          <span className="dp-detail-item">
-            💾 {sizeGb} {!sizeGb.toLowerCase().includes('gb') ? 'GB' : ''}
-          </span>
-        )}
-        {targetDrive && (
-          <span className="dp-detail-item">
-            💿 {targetDrive}
-          </span>
-        )}
-        {assignedMachine && (
-          <span className="dp-detail-item">
-            🖥️ {assignedMachine}
-          </span>
-        )}
-      </div>
-
-      <div className="dp-project-body">
-        {(downloadStatus === 'downloading' || downloadStatus === 'copying') && (
-          <DownloadStatusDisplay
-            status={downloadStatus}
-            progress={progress}
-            queuePosition={queuePosition}
-            totalSize={totalSize}
-            downloadedSize={downloadedSize}
-          />
-        )}
-
-        {downloadLink && (
-          <div className="dp-link-row">
-            <a href={downloadLink} target="_blank" rel="noopener noreferrer" className="dp-link-url">
-              {downloadLink.length > 60 ? downloadLink.substring(0, 60) + '...' : downloadLink}
-            </a>
+    <div className="device-card">
+      {/* Top row: icon + name + status */}
+      <div className="device-card-top">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="device-icon" style={{ background: sCfg.bg }}>
+            {isDropbox ? '\u{1F4E6}' : isGDrive ? '\u{1F4C1}' : isWeTransfer ? '\u{1F4E8}' : '\u{1F517}'}
           </div>
-        )}
-
-        <div className="dp-project-meta">
-          <div className="dp-target-row">
-            <label className="dp-target-label">Target Drive:</label>
-            <select
-              className="dp-target-select"
-              value={targetDrive}
-              onChange={(e) => onTargetDriveChange(projectId, e.target.value)}
-            >
-              <option value="">Select drive...</option>
-              {connectedDrives.map((d, i) => (
-                <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
-              ))}
-            </select>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>{projectName}</div>
+            <div style={{ fontSize: 12, color: '#8c8ca1', marginTop: 2 }}>{clientName}</div>
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: '50%', background: sCfg.dot,
+            display: 'inline-block',
+          }} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: sCfg.color }}>{sCfg.label}</span>
+        </div>
       </div>
 
-      <div className="dp-actions">
-        {downloadStatus === 'idle' && (
-          <>
-            <button
-              className="dp-action-btn primary"
-              onClick={() => onDownloadNow(projectId)}
-            >
-              Download Now
-            </button>
-            <button
-              className="dp-action-btn queue"
-              onClick={() => onAddToQueue(projectId)}
-            >
-              Add to Queue
-            </button>
-          </>
-        )}
-        {downloadStatus === 'queued' && (
-          <button
-            className="dp-action-btn danger"
-            onClick={() => onCancel(projectId)}
+      {/* Meta row */}
+      <div className="device-meta" style={{ marginTop: 12 }}>
+        {formattedDate && <span>{formattedDate}</span>}
+        {sizeGb && <span>{sizeGb}{!sizeGb.toLowerCase().includes('gb') ? ' GB' : ''}</span>}
+        {targetDrive && <span>{targetDrive}</span>}
+        {!formattedDate && !sizeGb && !targetDrive && <span style={{ color: '#b0b0c0' }}>No details</span>}
+      </div>
+
+      {/* Download link */}
+      {downloadLink && (
+        <div style={{ marginTop: 8 }}>
+          <a
+            href={downloadLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}
           >
-            Cancel
-          </button>
-        )}
-        {downloadStatus === 'downloading' && (
-          <button
-            className="dp-action-btn danger"
-            onClick={() => onCancel(projectId)}
-          >
-            Cancel Download
-          </button>
-        )}
-        <button
-          className="dp-action-btn danger"
-          onClick={() => onRemove(projectId)}
-        >
-          Remove
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }) {
-  const config = {
-    idle: { label: 'Not Downloaded', className: 'idle' },
-    queued: { label: 'Queued', className: 'queued' },
-    downloading: { label: 'Downloading', className: 'downloading' },
-    copying: { label: 'Copying', className: 'copying' },
-    completed: { label: 'Completed', className: 'completed' },
-    failed: { label: 'Failed', className: 'failed' },
-  };
-  const c = config[status] || config.idle;
-  return (
-    <span className={`dp-status-badge ${c.className}`}>
-      {c.label}
-    </span>
-  );
-}
-
-function DownloadStatusDisplay({ status, progress, queuePosition, totalSize, downloadedSize }) {
-  const statusConfig = {
-    idle: { label: 'Idle', className: 'idle', icon: '\u23F8' },
-    queued: { label: `Queued #${queuePosition || '?'}`, className: 'queued', icon: '\u23F3' },
-    downloading: { label: 'Downloading', className: 'downloading', icon: '\u2B07' },
-    copying: { label: 'Copying to drive', className: 'copying', icon: '\uD83D\uDCBE' },
-    completed: { label: 'Completed \u2705', className: 'completed', icon: '' },
-    failed: { label: 'Failed \u274C', className: 'failed', icon: '' },
-  };
-
-  const cfg = statusConfig[status] || statusConfig.idle;
-
-  return (
-    <div className={`dp-download-status ${cfg.className}`}>
-      <div className="dp-status-label">
-        {cfg.icon && <span className="dp-status-icon">{cfg.icon}</span>}
-        {cfg.label}
-        {status === 'downloading' && totalSize > 0 && (
-          <span className="dp-status-size">
-            {' '}{formatSize(downloadedSize)} / {formatSize(totalSize)}
-          </span>
-        )}
-      </div>
-      {(status === 'downloading' || status === 'copying') && (
-        <div className="dp-progress-bar">
-          <div
-            className="dp-progress-fill"
-            style={{ width: `${Math.min(progress, 100)}%` }}
-          ></div>
-          <span className="dp-progress-text">{Math.round(progress)}%</span>
+            {downloadLink.length > 55 ? downloadLink.substring(0, 55) + '...' : downloadLink}
+          </a>
         </div>
       )}
+
+      {/* Progress bar for downloading */}
+      {(downloadStatus === 'downloading' || downloadStatus === 'copying') && (
+        <div style={{ marginTop: 10 }}>
+          <div className="drive-progress-bar">
+            <div
+              className="drive-progress-fill"
+              style={{
+                width: totalSize > 0 ? `${Math.min((progress / totalSize) * 100, 100)}%` : '0%',
+                background: downloadStatus === 'copying'
+                  ? 'linear-gradient(90deg, #8b5cf6, #a78bfa)'
+                  : 'linear-gradient(90deg, #c8e600, #a3c400)',
+              }}
+            />
+          </div>
+          {totalSize > 0 && (
+            <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 4 }}>
+              {formatSize(progress)} / {formatSize(totalSize)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Target drive selector */}
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11, color: '#8c8ca1', fontWeight: 500 }}>Target:</span>
+        <select
+          value={targetDrive}
+          onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
+          style={{
+            flex: 1, padding: '5px 8px', borderRadius: 8, border: '1px solid #e5e7eb',
+            fontSize: 11, fontFamily: 'inherit', background: '#fff', color: '#4a4a6a',
+            cursor: 'pointer',
+          }}
+        >
+          <option value="">Select drive...</option>
+          {connectedDrives.map((d, i) => (
+            <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {downloadStatus === 'idle' && (
+          <>
+            <ActionBtn label="Download" primary onClick={() => onAction(projectId, 'download_now')} />
+            <ActionBtn label="Queue" onClick={() => onAction(projectId, 'queue')} />
+          </>
+        )}
+        {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
+          <ActionBtn label="Cancel" danger onClick={() => onAction(projectId, 'cancel')} />
+        )}
+        <ActionBtn label="Remove" danger onClick={() => onAction(projectId, 'remove')} />
+      </div>
     </div>
+  );
+}
+
+function ActionBtn({ label, primary, danger, onClick }) {
+  const bg = primary ? '#c8e600' : danger ? '#fff' : '#fff';
+  const color = primary ? '#1a1a2e' : danger ? '#ef4444' : '#4a4a6a';
+  const border = primary ? '#c8e600' : danger ? '#fecaca' : '#e5e7eb';
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '6px 14px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+        border: `1px solid ${border}`, background: bg, color,
+        cursor: 'pointer', fontFamily: 'inherit',
+        transition: 'all 0.15s ease',
+      }}
+      onMouseEnter={(e) => { e.target.style.transform = 'translateY(-1px)'; e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; }}
+      onMouseLeave={(e) => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}
+    >
+      {label}
+    </button>
   );
 }
