@@ -10,12 +10,21 @@ import os
 import sys
 import time
 import json
+import ssl
 import subprocess
 import logging
 import threading
 import urllib.request
 import urllib.error
 from datetime import datetime
+
+# Fix SSL certificate verification on macOS
+try:
+    import certifi
+    ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    # If certifi not available, disable verification as fallback
+    ssl._create_default_https_context = ssl._create_unverified_context
 from pathlib import Path
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
