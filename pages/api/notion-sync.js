@@ -22,6 +22,15 @@ function getPropertyValue(page, ...names) {
     if (prop.type === 'url' && prop.url) {
       return prop.url;
     }
+    if (prop.type === 'select' && prop.select) {
+      return prop.select.name;
+    }
+    if (prop.type === 'date' && prop.date) {
+      return prop.date.start;
+    }
+    if (prop.type === 'files' && prop.files?.length > 0) {
+      return prop.files[0].external?.url || prop.files[0].file?.url || null;
+    }
   }
   return null;
 }
@@ -79,21 +88,36 @@ export default requireAuth(async function handler(req, res) {
     let synced = 0;
 
     for (const page of allPages) {
-      const clientName = getPropertyValue(page, 'Client Name', 'Client');
-      const coupleName = getPropertyValue(page, 'Couple Name', 'Couple', 'Project Name');
-      const downloadLink = getPropertyValue(page, 'Download Link', 'Link', 'URL');
+      // Match your Notion column names exactly
+      const clientName = getPropertyValue(page, 'Client name', 'Client Name', 'Client');
+      const coupleName = getPropertyValue(page, 'Name', 'Couple Name', 'Couple', 'Project Name');
+      const downloadLink = getPropertyValue(page, 'Download Link', 'Link', 'URL', 'Download', 'download link', 'Dropbox', 'Google Drive', 'Drive Link');
+      const progress = getPropertyValue(page, 'progress', 'Progress', 'Status');
+      const dueDate = getPropertyValue(page, 'Due', 'Due Date', 'Deadline');
 
       if (!clientName && !coupleName) continue;
 
       const projectData = {
         notion_page_id: page.id,
-        client_name: sanitizeString(clientName || ''),
-        couple_name: sanitizeString(coupleName || ''),
+        client_name: sanitizeString(clientName || 'Unknown'),
+        couple_name: sanitizeString(coupleName || 'Unknown'),
       };
 
       if (downloadLink) {
         projectData.download_link = sanitizeString(downloadLink, 2048);
         projectData.link_type = detectLinkType(downloadLink);
+      }
+
+      // Map Notion progress to download_status
+      if (progress) {
+        const p = progress.toLowerCase();
+        if (p.includes('downloaded') || p.includes('completed') || p.includes('done')) {
+          projectData.download_status = 'completed';
+        } else if (p.includes('downloading')) {
+          projectData.download_status = 'downloading';
+        } else if (p.includes('not download') || p.includes('pending')) {
+          projectData.download_status = 'idle';
+        }
       }
 
       await supabasePost('download_projects', projectData, 'notion_page_id');
