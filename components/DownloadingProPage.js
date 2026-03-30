@@ -8,6 +8,7 @@ export default function DownloadingProPage({ drives }) {
   const [lastSynced, setLastSynced] = useState(null);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('list');
 
   const connectedDrives = drives.filter(d => d.connected);
 
@@ -86,50 +87,15 @@ export default function DownloadingProPage({ drives }) {
 
   return (
     <div>
-      {/* Stat Cards — same pattern as dashboard */}
+      {/* Stat Cards */}
       <div className="stat-cards animate-in">
-        <div className={`stat-card ${filter === 'all' ? 'accent' : ''}`} onClick={() => setFilter('all')} style={{ cursor: 'pointer' }}>
-          <div className="stat-card-top">
-            <div className="stat-card-icon" style={{ background: '#f0fde0' }}>{'\u{1F4CB}'}</div>
-            <div className="stat-card-arrow">{'\u2197'}</div>
-          </div>
-          <div className="stat-card-label">Total Projects</div>
-          <div className="stat-card-value">{totalCount}</div>
-          <div className="stat-card-sub">From Notion sync</div>
-        </div>
-
-        <div className={`stat-card ${filter === 'idle' ? 'accent' : ''}`} onClick={() => setFilter('idle')} style={{ cursor: 'pointer' }}>
-          <div className="stat-card-top">
-            <div className="stat-card-icon" style={{ background: '#fef3c7' }}>{'\u{1F4E5}'}</div>
-            <div className="stat-card-arrow">{'\u2197'}</div>
-          </div>
-          <div className="stat-card-label">Not Downloaded</div>
-          <div className="stat-card-value">{notDownloadedCount}</div>
-          <div className="stat-card-sub">Waiting to download</div>
-        </div>
-
-        <div className={`stat-card ${filter === 'downloading' ? 'accent' : ''}`} onClick={() => setFilter('downloading')} style={{ cursor: 'pointer' }}>
-          <div className="stat-card-top">
-            <div className="stat-card-icon" style={{ background: '#dbeafe' }}>{'\u2B07'}</div>
-            <div className="stat-card-arrow">{'\u2197'}</div>
-          </div>
-          <div className="stat-card-label">Downloading</div>
-          <div className="stat-card-value">{downloadingCount}</div>
-          <div className="stat-card-sub">In progress now</div>
-        </div>
-
-        <div className={`stat-card ${filter === 'queued' ? 'accent' : ''}`} onClick={() => setFilter('queued')} style={{ cursor: 'pointer' }}>
-          <div className="stat-card-top">
-            <div className="stat-card-icon" style={{ background: '#fdf4ff' }}>{'\u{23F3}'}</div>
-            <div className="stat-card-arrow">{'\u2197'}</div>
-          </div>
-          <div className="stat-card-label">Queued</div>
-          <div className="stat-card-value">{queuedCount}</div>
-          <div className="stat-card-sub">Up next</div>
-        </div>
+        <StatCard icon={'\u{1F4CB}'} iconBg="#f0fde0" label="Total Projects" value={totalCount} sub="From Notion sync" active={filter === 'all'} onClick={() => setFilter('all')} />
+        <StatCard icon={'\u{1F4E5}'} iconBg="#fef3c7" label="Not Downloaded" value={notDownloadedCount} sub="Waiting to download" active={filter === 'idle'} onClick={() => setFilter('idle')} />
+        <StatCard icon={'\u2B07'} iconBg="#dbeafe" label="Downloading" value={downloadingCount} sub="In progress now" active={filter === 'downloading'} onClick={() => setFilter('downloading')} />
+        <StatCard icon={'\u{23F3}'} iconBg="#fdf4ff" label="Queued" value={queuedCount} sub="Up next" active={filter === 'queued'} onClick={() => setFilter('queued')} />
       </div>
 
-      {/* Action bar — single line with sync + filter + timestamp */}
+      {/* Toolbar */}
       <div className="animate-in" style={{ animationDelay: '80ms' }}>
         <div className="dp-toolbar">
           <button
@@ -158,12 +124,30 @@ export default function DownloadingProPage({ drives }) {
           <span className="dp-toolbar-spacer" />
 
           <span className="dp-toolbar-meta">
-            Showing {filtered.length} of {totalCount} projects
+            {filtered.length} of {totalCount}
           </span>
+
+          {/* View toggle */}
+          <div className="dp-view-toggle">
+            <button
+              className={`dp-view-btn ${viewMode === 'list' ? 'active' : ''}`}
+              onClick={() => setViewMode('list')}
+              title="List view"
+            >
+              {'\u2630'}
+            </button>
+            <button
+              className={`dp-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => setViewMode('grid')}
+              title="Grid view"
+            >
+              {'\u2587\u2587'}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Projects Grid — same grid as devices */}
+      {/* Projects */}
       <div className="animate-in" style={{ animationDelay: '160ms' }}>
         {filtered.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
@@ -174,7 +158,33 @@ export default function DownloadingProPage({ drives }) {
               {totalCount === 0 ? 'Click "Sync from Notion" to pull in your download projects.' : 'Try selecting a different status above.'}
             </p>
           </div>
+        ) : viewMode === 'list' ? (
+          /* ===== LIST VIEW ===== */
+          <div className="dp-list-container">
+            {/* Table header */}
+            <div className="dp-list-header">
+              <span className="dp-list-col dp-col-name">Project</span>
+              <span className="dp-list-col dp-col-client">Client</span>
+              <span className="dp-list-col dp-col-date">Date</span>
+              <span className="dp-list-col dp-col-size">Size</span>
+              <span className="dp-list-col dp-col-drive">Drive</span>
+              <span className="dp-list-col dp-col-source">Source</span>
+              <span className="dp-list-col dp-col-status">Status</span>
+              <span className="dp-list-col dp-col-actions">Actions</span>
+            </div>
+            {/* Table rows */}
+            {filtered.map((project, i) => (
+              <div key={project.id || i} className="scroll-reveal" style={{ transitionDelay: `${i * 40}ms` }}>
+                <ProjectRow
+                  project={project}
+                  connectedDrives={connectedDrives}
+                  onAction={handleAction}
+                />
+              </div>
+            ))}
+          </div>
         ) : (
+          /* ===== GRID VIEW ===== */
           <div className="devices-grid">
             {filtered.map((project, i) => (
               <div key={project.id || i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}>
@@ -192,6 +202,89 @@ export default function DownloadingProPage({ drives }) {
   );
 }
 
+function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
+  return (
+    <div className={`stat-card ${active ? 'accent' : ''}`} onClick={onClick} style={{ cursor: 'pointer' }}>
+      <div className="stat-card-top">
+        <div className="stat-card-icon" style={{ background: iconBg }}>{icon}</div>
+        <div className="stat-card-arrow">{'\u2197'}</div>
+      </div>
+      <div className="stat-card-label">{label}</div>
+      <div className="stat-card-value">{value}</div>
+      <div className="stat-card-sub">{sub}</div>
+    </div>
+  );
+}
+
+/* ===== LIST VIEW ROW ===== */
+function ProjectRow({ project, connectedDrives, onAction }) {
+  const projectName = project.couple_name || 'Unknown Project';
+  const clientName = project.client_name || 'Unknown Client';
+  const downloadStatus = project.download_status || 'idle';
+  const downloadLink = project.download_link || '';
+  const targetDrive = project.target_drive || '';
+  const sizeGb = project.size_gb || '';
+  const projectDate = project.project_date || '';
+  const projectId = project.id;
+
+  const isDropbox = /dropbox/i.test(downloadLink);
+  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
+  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
+  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : '—';
+  const sourceColor = isDropbox ? '#1a56db' : isGDrive ? '#b45309' : isWeTransfer ? '#7c3aed' : '#8c8ca1';
+  const sourceBg = isDropbox ? '#e8f0fe' : isGDrive ? '#fef3e2' : isWeTransfer ? '#f3e8ff' : '#f0f1f3';
+
+  const statusConfig = {
+    idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7' },
+    queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3' },
+    downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe' },
+    copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff' },
+    completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7' },
+    failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
+  };
+  const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
+
+  const formattedDate = projectDate ? new Date(projectDate + 'T00:00:00').toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric',
+  }) : '—';
+
+  return (
+    <div className="dp-list-row">
+      <span className="dp-list-col dp-col-name dp-list-name">{projectName}</span>
+      <span className="dp-list-col dp-col-client dp-list-client">{clientName}</span>
+      <span className="dp-list-col dp-col-date dp-list-date">{formattedDate}</span>
+      <span className="dp-list-col dp-col-size dp-list-size">{sizeGb || '—'}</span>
+      <span className="dp-list-col dp-col-drive">
+        <select
+          value={targetDrive}
+          onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
+          className="dp-list-select"
+        >
+          <option value="">{targetDrive || 'Select...'}</option>
+          {connectedDrives.map((d, i) => (
+            <option key={i} value={d.name}>{d.name}</option>
+          ))}
+        </select>
+      </span>
+      <span className="dp-list-col dp-col-source">
+        <span className="dp-list-badge" style={{ background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
+      </span>
+      <span className="dp-list-col dp-col-status">
+        <span className="dp-list-badge" style={{ background: sCfg.bg, color: sCfg.color }}>{sCfg.label}</span>
+      </span>
+      <span className="dp-list-col dp-col-actions">
+        {downloadStatus === 'idle' && (
+          <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Download</button>
+        )}
+        {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
+          <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/* ===== GRID VIEW CARD ===== */
 function ProjectCard({ project, connectedDrives, onAction }) {
   const projectName = project.couple_name || 'Unknown Project';
   const clientName = project.client_name || 'Unknown Client';
@@ -204,12 +297,10 @@ function ProjectCard({ project, connectedDrives, onAction }) {
   const totalSize = project.cloud_size_bytes || 0;
   const projectId = project.id;
 
-  // Source detection
   const isDropbox = /dropbox/i.test(downloadLink);
   const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
   const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
 
-  // Status config
   const statusConfig = {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7', dot: '#f59e0b' },
     queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3', dot: '#eab308' },
@@ -226,7 +317,6 @@ function ProjectCard({ project, connectedDrives, onAction }) {
 
   return (
     <div className="device-card">
-      {/* Top row: icon + name + status */}
       <div className="device-card-top">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className="device-icon" style={{ background: sCfg.bg }}>
@@ -238,15 +328,11 @@ function ProjectCard({ project, connectedDrives, onAction }) {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%', background: sCfg.dot,
-            display: 'inline-block',
-          }} />
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: sCfg.dot, display: 'inline-block' }} />
           <span style={{ fontSize: 11, fontWeight: 600, color: sCfg.color }}>{sCfg.label}</span>
         </div>
       </div>
 
-      {/* Meta row */}
       <div className="device-meta" style={{ marginTop: 12 }}>
         {formattedDate && <span>{formattedDate}</span>}
         {sizeGb && <span>{sizeGb}{!sizeGb.toLowerCase().includes('gb') ? ' GB' : ''}</span>}
@@ -254,54 +340,33 @@ function ProjectCard({ project, connectedDrives, onAction }) {
         {!formattedDate && !sizeGb && !targetDrive && <span style={{ color: '#b0b0c0' }}>No details</span>}
       </div>
 
-      {/* Download link */}
       {downloadLink && (
         <div style={{ marginTop: 8 }}>
-          <a
-            href={downloadLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}
-          >
+          <a href={downloadLink} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}>
             {downloadLink.length > 55 ? downloadLink.substring(0, 55) + '...' : downloadLink}
           </a>
         </div>
       )}
 
-      {/* Progress bar for downloading */}
       {(downloadStatus === 'downloading' || downloadStatus === 'copying') && (
         <div style={{ marginTop: 10 }}>
           <div className="drive-progress-bar">
-            <div
-              className="drive-progress-fill"
-              style={{
-                width: totalSize > 0 ? `${Math.min((progress / totalSize) * 100, 100)}%` : '0%',
-                background: downloadStatus === 'copying'
-                  ? 'linear-gradient(90deg, #8b5cf6, #a78bfa)'
-                  : 'linear-gradient(90deg, #c8e600, #a3c400)',
-              }}
-            />
+            <div className="drive-progress-fill" style={{
+              width: totalSize > 0 ? `${Math.min((progress / totalSize) * 100, 100)}%` : '0%',
+              background: downloadStatus === 'copying' ? 'linear-gradient(90deg, #8b5cf6, #a78bfa)' : 'linear-gradient(90deg, #c8e600, #a3c400)',
+            }} />
           </div>
           {totalSize > 0 && (
-            <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 4 }}>
-              {formatSize(progress)} / {formatSize(totalSize)}
-            </div>
+            <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 4 }}>{formatSize(progress)} / {formatSize(totalSize)}</div>
           )}
         </div>
       )}
 
-      {/* Target drive selector */}
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, color: '#8c8ca1', fontWeight: 500 }}>Target:</span>
-        <select
-          value={targetDrive}
-          onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
-          style={{
-            flex: 1, padding: '5px 8px', borderRadius: 8, border: '1px solid #e5e7eb',
-            fontSize: 11, fontFamily: 'inherit', background: '#fff', color: '#4a4a6a',
-            cursor: 'pointer',
-          }}
-        >
+        <select value={targetDrive} onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
+          style={{ flex: 1, padding: '5px 8px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 11, fontFamily: 'inherit', background: '#fff', color: '#4a4a6a', cursor: 'pointer' }}>
           <option value="">Select drive...</option>
           {connectedDrives.map((d, i) => (
             <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
@@ -309,7 +374,6 @@ function ProjectCard({ project, connectedDrives, onAction }) {
         </select>
       </div>
 
-      {/* Action buttons */}
       <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {downloadStatus === 'idle' && (
           <>
@@ -327,22 +391,14 @@ function ProjectCard({ project, connectedDrives, onAction }) {
 }
 
 function ActionBtn({ label, primary, danger, onClick }) {
-  const bg = primary ? '#c8e600' : danger ? '#fff' : '#fff';
+  const bg = primary ? '#c8e600' : '#fff';
   const color = primary ? '#1a1a2e' : danger ? '#ef4444' : '#4a4a6a';
   const border = primary ? '#c8e600' : danger ? '#fecaca' : '#e5e7eb';
-
   return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '6px 14px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-        border: `1px solid ${border}`, background: bg, color,
-        cursor: 'pointer', fontFamily: 'inherit',
-        transition: 'all 0.15s ease',
-      }}
+    <button onClick={onClick}
+      style={{ padding: '6px 14px', borderRadius: 8, fontSize: 11, fontWeight: 600, border: `1px solid ${border}`, background: bg, color, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s ease' }}
       onMouseEnter={(e) => { e.target.style.transform = 'translateY(-1px)'; e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; }}
-      onMouseLeave={(e) => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}
-    >
+      onMouseLeave={(e) => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}>
       {label}
     </button>
   );
