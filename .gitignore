@@ -5,3 +5,6 @@ out/
 *.tsbuildinfo
 .env.local
 .env*.local
+
+# Claude Code auto-memory (machine-local, never commit)
+.claude/settings.local.json

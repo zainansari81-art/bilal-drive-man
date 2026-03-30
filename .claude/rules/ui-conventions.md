@@ -1,0 +1,11 @@
+## UI Conventions
+- Single CSS file: styles/globals.css — no CSS modules, no Tailwind
+- Accent color: #c8e600 | Dark text: #1a1a2e | Muted: #8c8ca1 | Background: #f4f5f7
+- Cards: white background, border-radius 12px, border 1px solid #e8eaed
+- Hover effects: border-color #c8e600, subtle translateY(-2px)
+- Badges: border-radius 20px, uppercase, letter-spacing 0.5px
+- Progress bars: border-radius 4px, green < 70%, yellow < 90%, red >= 90%
+- Use scroll-reveal class + IntersectionObserver for entry animations
+- All new page components follow prefix pattern: dp- (downloading-pro), device-, etc.
+- Responsive: must work at 480px, 768px, 1024px, 1200px, 1440px, 1920px
+- Branding: "Bilal - Drive Man" title, "by TXB" subtitle, green B logo circle

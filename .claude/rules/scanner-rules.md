@@ -1,0 +1,11 @@
+## Scanner Rules
+- Mac scanner: drive_scanner_mac.py — uses LaunchAgent, auto-updates from GitHub every 5min
+- Windows scanner: drive_scanner.py — system tray app, auto-updates every 60s
+- Both send heartbeats every 10 seconds to /api/heartbeat
+- ALWAYS bump VERSION string when making scanner changes
+- SSL fix required: certifi with unverified fallback for cross-Mac compatibility
+- Filter out: internal volumes (diskutil), temp volumes (msu-target-*, fcpx-*)
+- Windows drive types: 2=Removable, 3=Fixed, 4=Network/Cloud (Dropbox, OneDrive) — skip C:
+- Low CPU priority: os.nice(10) on Mac, BELOW_NORMAL on Windows
+- After editing: copy file to BOTH working copy AND web-app git repo
+- Auto-update mechanism: fetch from GitHub raw URL, compare content, os.execv to restart
