@@ -137,7 +137,8 @@ def get_external_drives():
         if bitmask & (1 << i):
             dl = f"{letter}:"
             dt = get_drive_type(dl)
-            if dt in (2, 3) and letter != 'C':
+            # 2=Removable, 3=Fixed, 4=Network/Cloud (Dropbox, OneDrive, etc.)
+            if dt in (2, 3, 4) and letter != 'C':
                 label = get_volume_label(dl)
                 if label:
                     try:
