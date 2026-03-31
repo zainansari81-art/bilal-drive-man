@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { formatTB, formatSize } from '../lib/format';
 
 export default function DevicesPage({ drives }) {
+  // Only show currently connected drives
+  const connectedOnly = drives.filter(d => d.connected);
+
   // Group drives by source_machine
   const machines = {};
-  for (const d of drives) {
+  for (const d of connectedOnly) {
     const machine = d.sourceMachine || 'Unknown Device';
     if (!machines[machine]) {
       machines[machine] = { name: machine, drives: [], totalUsed: 0, totalSize: 0 };
@@ -41,8 +44,7 @@ export default function DevicesPage({ drives }) {
 function MachineCard({ machine }) {
   const [expanded, setExpanded] = useState(false);
   const [showHardDrives, setShowHardDrives] = useState(false);
-  const connectedDrives = machine.drives.filter(d => d.connected);
-  const disconnectedDrives = machine.drives.filter(d => !d.connected);
+  const connectedDrives = machine.drives;
   const isOnline = connectedDrives.length > 0;
   const lastSeen = machine.drives.reduce((latest, d) => {
     if (!d.lastSeen) return latest;
@@ -74,7 +76,7 @@ function MachineCard({ machine }) {
       </div>
 
       <div className="device-meta">
-        {machine.drives.length} drive{machine.drives.length !== 1 ? 's' : ''} &nbsp;|&nbsp; Total: {formatTB(machine.totalSize)} &nbsp;|&nbsp; Used: {formatTB(machine.totalUsed)}
+        {connectedDrives.length} drive{connectedDrives.length !== 1 ? 's' : ''} connected &nbsp;|&nbsp; Total: {formatTB(machine.totalSize)} &nbsp;|&nbsp; Used: {formatTB(machine.totalUsed)}
       </div>
 
       <div className="device-expand-buttons">
@@ -100,16 +102,13 @@ function MachineCard({ machine }) {
             {connectedDrives.map((d, i) => (
               <DeviceDriveRow key={i} drive={d} />
             ))}
-            {disconnectedDrives.map((d, i) => (
-              <DeviceDriveRow key={`d-${i}`} drive={d} />
-            ))}
           </div>
         </div>
       )}
 
       {expanded && (
         <div className="device-details-panel">
-          {[...connectedDrives, ...disconnectedDrives].map((drive, di) => (
+          {connectedDrives.map((drive, di) => (
             <DriveDetails key={di} drive={drive} />
           ))}
         </div>
