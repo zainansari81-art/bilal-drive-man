@@ -70,12 +70,25 @@ export default function DownloadingProPage({ drives }) {
   const downloadingCount = projects.filter(p => (p.download_status) === 'downloading').length;
   const queuedCount = projects.filter(p => (p.download_status) === 'queued').length;
 
-  // Filter
-  const filtered = filter === 'all' ? projects
+  // Filter and sort (queued items sorted by position, downloading first)
+  const baseFiltered = filter === 'all' ? projects
     : filter === 'idle' ? projects.filter(p => p.download_status === 'idle')
     : filter === 'downloading' ? projects.filter(p => p.download_status === 'downloading')
     : filter === 'queued' ? projects.filter(p => p.download_status === 'queued')
     : projects;
+
+  const filtered = [...baseFiltered].sort((a, b) => {
+    // Downloading first, then queued by position, then idle
+    const order = { downloading: 0, copying: 0, queued: 1, idle: 2, completed: 3, failed: 4 };
+    const aOrder = order[a.download_status] ?? 5;
+    const bOrder = order[b.download_status] ?? 5;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    // Within queued, sort by position
+    if (a.download_status === 'queued' && b.download_status === 'queued') {
+      return (a.queue_position || 99) - (b.queue_position || 99);
+    }
+    return 0;
+  });
 
   if (loading) {
     return (
@@ -170,6 +183,7 @@ export default function DownloadingProPage({ drives }) {
               <span className="dp-list-col dp-col-drive">Drive</span>
               <span className="dp-list-col dp-col-source">Source</span>
               <span className="dp-list-col dp-col-status">Status</span>
+              <span className="dp-list-col dp-col-queue">Queue</span>
               <span className="dp-list-col dp-col-actions">Actions</span>
             </div>
             {/* Table rows */}
@@ -323,6 +337,32 @@ function ProjectRow({ project, connectedDrives, onAction }) {
             <option key={key} value={key}>{cfg.label}</option>
           ))}
         </select>
+      </span>
+      <span className="dp-list-col dp-col-queue">
+        {downloadStatus === 'idle' || downloadStatus === 'queued' ? (
+          <select
+            className="dp-list-queue-select"
+            value={project.queue_position || ''}
+            onChange={(e) => {
+              const pos = parseInt(e.target.value);
+              if (pos) {
+                onAction(projectId, 'queue', { position: pos });
+              } else {
+                // Unqueue — set back to idle
+                onAction(projectId, 'cancel');
+              }
+            }}
+          >
+            <option value="">—</option>
+            <option value="1">Q1</option>
+            <option value="2">Q2</option>
+            <option value="3">Q3</option>
+            <option value="4">Q4</option>
+            <option value="5">Q5</option>
+          </select>
+        ) : (
+          <span style={{ fontSize: 11, color: '#b0b0c0' }}>—</span>
+        )}
       </span>
       <span className="dp-list-col dp-col-actions">
         {downloadStatus === 'idle' && (

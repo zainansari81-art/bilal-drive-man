@@ -59,47 +59,56 @@ export default requireAuth(async function handler(req, res) {
       }
 
       if (action === 'queue') {
-        const { id, assigned_machine } = req.body;
-        if (!id) {
+        const { id, projectId, assigned_machine, position } = req.body;
+        const pid = projectId || id;
+        if (!pid) {
           return res.status(400).json({ error: 'Missing project id' });
         }
 
-        // Get max queue_position
-        const existing = await supabaseFetch(
-          'download_projects?download_status=eq.queued&order=queue_position.desc&limit=1'
-        );
-        const maxPos = existing && existing.length > 0 ? (existing[0].queue_position || 0) : 0;
+        let queuePos;
+        if (position) {
+          // Explicit position (Q1, Q2, Q3...)
+          queuePos = parseInt(position);
+        } else {
+          // Auto-assign next position
+          const existing = await supabaseFetch(
+            'download_projects?download_status=eq.queued&order=queue_position.desc&limit=1'
+          );
+          const maxPos = existing && existing.length > 0 ? (existing[0].queue_position || 0) : 0;
+          queuePos = maxPos + 1;
+        }
 
         const updateBody = {
           download_status: 'queued',
-          queue_position: maxPos + 1,
+          queue_position: queuePos,
         };
         if (assigned_machine) {
           updateBody.assigned_machine = sanitizeString(assigned_machine);
         }
 
-        const updated = await supabasePatch(`download_projects?id=eq.${id}`, updateBody);
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, updateBody);
         return res.status(200).json(updated);
       }
 
       if (action === 'download_now') {
-        const { id } = req.body;
-        if (!id) {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) {
           return res.status(400).json({ error: 'Missing project id' });
         }
 
-        const updated = await supabasePatch(`download_projects?id=eq.${id}`, {
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'downloading',
+          queue_position: null,
         });
 
         // Get the project to find assigned machine
-        const projects = await supabaseFetch(`download_projects?id=eq.${id}`);
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
         if (project && project.assigned_machine) {
           await supabasePost('download_commands', {
             machine_name: project.assigned_machine,
             command: 'start_download',
-            project_id: id,
+            project_id: pid,
           });
         }
 
@@ -107,23 +116,24 @@ export default requireAuth(async function handler(req, res) {
       }
 
       if (action === 'cancel') {
-        const { id } = req.body;
-        if (!id) {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) {
           return res.status(400).json({ error: 'Missing project id' });
         }
 
-        const updated = await supabasePatch(`download_projects?id=eq.${id}`, {
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'idle',
+          queue_position: null,
         });
 
         // Get the project to find assigned machine
-        const projects = await supabaseFetch(`download_projects?id=eq.${id}`);
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
         if (project && project.assigned_machine) {
           await supabasePost('download_commands', {
             machine_name: project.assigned_machine,
             command: 'cancel_download',
-            project_id: id,
+            project_id: pid,
           });
         }
 
@@ -131,12 +141,12 @@ export default requireAuth(async function handler(req, res) {
       }
 
       if (action === 'remove') {
-        const { id } = req.body;
-        if (!id) {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) {
           return res.status(400).json({ error: 'Missing project id' });
         }
 
-        await supabaseFetch(`download_projects?id=eq.${id}`, {
+        await supabaseFetch(`download_projects?id=eq.${pid}`, {
           method: 'DELETE',
         });
         return res.status(200).json({ success: true });
