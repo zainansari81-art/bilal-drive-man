@@ -96,30 +96,28 @@ export default function DownloadingProPage({ drives }) {
     }
   };
 
-  // Stats
-  const totalCount = projects.length;
-  const notDownloadedCount = projects.filter(p => (p.download_status || 'idle') === 'idle').length;
-  const downloadingCount = projects.filter(p => (p.download_status) === 'downloading').length;
-  const queuedCount = projects.filter(p => (p.download_status) === 'queued').length;
+  // Only show relevant statuses: idle (not downloaded), downloading, copying, completed (downloaded)
+  const visibleStatuses = ['idle', 'downloading', 'copying', 'completed'];
+  const visibleProjects = projects.filter(p => visibleStatuses.includes(p.download_status || 'idle'));
 
-  // Filter and sort (queued items sorted by position, downloading first)
-  const baseFiltered = filter === 'all' ? projects
-    : filter === 'idle' ? projects.filter(p => p.download_status === 'idle')
-    : filter === 'downloading' ? projects.filter(p => p.download_status === 'downloading')
-    : filter === 'queued' ? projects.filter(p => p.download_status === 'queued')
-    : projects;
+  // Stats
+  const totalCount = visibleProjects.length;
+  const notDownloadedCount = visibleProjects.filter(p => (p.download_status || 'idle') === 'idle').length;
+  const downloadingCount = visibleProjects.filter(p => p.download_status === 'downloading' || p.download_status === 'copying').length;
+  const completedCount = visibleProjects.filter(p => p.download_status === 'completed').length;
+
+  // Filter and sort
+  const baseFiltered = filter === 'all' ? visibleProjects
+    : filter === 'idle' ? visibleProjects.filter(p => (p.download_status || 'idle') === 'idle')
+    : filter === 'downloading' ? visibleProjects.filter(p => p.download_status === 'downloading' || p.download_status === 'copying')
+    : filter === 'completed' ? visibleProjects.filter(p => p.download_status === 'completed')
+    : visibleProjects;
 
   const filtered = [...baseFiltered].sort((a, b) => {
-    // Downloading first, then queued by position, then idle
-    const order = { downloading: 0, copying: 0, paused: 1, queued: 2, idle: 3, completed: 4, failed: 5 };
-    const aOrder = order[a.download_status] ?? 5;
-    const bOrder = order[b.download_status] ?? 5;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    // Within queued, sort by position
-    if (a.download_status === 'queued' && b.download_status === 'queued') {
-      return (a.queue_position || 99) - (b.queue_position || 99);
-    }
-    return 0;
+    const order = { downloading: 0, copying: 0, idle: 1, completed: 2 };
+    const aOrder = order[a.download_status] ?? 3;
+    const bOrder = order[b.download_status] ?? 3;
+    return aOrder - bOrder;
   });
 
   if (loading) {
@@ -137,7 +135,7 @@ export default function DownloadingProPage({ drives }) {
         <StatCard icon={'\u{1F4CB}'} iconBg="#f0fde0" label="Total Projects" value={totalCount} sub="From Notion sync" active={filter === 'all'} onClick={() => setFilter('all')} />
         <StatCard icon={'\u{1F4E5}'} iconBg="#fef3c7" label="Not Downloaded" value={notDownloadedCount} sub="Waiting to download" active={filter === 'idle'} onClick={() => setFilter('idle')} />
         <StatCard icon={'\u2B07'} iconBg="#dbeafe" label="Downloading" value={downloadingCount} sub="In progress now" active={filter === 'downloading'} onClick={() => setFilter('downloading')} />
-        <StatCard icon={'\u{23F3}'} iconBg="#fdf4ff" label="Queued" value={queuedCount} sub="Up next" active={filter === 'queued'} onClick={() => setFilter('queued')} />
+        <StatCard icon={'\u2705'} iconBg="#d1fae5" label="Downloaded" value={completedCount} sub="Completed" active={filter === 'completed'} onClick={() => setFilter('completed')} />
       </div>
 
       {/* Toolbar */}

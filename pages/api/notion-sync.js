@@ -84,13 +84,21 @@ export default requireAuth(async function handler(req, res) {
       return res.status(500).json({ error: 'Notion integration not configured' });
     }
 
-    // Fetch ALL projects from Notion so any status change is picked up
+    // Fetch projects with relevant statuses from Notion
+    const filter = {
+      or: [
+        { property: 'progress', status: { equals: 'Not Downloaded' } },
+        { property: 'progress', status: { equals: 'Downloading' } },
+        { property: 'progress', status: { equals: 'Downloaded' } },
+      ],
+    };
+
     let allPages = [];
     let hasMore = true;
     let startCursor = undefined;
 
     while (hasMore) {
-      const body = { page_size: 100 };
+      const body = { page_size: 100, filter };
       if (startCursor) {
         body.start_cursor = startCursor;
       }
