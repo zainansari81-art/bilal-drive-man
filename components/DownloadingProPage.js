@@ -218,21 +218,9 @@ function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
 
 /* ===== LIST VIEW ROW ===== */
 function ProjectRow({ project, connectedDrives, onAction }) {
-  const projectName = project.couple_name || 'Unknown Project';
-  const clientName = project.client_name || 'Unknown Client';
+  const projectId = project.id;
   const downloadStatus = project.download_status || 'idle';
   const downloadLink = project.download_link || '';
-  const targetDrive = project.target_drive || '';
-  const sizeGb = project.size_gb || '';
-  const projectDate = project.project_date || '';
-  const projectId = project.id;
-
-  const isDropbox = /dropbox/i.test(downloadLink);
-  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
-  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
-  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : '—';
-  const sourceColor = isDropbox ? '#1a56db' : isGDrive ? '#b45309' : isWeTransfer ? '#7c3aed' : '#8c8ca1';
-  const sourceBg = isDropbox ? '#e8f0fe' : isGDrive ? '#fef3e2' : isWeTransfer ? '#f3e8ff' : '#f0f1f3';
 
   const statusConfig = {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7' },
@@ -242,35 +230,99 @@ function ProjectRow({ project, connectedDrives, onAction }) {
     completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7' },
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
   };
+
+  const sourceOptions = [
+    { value: '', label: '—', color: '#8c8ca1', bg: '#f0f1f3' },
+    { value: 'dropbox', label: 'Dropbox', color: '#1a56db', bg: '#e8f0fe' },
+    { value: 'google_drive', label: 'Google Drive', color: '#b45309', bg: '#fef3e2' },
+    { value: 'wetransfer', label: 'WeTransfer', color: '#7c3aed', bg: '#f3e8ff' },
+    { value: 'other', label: 'Other', color: '#8c8ca1', bg: '#f0f1f3' },
+  ];
+
+  // Detect current source
+  const isDropbox = /dropbox/i.test(downloadLink);
+  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
+  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
+  const currentSource = isDropbox ? 'dropbox' : isGDrive ? 'google_drive' : isWeTransfer ? 'wetransfer' : downloadLink ? 'other' : '';
+  const srcOpt = sourceOptions.find(s => s.value === currentSource) || sourceOptions[0];
+
   const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
 
-  const formattedDate = projectDate ? new Date(projectDate + 'T00:00:00').toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric',
-  }) : '—';
+  const updateField = (field, value) => {
+    onAction(projectId, 'update', { fields: { [field]: value } });
+  };
 
   return (
     <div className="dp-list-row">
-      <span className="dp-list-col dp-col-name dp-list-name">{projectName}</span>
-      <span className="dp-list-col dp-col-client dp-list-client">{clientName}</span>
-      <span className="dp-list-col dp-col-date dp-list-date">{formattedDate}</span>
-      <span className="dp-list-col dp-col-size dp-list-size">{sizeGb || '—'}</span>
+      <span className="dp-list-col dp-col-name">
+        <EditableText
+          value={project.couple_name || ''}
+          placeholder="Project name"
+          bold
+          onSave={(val) => updateField('couple_name', val)}
+        />
+      </span>
+      <span className="dp-list-col dp-col-client">
+        <EditableText
+          value={project.client_name || ''}
+          placeholder="Client name"
+          onSave={(val) => updateField('client_name', val)}
+        />
+      </span>
+      <span className="dp-list-col dp-col-date">
+        <input
+          type="date"
+          className="dp-list-input dp-list-date-input"
+          value={project.project_date || ''}
+          onChange={(e) => updateField('project_date', e.target.value)}
+        />
+      </span>
+      <span className="dp-list-col dp-col-size">
+        <EditableText
+          value={project.size_gb || ''}
+          placeholder="—"
+          onSave={(val) => updateField('size_gb', val)}
+        />
+      </span>
       <span className="dp-list-col dp-col-drive">
         <select
-          value={targetDrive}
+          value={project.target_drive || ''}
           onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
           className="dp-list-select"
         >
-          <option value="">{targetDrive || 'Select...'}</option>
+          <option value="">Select...</option>
           {connectedDrives.map((d, i) => (
             <option key={i} value={d.name}>{d.name}</option>
           ))}
         </select>
       </span>
       <span className="dp-list-col dp-col-source">
-        <span className="dp-list-badge" style={{ background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
+        <select
+          className="dp-list-select-badge"
+          value={currentSource}
+          onChange={(e) => {
+            // Source is auto-detected from link, so let user paste a link instead
+          }}
+          style={{ background: srcOpt.bg, color: srcOpt.color }}
+          disabled
+          title="Source is auto-detected from download link"
+        >
+          {sourceOptions.map(s => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
       </span>
       <span className="dp-list-col dp-col-status">
-        <span className="dp-list-badge" style={{ background: sCfg.bg, color: sCfg.color }}>{sCfg.label}</span>
+        <select
+          className="dp-list-select-badge"
+          value={downloadStatus}
+          onChange={(e) => updateField('download_status', e.target.value)}
+          style={{ background: sCfg.bg, color: sCfg.color }}
+        >
+          {Object.entries(statusConfig).map(([key, cfg]) => (
+            <option key={key} value={key}>{cfg.label}</option>
+          ))}
+        </select>
       </span>
       <span className="dp-list-col dp-col-actions">
         {downloadStatus === 'idle' && (
@@ -281,6 +333,48 @@ function ProjectRow({ project, connectedDrives, onAction }) {
         )}
       </span>
     </div>
+  );
+}
+
+/* ===== INLINE EDITABLE TEXT ===== */
+function EditableText({ value, placeholder, bold, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  const handleBlur = () => {
+    setEditing(false);
+    if (draft !== value) {
+      onSave(draft);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') { e.target.blur(); }
+    if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="dp-list-inline-input"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        autoFocus
+        style={{ fontWeight: bold ? 700 : 400 }}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={`dp-list-editable ${bold ? 'bold' : ''}`}
+      onClick={() => { setDraft(value); setEditing(true); }}
+      title="Click to edit"
+    >
+      {value || <span style={{ color: '#b0b0c0' }}>{placeholder}</span>}
+    </span>
   );
 }
 

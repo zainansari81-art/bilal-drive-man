@@ -142,6 +142,34 @@ export default requireAuth(async function handler(req, res) {
         return res.status(200).json({ success: true });
       }
 
+      if (action === 'set-target') {
+        const { projectId, targetDrive } = req.body;
+        const pid = projectId || req.body.id;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+          target_drive: sanitizeString(targetDrive || ''),
+        });
+        return res.status(200).json(updated);
+      }
+
+      if (action === 'update') {
+        const { projectId, fields } = req.body;
+        const pid = projectId || req.body.id;
+        if (!pid || !fields) return res.status(400).json({ error: 'Missing project id or fields' });
+        const sanitized = {};
+        const allowedFields = ['couple_name', 'client_name', 'project_date', 'size_gb', 'target_drive', 'download_link', 'download_status'];
+        for (const [key, value] of Object.entries(fields)) {
+          if (allowedFields.includes(key)) {
+            sanitized[key] = typeof value === 'string' ? sanitizeString(value, 2048) : value;
+          }
+        }
+        if (sanitized.download_link) {
+          sanitized.link_type = detectLinkType(sanitized.download_link);
+        }
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, sanitized);
+        return res.status(200).json(updated);
+      }
+
       return res.status(400).json({ error: `Unknown action: ${action}` });
     }
 

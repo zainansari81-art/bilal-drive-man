@@ -889,6 +889,54 @@ body {
 .dp-list-action-btn.danger { color: #ef4444; border-color: #fecaca; }
 .dp-list-action-btn.danger:hover { background: #fef2f2; }
 
+/* Editable text cell */
+.dp-list-editable {
+  cursor: pointer; padding: 3px 6px; border-radius: 5px;
+  font-size: 13px; color: #1a1a2e; transition: background 0.15s;
+  display: inline-block; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; border: 1px solid transparent;
+}
+.dp-list-editable:hover { background: #f0f1f3; border-color: #e5e7eb; }
+.dp-list-editable.bold { font-weight: 700; }
+
+/* Inline input when editing */
+.dp-list-inline-input {
+  width: 100%; padding: 3px 6px; border-radius: 5px;
+  border: 1px solid #c8e600; font-size: 13px; font-family: inherit;
+  color: #1a1a2e; background: #fff; outline: none;
+  box-shadow: 0 0 0 2px rgba(200, 230, 0, 0.2);
+}
+
+/* Date input in list */
+.dp-list-date-input {
+  padding: 3px 4px; border-radius: 5px; border: 1px solid transparent;
+  font-size: 12px; font-family: inherit; color: #8c8ca1; background: transparent;
+  cursor: pointer; transition: all 0.15s; width: 100%;
+}
+.dp-list-date-input:hover { background: #f0f1f3; border-color: #e5e7eb; }
+.dp-list-date-input:focus { border-color: #c8e600; outline: none; background: #fff; color: #1a1a2e; box-shadow: 0 0 0 2px rgba(200, 230, 0, 0.2); }
+
+/* General list input */
+.dp-list-input {
+  padding: 3px 6px; border-radius: 5px; border: 1px solid transparent;
+  font-size: 12px; font-family: inherit; color: #4a4a6a; background: transparent;
+  cursor: pointer; transition: all 0.15s;
+}
+.dp-list-input:hover { background: #f0f1f3; border-color: #e5e7eb; }
+.dp-list-input:focus { border-color: #c8e600; outline: none; background: #fff; box-shadow: 0 0 0 2px rgba(200, 230, 0, 0.2); }
+
+/* Badge-style select */
+.dp-list-select-badge {
+  padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;
+  border: 1px solid transparent; cursor: pointer;
+  font-family: inherit; appearance: none; -webkit-appearance: none;
+  transition: all 0.15s; outline: none;
+}
+.dp-list-select-badge:hover { border-color: rgba(0,0,0,0.1); }
+.dp-list-select-badge:focus { border-color: #c8e600; box-shadow: 0 0 0 2px rgba(200, 230, 0, 0.2); }
+.dp-list-select-badge:disabled { cursor: default; opacity: 0.8; }
+
 @media (max-width: 768px) {
   .dp-toolbar { padding: 10px 14px; gap: 8px; }
   .dp-list-header { display: none; }
