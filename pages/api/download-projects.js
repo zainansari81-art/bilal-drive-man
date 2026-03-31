@@ -298,7 +298,22 @@ export default requireAuth(async function handler(req, res) {
           queue_position: null,
         });
 
-        // Send start_download command with cloud info
+        // Step 1: Send add_to_cloud command (adds shared link to user's cloud account)
+        if (project.download_link && (project.link_type === 'dropbox' || project.link_type === 'google_drive')) {
+          await supabasePost('download_commands', {
+            machine_name: project.assigned_machine,
+            command: 'add_to_cloud',
+            project_id: pid,
+            payload: {
+              download_link: project.download_link,
+              link_type: project.link_type,
+              couple_name: project.couple_name || '',
+            },
+            status: 'pending',
+          });
+        }
+
+        // Step 2: Send start_download command (finds folder, pins offline, monitors, copies)
         await supabasePost('download_commands', {
           machine_name: project.assigned_machine,
           command: 'start_download',

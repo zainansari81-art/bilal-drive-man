@@ -16,6 +16,8 @@ import logging
 import threading
 import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.parse
 from datetime import datetime
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
@@ -70,6 +72,11 @@ DEFAULT_CONFIG = {
     'dropbox_path': '',    # e.g. D:\Dropbox or C:\Users\<user>\Dropbox
     'gdrive_path': '',     # e.g. G:\My Drive or G:\
     'is_download_pc': False,
+    'dropbox_token': '',
+    'dropbox_refresh_token': '',
+    'dropbox_app_key': '',
+    'dropbox_app_secret': '',
+    'gdrive_token': '',
 }
 
 
@@ -261,6 +268,49 @@ def is_file_offline(filepath):
         return False
 
 
+def pin_file_offline(filepath):
+    """Pin a cloud file for offline access (forces download from cloud)."""
+    try:
+        # Get current attributes
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(filepath)
+        if attrs == -1:
+            return False
+        # Set PINNED attribute (forces offline), remove UNPINNED if set
+        new_attrs = (attrs | FILE_ATTRIBUTE_PINNED) & ~FILE_ATTRIBUTE_UNPINNED
+        result = ctypes.windll.kernel32.SetFileAttributesW(filepath, new_attrs)
+        return bool(result)
+    except Exception as e:
+        logging.error(f"Failed to pin file {filepath}: {e}")
+        return False
+
+
+def pin_folder_offline(folder_path):
+    """
+    Pin all files in a cloud folder for offline access.
+    This forces Dropbox/Google Drive desktop app to download files locally.
+    """
+    if not os.path.exists(folder_path):
+        return 0, 0
+
+    total = 0
+    pinned = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(folder_path):
+            # Pin the directory itself
+            pin_file_offline(dirpath)
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                total += 1
+                if pin_file_offline(filepath):
+                    pinned += 1
+                time.sleep(0.01)  # Don't hammer the filesystem
+    except (OSError, PermissionError) as e:
+        logging.error(f"Error pinning folder: {e}")
+
+    logging.info(f"Pinned {pinned}/{total} files in {folder_path}")
+    return total, pinned
+
+
 def check_folder_offline_status(folder_path):
     """
     Check if all files in a cloud sync folder are fully offline.
@@ -335,6 +385,190 @@ def find_cloud_folder(config, link_type, couple_name):
                 pass
 
     return None
+
+
+# ─── Cloud API Integration ──────────────────────────────────────────────────
+
+def refresh_dropbox_token(config):
+    """Refresh Dropbox access token using refresh token."""
+    refresh_token = config.get('dropbox_refresh_token', '')
+    app_key = config.get('dropbox_app_key', '')
+    app_secret = config.get('dropbox_app_secret', '')
+
+    if not refresh_token or not app_key or not app_secret:
+        return None
+
+    body = urllib.parse.urlencode({
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_token,
+        'client_id': app_key,
+        'client_secret': app_secret,
+    }).encode('utf-8')
+
+    req = urllib.request.Request('https://api.dropboxapi.com/oauth2/token', data=body, method='POST')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+            new_token = data.get('access_token', '')
+            if new_token:
+                config['dropbox_token'] = new_token
+                save_config(config)
+                logging.info("Refreshed Dropbox access token")
+                return new_token
+    except Exception as e:
+        logging.error(f"Failed to refresh Dropbox token: {e}")
+    return None
+
+
+def get_dropbox_token(config):
+    """Get a valid Dropbox access token, refreshing if needed."""
+    token = config.get('dropbox_token', '')
+    if token:
+        # Try using the token — if it fails, refresh
+        return token
+    return refresh_dropbox_token(config)
+
+
+def add_dropbox_shared_folder(access_token, shared_link):
+    """Add a Dropbox shared folder/link to the user's account."""
+    import re
+
+    # Extract shared folder ID from Dropbox link
+    # First get metadata about the shared link
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+    }
+
+    # Get shared link metadata
+    body = json.dumps({'url': shared_link}).encode('utf-8')
+    req = urllib.request.Request(
+        'https://api.dropboxapi.com/2/sharing/get_shared_link_metadata',
+        data=body, method='POST'
+    )
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            meta = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        err = e.read().decode() if e.fp else ''
+        logging.error(f"Dropbox metadata error: {e.code} {err}")
+        raise Exception(f"Failed to get Dropbox link info: {err}")
+
+    # If it's a shared folder, mount it
+    if meta.get('.tag') == 'folder':
+        shared_folder_id = meta.get('shared_folder_id') or meta.get('id', '').replace('id:', '')
+
+        if shared_folder_id:
+            mount_body = json.dumps({'shared_folder_id': shared_folder_id}).encode('utf-8')
+            mount_req = urllib.request.Request(
+                'https://api.dropboxapi.com/2/sharing/mount_folder',
+                data=mount_body, method='POST'
+            )
+            for k, v in headers.items():
+                mount_req.add_header(k, v)
+
+            try:
+                with urllib.request.urlopen(mount_req, timeout=30) as resp:
+                    result = json.loads(resp.read().decode())
+                    folder_name = result.get('name', meta.get('name', 'Unknown'))
+                    logging.info(f"Mounted Dropbox folder: {folder_name}")
+                    return folder_name
+            except urllib.error.HTTPError as e:
+                err = e.read().decode() if e.fp else ''
+                # already_mounted is OK
+                if 'already_mounted' in err:
+                    logging.info(f"Dropbox folder already mounted: {meta.get('name', '')}")
+                    return meta.get('name', 'Unknown')
+                logging.error(f"Dropbox mount error: {err}")
+                raise Exception(f"Failed to mount Dropbox folder: {err}")
+
+    # If it's a file, save it to the account
+    save_body = json.dumps({
+        'url': shared_link,
+        'path': f"/{meta.get('name', 'download')}",
+    }).encode('utf-8')
+    save_req = urllib.request.Request(
+        'https://api.dropboxapi.com/2/sharing/save_url/save_url',
+        data=save_body, method='POST'
+    )
+    for k, v in headers.items():
+        save_req.add_header(k, v)
+
+    # For files, just return the name — user may need to handle manually
+    return meta.get('name', 'Unknown')
+
+
+def add_gdrive_shared_folder(access_token, shared_link):
+    """Add a Google Drive shared folder/file to the user's My Drive."""
+    import re
+
+    # Extract file/folder ID from Google Drive link
+    match = re.search(r'/folders/([a-zA-Z0-9_-]+)', shared_link)
+    if not match:
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)', shared_link)
+    if not match:
+        match = re.search(r'id=([a-zA-Z0-9_-]+)', shared_link)
+    if not match:
+        raise Exception(f"Could not extract file ID from Google Drive link")
+
+    file_id = match.group(1)
+
+    # Get file metadata first
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+    }
+
+    meta_req = urllib.request.Request(
+        f'https://www.googleapis.com/drive/v3/files/{file_id}?fields=id,name,mimeType&supportsAllDrives=true',
+        method='GET'
+    )
+    for k, v in headers.items():
+        meta_req.add_header(k, v)
+
+    try:
+        with urllib.request.urlopen(meta_req, timeout=30) as resp:
+            meta = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        err = e.read().decode() if e.fp else ''
+        logging.error(f"Google Drive metadata error: {e.code} {err}")
+        raise Exception(f"Failed to get Google Drive file info: {err}")
+
+    folder_name = meta.get('name', 'Unknown')
+
+    # Create a shortcut in My Drive pointing to the shared folder
+    shortcut_body = json.dumps({
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.shortcut',
+        'shortcutDetails': {
+            'targetId': file_id,
+        },
+        'parents': ['root'],
+    }).encode('utf-8')
+
+    shortcut_req = urllib.request.Request(
+        'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
+        data=shortcut_body, method='POST'
+    )
+    shortcut_req.add_header('Authorization', f'Bearer {access_token}')
+    shortcut_req.add_header('Content-Type', 'application/json')
+
+    try:
+        with urllib.request.urlopen(shortcut_req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            logging.info(f"Added Google Drive shortcut: {folder_name}")
+            return folder_name
+    except urllib.error.HTTPError as e:
+        err = e.read().decode() if e.fp else ''
+        # If shortcut already exists, that's fine
+        if 'already exists' in err.lower():
+            return folder_name
+        logging.error(f"Google Drive shortcut error: {err}")
+        raise Exception(f"Failed to add to Google Drive: {err}")
 
 
 # ─── API Sync ───────────────────────────────────────────────────────────────
@@ -494,6 +728,8 @@ def poll_download_commands(config, known_drives):
                     args=(handle_start_download, config, project_id, payload, known_drives, cmd_id),
                     daemon=True
                 ).start()
+            elif command == 'add_to_cloud':
+                handle_add_to_cloud(config, project_id, payload, cmd_id)
             elif command == 'check_cloud_status':
                 handle_check_cloud_status(config, project_id, payload, cmd_id)
             elif command == 'cancel_download':
@@ -520,6 +756,68 @@ def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id
         logging.error(f"Background command failed: {e}")
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'failed', 'error_message': str(e)[:500]
+        })
+
+
+def handle_add_to_cloud(config, project_id, payload, cmd_id):
+    """Add a shared Dropbox/Google Drive link to the user's cloud account."""
+    download_link = payload.get('download_link', '')
+    link_type = payload.get('link_type', '')
+    couple_name = payload.get('couple_name', '')
+
+    if not download_link:
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'failed',
+            'error_message': 'No download link provided',
+        })
+        return
+
+    # Get cloud tokens from config (auto-refresh if needed)
+    dropbox_token = get_dropbox_token(config) if link_type == 'dropbox' else None
+    gdrive_token = config.get('gdrive_token', '') if link_type == 'google_drive' else None
+
+    try:
+        folder_name = None
+        if link_type == 'dropbox' and dropbox_token:
+            try:
+                folder_name = add_dropbox_shared_folder(dropbox_token, download_link)
+            except Exception as e:
+                # Token might be expired — try refreshing
+                if '401' in str(e) or 'expired' in str(e).lower():
+                    new_token = refresh_dropbox_token(config)
+                    if new_token:
+                        folder_name = add_dropbox_shared_folder(new_token, download_link)
+                    else:
+                        raise
+                else:
+                    raise
+        elif link_type == 'google_drive' and gdrive_token:
+            folder_name = add_gdrive_shared_folder(gdrive_token, download_link)
+        else:
+            token_missing = 'dropbox_token' if link_type == 'dropbox' else 'gdrive_token'
+            api_patch(config, 'download-commands', {
+                'id': cmd_id, 'status': 'failed',
+                'error_message': f'No {token_missing} configured in scanner settings',
+            })
+            return
+
+        # Report success — update project cloud status
+        api_request(config, 'download-progress', {
+            'project_id': project_id,
+            'status': 'downloading',
+        })
+
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'completed',
+        })
+
+        logging.info(f"Added to cloud: {folder_name or couple_name} ({link_type})")
+
+    except Exception as e:
+        logging.error(f"Add to cloud failed: {e}")
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'failed',
+            'error_message': str(e)[:500],
         })
 
 
@@ -622,6 +920,11 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
         'project_id': project_id,
         'status': 'downloading',
     })
+
+    # Auto-pin all files for offline (forces cloud app to download them)
+    logging.info(f"Pinning files for offline in: {cloud_folder}")
+    total_pinned, pinned_count = pin_folder_offline(cloud_folder)
+    logging.info(f"Pinned {pinned_count}/{total_pinned} files for offline download")
 
     # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
     max_checks = 2880  # 24 hours at 30-second intervals
