@@ -1054,20 +1054,22 @@ class DriveMonitor:
         current = get_external_drives()
         current_labels = {d['label']: d for d in current}
 
-        # New drives
+        # Disconnected drives — detect first so reconnect triggers rescan
+        for label in list(self.known_drives.keys()):
+            if label not in current_labels:
+                self.status(f"Drive disconnected: {label}")
+                disconnect_drive(self.config, label)
+                # Clear last_scan so reconnect triggers immediate rescan
+                self.last_scan.pop(label, None)
+
+        # New or reconnected drives
         for drive in current:
             label = drive['label']
             if label not in self.known_drives:
                 self.status(f"Drive connected: {label} ({drive['letter']})")
                 self._scan_and_sync(drive)
 
-        # Disconnected drives
-        for label in list(self.known_drives.keys()):
-            if label not in current_labels:
-                self.status(f"Drive disconnected: {label}")
-                disconnect_drive(self.config, label)
-
-        # Periodic rescan
+        # Periodic rescan (every scan_interval seconds)
         for drive in current:
             last = self.last_scan.get(drive['label'], 0)
             if time.time() - last > self.config.get('scan_interval', 300):
