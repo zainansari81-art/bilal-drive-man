@@ -1,4 +1,4 @@
-import { supabasePost } from '../../lib/supabase';
+import { supabasePost, supabaseFetch } from '../../lib/supabase';
 import { requireAuth, sanitizeString } from '../../lib/auth';
 
 function detectLinkType(url) {
@@ -84,20 +84,13 @@ export default requireAuth(async function handler(req, res) {
       return res.status(500).json({ error: 'Notion integration not configured' });
     }
 
-    // Only fetch projects with "Not Downloaded" or "Downloading" status
-    const filter = {
-      or: [
-        { property: 'progress', status: { equals: 'Not Downloaded' } },
-        { property: 'progress', status: { equals: 'Downloading' } },
-      ],
-    };
-
+    // Fetch ALL projects from Notion so any status change is picked up
     let allPages = [];
     let hasMore = true;
     let startCursor = undefined;
 
     while (hasMore) {
-      const body = { page_size: 100, filter };
+      const body = { page_size: 100 };
       if (startCursor) {
         body.start_cursor = startCursor;
       }
@@ -184,13 +177,34 @@ export default requireAuth(async function handler(req, res) {
         projectData.target_drive = sanitizeString(hardDrive);
       }
 
-      // Map progress to download_status
+      // Map Notion progress to download_status
+      let notionStatus = null;
       if (progress) {
         const p = progress.toLowerCase();
-        if (p === 'not downloaded') {
-          projectData.download_status = 'idle';
-        } else if (p === 'downloading') {
-          projectData.download_status = 'downloading';
+        if (p === 'not downloaded') notionStatus = 'idle';
+        else if (p === 'downloading') notionStatus = 'downloading';
+        else if (p === 'downloaded') notionStatus = 'completed';
+        else if (p === 'cancelled' || p === 'canceled') notionStatus = 'idle';
+        else if (p === 'failed') notionStatus = 'failed';
+      }
+
+      // Check if this project already exists in our DB with an active status
+      // Don't overwrite statuses that the dashboard/scanner is actively managing
+      const activeStatuses = ['downloading', 'queued', 'copying', 'paused'];
+      if (notionStatus) {
+        try {
+          const existing = await supabaseFetch(
+            `download_projects?notion_page_id=eq.${page.id}&select=download_status`
+          );
+          const currentStatus = existing?.[0]?.download_status;
+          if (currentStatus && activeStatuses.includes(currentStatus)) {
+            // Dashboard is actively managing this project, don't overwrite status
+          } else {
+            projectData.download_status = notionStatus;
+          }
+        } catch (lookupErr) {
+          // First time sync — set the status
+          projectData.download_status = notionStatus;
         }
       }
 
