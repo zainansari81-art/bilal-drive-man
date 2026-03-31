@@ -26,11 +26,30 @@ export default function DownloadingProPage({ drives }) {
     }
   }, []);
 
+  // Auto-sync from Notion every 5 minutes
+  const autoSync = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notion-sync', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setLastSynced(new Date());
+        if (data.errors?.length > 0) {
+          setError(`Auto-sync: ${data.synced}/${data.total} with ${data.errors.length} errors`);
+        }
+      }
+    } catch (err) { /* silent auto-sync failure */ }
+    await fetchProjects();
+  }, [fetchProjects]);
+
   useEffect(() => {
     fetchProjects();
-    const interval = setInterval(fetchProjects, 10000);
-    return () => clearInterval(interval);
-  }, [fetchProjects]);
+    // Sync from Notion on first load
+    autoSync();
+    // Refresh project list every 10s, sync from Notion every 5min
+    const refreshInterval = setInterval(fetchProjects, 10000);
+    const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
+    return () => { clearInterval(refreshInterval); clearInterval(syncInterval); };
+  }, [fetchProjects, autoSync]);
 
   const handleSync = async () => {
     setSyncing(true);
