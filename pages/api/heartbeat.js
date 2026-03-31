@@ -1,5 +1,5 @@
 import { requireApiKey, sanitizeString } from '../../lib/auth';
-import { supabasePatch } from '../../lib/supabase';
+import { supabasePatch, supabasePost } from '../../lib/supabase';
 
 // In-memory store for device heartbeats
 const deviceHeartbeats = {};
@@ -13,7 +13,7 @@ export default requireApiKey(async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { machine_name, platform, connected_drives } = req.body;
+  const { machine_name, platform, connected_drives, is_download_pc, dropbox_path, gdrive_path } = req.body;
   if (!machine_name) {
     return res.status(400).json({ error: 'machine_name required' });
   }
@@ -41,6 +41,21 @@ export default requireApiKey(async function handler(req, res) {
       });
     } catch (e) {
       // ignore individual failures
+    }
+  }
+
+  // Register/update download machine if it reports cloud paths
+  if (is_download_pc || dropbox_path || gdrive_path) {
+    try {
+      await supabasePost('download_machines', {
+        machine_name: safeName,
+        is_download_pc: !!is_download_pc,
+        dropbox_path: sanitizeString(dropbox_path || '', 500),
+        gdrive_path: sanitizeString(gdrive_path || '', 500),
+        last_seen: new Date().toISOString(),
+      }, 'machine_name');
+    } catch (e) {
+      // ignore - machine registration is best-effort
     }
   }
 

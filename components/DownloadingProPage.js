@@ -3,6 +3,7 @@ import { formatSize } from '../lib/format';
 
 export default function DownloadingProPage({ drives }) {
   const [projects, setProjects] = useState([]);
+  const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
@@ -11,6 +12,16 @@ export default function DownloadingProPage({ drives }) {
   const [viewMode, setViewMode] = useState('list');
 
   const connectedDrives = drives.filter(d => d.connected);
+
+  const fetchMachines = useCallback(async () => {
+    try {
+      const res = await fetch('/api/machines');
+      if (res.ok) {
+        const data = await res.json();
+        setMachines(data || []);
+      }
+    } catch (err) { /* silent */ }
+  }, []);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -43,13 +54,15 @@ export default function DownloadingProPage({ drives }) {
 
   useEffect(() => {
     fetchProjects();
+    fetchMachines();
     // Sync from Notion on first load
     autoSync();
-    // Refresh project list every 10s, sync from Notion every 5min
+    // Refresh project list every 10s, sync from Notion every 5min, machines every 30s
     const refreshInterval = setInterval(fetchProjects, 10000);
     const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
-    return () => { clearInterval(refreshInterval); clearInterval(syncInterval); };
-  }, [fetchProjects, autoSync]);
+    const machineInterval = setInterval(fetchMachines, 30000);
+    return () => { clearInterval(refreshInterval); clearInterval(syncInterval); clearInterval(machineInterval); };
+  }, [fetchProjects, autoSync, fetchMachines]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -98,7 +111,7 @@ export default function DownloadingProPage({ drives }) {
 
   const filtered = [...baseFiltered].sort((a, b) => {
     // Downloading first, then queued by position, then idle
-    const order = { downloading: 0, copying: 0, queued: 1, idle: 2, completed: 3, failed: 4 };
+    const order = { downloading: 0, copying: 0, paused: 1, queued: 2, idle: 3, completed: 4, failed: 5 };
     const aOrder = order[a.download_status] ?? 5;
     const bOrder = order[b.download_status] ?? 5;
     if (aOrder !== bOrder) return aOrder - bOrder;
@@ -209,6 +222,7 @@ export default function DownloadingProPage({ drives }) {
                 <ProjectRow
                   project={project}
                   connectedDrives={connectedDrives}
+                  machines={machines}
                   onAction={handleAction}
                 />
               </div>
@@ -248,7 +262,7 @@ function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
 }
 
 /* ===== LIST VIEW ROW ===== */
-function ProjectRow({ project, connectedDrives, onAction }) {
+function ProjectRow({ project, connectedDrives, machines, onAction }) {
   const [expanded, setExpanded] = useState(false);
   const projectId = project.id;
   const downloadStatus = project.download_status || 'idle';
@@ -258,6 +272,7 @@ function ProjectRow({ project, connectedDrives, onAction }) {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7' },
     queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3' },
     downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe' },
+    paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6' },
     copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff' },
     completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7' },
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
@@ -349,8 +364,23 @@ function ProjectRow({ project, connectedDrives, onAction }) {
           {downloadStatus === 'idle' && (
             <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Download</button>
           )}
-          {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
+          {downloadStatus === 'downloading' && (
+            <>
+              <button className="dp-list-action-btn warn" onClick={() => onAction(projectId, 'pause')}>Pause</button>
+              <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
+            </>
+          )}
+          {downloadStatus === 'paused' && (
+            <>
+              <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'resume')}>Resume</button>
+              <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
+            </>
+          )}
+          {downloadStatus === 'queued' && (
             <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
+          )}
+          {downloadStatus === 'failed' && (
+            <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Restart</button>
           )}
         </span>
       </div>
@@ -395,8 +425,41 @@ function ProjectRow({ project, connectedDrives, onAction }) {
                 <span style={{ fontSize: 12, color: '#b0b0c0' }}>No link</span>
               )}
             </div>
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Assigned Machine</label>
+              <select
+                value={project.assigned_machine || ''}
+                onChange={(e) => onAction(projectId, 'assign_machine', { machine_name: e.target.value })}
+                className="dp-list-select"
+              >
+                <option value="">Select machine...</option>
+                {machines.map((m, i) => (
+                  <option key={i} value={m.machine_name}>
+                    {m.machine_name} {m.dropbox_path || m.gdrive_path ? '\u2601' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Cloud Folder Path</label>
+              <EditableText
+                value={project.cloud_folder_path || ''}
+                placeholder="Auto-detected or enter path..."
+                onSave={(val) => updateField('cloud_folder_path', val)}
+              />
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+            {downloadStatus === 'idle' && project.assigned_machine && (isDropbox || isGDrive) && (
+              <button className="dp-list-action-btn cloud" onClick={() => onAction(projectId, 'start_cloud_download')}>
+                {'\u2601'} Start Cloud Download
+              </button>
+            )}
+            {downloadStatus === 'downloading' && project.assigned_machine && project.target_drive && (
+              <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'copy_to_drive')}>
+                {'\u{1F4BE}'} Copy to Drive
+              </button>
+            )}
             <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'remove')}>Remove Project</button>
           </div>
         </div>
@@ -468,6 +531,7 @@ function ProjectCard({ project, connectedDrives, onAction }) {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7', dot: '#f59e0b' },
     queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3', dot: '#eab308' },
     downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe', dot: '#3b82f6' },
+    paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6', dot: '#9ca3af' },
     copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff', dot: '#6366f1' },
     completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7', dot: '#22c55e' },
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2', dot: '#ef4444' },

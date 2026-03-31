@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.31.0'
+VERSION = '3.32.0'
 
 import os
 import sys
@@ -67,6 +67,9 @@ DEFAULT_CONFIG = {
     'scan_interval': 600,  # 10 minutes (longer to avoid blocking file copies)
     'check_interval': 10,  # 10 seconds to check for new drives
     'low_space_gb': 100,
+    'dropbox_path': '',    # e.g. D:\Dropbox or C:\Users\<user>\Dropbox
+    'gdrive_path': '',     # e.g. G:\My Drive or G:\
+    'is_download_pc': False,
 }
 
 
@@ -238,6 +241,102 @@ def scan_drive_folders(drive_letter):
     return clients
 
 
+# ─── Cloud File Status ──────────────────────────────────────────────────────
+
+# Windows file attributes for cloud files (Dropbox, Google Drive, OneDrive)
+FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000  # File is cloud-only placeholder
+FILE_ATTRIBUTE_PINNED = 0x00080000                  # File is pinned for offline
+FILE_ATTRIBUTE_UNPINNED = 0x00100000                # File is explicitly online-only
+
+
+def is_file_offline(filepath):
+    """Check if a cloud-synced file is fully available offline (not a placeholder)."""
+    try:
+        attrs = ctypes.windll.kernel32.GetFileAttributesW(filepath)
+        if attrs == -1:  # INVALID_FILE_ATTRIBUTES
+            return False
+        # If RECALL_ON_DATA_ACCESS is set, file is a cloud placeholder (not downloaded)
+        return not (attrs & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
+    except Exception:
+        return False
+
+
+def check_folder_offline_status(folder_path):
+    """
+    Check if all files in a cloud sync folder are fully offline.
+    Returns (is_ready, total_files, offline_files, total_size_bytes).
+    """
+    if not os.path.exists(folder_path):
+        return False, 0, 0, 0
+
+    total_files = 0
+    offline_files = 0
+    total_size = 0
+
+    try:
+        for dirpath, _, filenames in os.walk(folder_path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                total_files += 1
+                if is_file_offline(filepath):
+                    offline_files += 1
+                    try:
+                        total_size += os.path.getsize(filepath)
+                    except OSError:
+                        pass
+            time.sleep(0.01)  # Avoid blocking I/O
+    except (OSError, PermissionError) as e:
+        logging.error(f"Error checking folder offline status: {e}")
+
+    is_ready = total_files > 0 and offline_files == total_files
+    return is_ready, total_files, offline_files, total_size
+
+
+def find_cloud_folder(config, link_type, couple_name):
+    """
+    Find the cloud sync folder for a project based on its link type.
+    Searches common Dropbox/Google Drive sync folder structures.
+    """
+    if link_type == 'dropbox':
+        base = config.get('dropbox_path', '')
+    elif link_type == 'google_drive':
+        base = config.get('gdrive_path', '')
+    else:
+        return None
+
+    if not base or not os.path.exists(base):
+        return None
+
+    # Search for folder matching the couple/project name
+    couple_lower = couple_name.lower().strip()
+
+    # Direct match in root
+    for entry in os.listdir(base):
+        entry_path = os.path.join(base, entry)
+        if os.path.isdir(entry_path) and entry.lower().strip() == couple_lower:
+            return entry_path
+
+    # Partial match (folder name contains the couple name)
+    for entry in os.listdir(base):
+        entry_path = os.path.join(base, entry)
+        if os.path.isdir(entry_path) and couple_lower in entry.lower():
+            return entry_path
+
+    # Search one level deeper
+    for entry in os.listdir(base):
+        entry_path = os.path.join(base, entry)
+        if os.path.isdir(entry_path):
+            try:
+                for sub in os.listdir(entry_path):
+                    sub_path = os.path.join(entry_path, sub)
+                    if os.path.isdir(sub_path) and couple_lower in sub.lower():
+                        return sub_path
+            except (OSError, PermissionError):
+                pass
+
+    return None
+
+
 # ─── API Sync ───────────────────────────────────────────────────────────────
 
 API_KEY = 'bilal-scanner-key-2024'
@@ -329,6 +428,9 @@ def send_heartbeat(config, connected_drive_labels):
         'machine_name': get_machine_name(),
         'platform': 'windows',
         'connected_drives': connected_drive_labels,
+        'is_download_pc': config.get('is_download_pc', False),
+        'dropbox_path': config.get('dropbox_path', ''),
+        'gdrive_path': config.get('gdrive_path', ''),
     }
     api_request(config, 'heartbeat', data)
 
@@ -379,7 +481,21 @@ def poll_download_commands(config, known_drives):
 
         try:
             if command == 'copy_to_drive':
-                handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id)
+                # Run in background thread to avoid blocking main loop
+                threading.Thread(
+                    target=_safe_run_command,
+                    args=(handle_copy_to_drive, config, project_id, payload, known_drives, cmd_id),
+                    daemon=True
+                ).start()
+            elif command == 'start_download':
+                # Run in background thread — this monitors cloud folder for hours
+                threading.Thread(
+                    target=_safe_run_command,
+                    args=(handle_start_download, config, project_id, payload, known_drives, cmd_id),
+                    daemon=True
+                ).start()
+            elif command == 'check_cloud_status':
+                handle_check_cloud_status(config, project_id, payload, cmd_id)
             elif command == 'cancel_download':
                 api_patch(config, 'download-commands', {
                     'id': cmd_id, 'status': 'completed'
@@ -394,6 +510,17 @@ def poll_download_commands(config, known_drives):
             api_patch(config, 'download-commands', {
                 'id': cmd_id, 'status': 'failed', 'error_message': str(e)[:500]
             })
+
+
+def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id):
+    """Wrapper to run command handlers in background threads with error handling."""
+    try:
+        handler(config, project_id, payload, known_drives, cmd_id)
+    except Exception as e:
+        logging.error(f"Background command failed: {e}")
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'failed', 'error_message': str(e)[:500]
+        })
 
 
 def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
@@ -455,6 +582,134 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     })
 
     logging.info(f"Copied {client_name}/{couple_name} to {target_drive_label} ({format_size(total_copied)})")
+
+
+def handle_start_download(config, project_id, payload, known_drives, cmd_id):
+    """
+    Monitor a cloud sync folder until files are fully offline, then copy to target drive.
+    This is the main download workflow:
+    1. Find the cloud folder for this project
+    2. Monitor until all files are offline (user marks them for offline in desktop app)
+    3. Once ready, auto-copy to the target external drive
+    """
+    cloud_folder = payload.get('cloud_folder_path', '')
+    link_type = payload.get('link_type', '')
+    couple_name = payload.get('couple_name', '')
+    client_name = payload.get('client_name', 'Unknown')
+    target_drive_label = payload.get('target_drive', '')
+
+    # Try to find the cloud folder if not explicitly provided
+    if not cloud_folder or not os.path.exists(cloud_folder):
+        cloud_folder = find_cloud_folder(config, link_type, couple_name)
+
+    if not cloud_folder:
+        # Report that we couldn't find the folder
+        api_request(config, 'download-progress', {
+            'project_id': project_id,
+            'status': 'failed',
+            'error_message': f'Cloud folder not found for "{couple_name}". Configure cloud paths in scanner settings.',
+        })
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'failed',
+            'error_message': 'Cloud folder not found',
+        })
+        return
+
+    logging.info(f"Monitoring cloud folder: {cloud_folder}")
+
+    # Report the found folder path back
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': 'downloading',
+    })
+
+    # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
+    max_checks = 2880  # 24 hours at 30-second intervals
+    for check_num in range(max_checks):
+        is_ready, total_files, offline_files, total_size = check_folder_offline_status(cloud_folder)
+
+        # Report progress
+        if total_files > 0:
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'downloading',
+                'progress_bytes': total_size,
+            })
+
+        logging.info(f"Cloud check #{check_num + 1}: {offline_files}/{total_files} files offline in {cloud_folder}")
+
+        if is_ready:
+            logging.info(f"All {total_files} files are offline! Starting copy...")
+            break
+
+        time.sleep(30)
+
+    else:
+        # Timed out
+        api_request(config, 'download-progress', {
+            'project_id': project_id,
+            'status': 'failed',
+            'error_message': 'Timed out waiting for files to go offline',
+        })
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'failed',
+            'error_message': 'Timeout waiting for offline',
+        })
+        return
+
+    # Files are ready — copy to target drive
+    if target_drive_label:
+        copy_payload = {
+            'source_path': cloud_folder,
+            'target_drive': target_drive_label,
+            'client_name': client_name,
+            'couple_name': couple_name,
+        }
+        handle_copy_to_drive(config, project_id, copy_payload, known_drives, cmd_id)
+    else:
+        # No target drive specified — just mark as ready
+        api_request(config, 'download-progress', {
+            'project_id': project_id,
+            'status': 'completed',
+            'progress_bytes': total_size,
+        })
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'completed'
+        })
+        logging.info(f"Files offline for {couple_name} but no target drive specified")
+
+
+def handle_check_cloud_status(config, project_id, payload, cmd_id):
+    """Quick check of cloud folder offline status without waiting."""
+    cloud_folder = payload.get('cloud_folder_path', '')
+    link_type = payload.get('link_type', '')
+    couple_name = payload.get('couple_name', '')
+
+    if not cloud_folder or not os.path.exists(cloud_folder):
+        cloud_folder = find_cloud_folder(config, link_type, couple_name)
+
+    if not cloud_folder:
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'completed',
+            'error_message': 'Cloud folder not found',
+        })
+        return
+
+    is_ready, total_files, offline_files, total_size = check_folder_offline_status(cloud_folder)
+
+    # Report status
+    status = 'completed' if is_ready else 'downloading'
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': status,
+        'progress_bytes': total_size,
+    })
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id, 'status': 'completed',
+    })
+
+    logging.info(f"Cloud status for {couple_name}: {offline_files}/{total_files} files offline ({format_size(total_size)})")
 
 
 # ─── Drive Monitor ──────────────────────────────────────────────────────────

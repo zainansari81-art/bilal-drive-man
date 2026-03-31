@@ -109,9 +109,67 @@ export default requireAuth(async function handler(req, res) {
             machine_name: project.assigned_machine,
             command: 'start_download',
             project_id: pid,
+            payload: {
+              cloud_folder_path: project.cloud_folder_path || '',
+              link_type: project.link_type || '',
+              couple_name: project.couple_name || '',
+              client_name: project.client_name || 'Unknown',
+              target_drive: project.target_drive || '',
+            },
+            status: 'pending',
           });
         }
 
+        return res.status(200).json(updated);
+      }
+
+      if (action === 'pause') {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+          download_status: 'paused',
+        });
+
+        // Send pause command to scanner
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (project && project.assigned_machine) {
+          await supabasePost('download_commands', {
+            machine_name: project.assigned_machine,
+            command: 'cancel_download',
+            project_id: pid,
+            status: 'pending',
+          });
+        }
+        return res.status(200).json(updated);
+      }
+
+      if (action === 'resume') {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+          download_status: 'downloading',
+        });
+
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (project && project.assigned_machine) {
+          await supabasePost('download_commands', {
+            machine_name: project.assigned_machine,
+            command: 'start_download',
+            project_id: pid,
+            payload: {
+              cloud_folder_path: project.cloud_folder_path || '',
+              link_type: project.link_type || '',
+              couple_name: project.couple_name || '',
+              client_name: project.client_name || 'Unknown',
+              target_drive: project.target_drive || '',
+            },
+            status: 'pending',
+          });
+        }
         return res.status(200).json(updated);
       }
 
@@ -167,7 +225,7 @@ export default requireAuth(async function handler(req, res) {
         const pid = projectId || req.body.id;
         if (!pid || !fields) return res.status(400).json({ error: 'Missing project id or fields' });
         const sanitized = {};
-        const allowedFields = ['couple_name', 'client_name', 'project_date', 'size_gb', 'target_drive', 'download_link', 'download_status'];
+        const allowedFields = ['couple_name', 'client_name', 'project_date', 'size_gb', 'target_drive', 'download_link', 'download_status', 'assigned_machine', 'cloud_folder_path'];
         for (const [key, value] of Object.entries(fields)) {
           if (allowedFields.includes(key)) {
             sanitized[key] = typeof value === 'string' ? sanitizeString(value, 2048) : value;
@@ -178,6 +236,84 @@ export default requireAuth(async function handler(req, res) {
         }
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, sanitized);
         return res.status(200).json(updated);
+      }
+
+      if (action === 'assign_machine') {
+        const pid = req.body.projectId || req.body.id;
+        const { machine_name } = req.body;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+          assigned_machine: machine_name ? sanitizeString(machine_name) : null,
+        });
+        return res.status(200).json(updated);
+      }
+
+      if (action === 'copy_to_drive') {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+
+        // Get project details
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        if (!project.assigned_machine) return res.status(400).json({ error: 'No machine assigned' });
+        if (!project.target_drive) return res.status(400).json({ error: 'No target drive set' });
+
+        // Update status
+        await supabasePatch(`download_projects?id=eq.${pid}`, {
+          download_status: 'copying',
+        });
+
+        // Send copy command to the scanner
+        await supabasePost('download_commands', {
+          machine_name: project.assigned_machine,
+          command: 'copy_to_drive',
+          project_id: pid,
+          payload: {
+            source_path: project.cloud_folder_path || '',
+            target_drive: project.target_drive,
+            client_name: project.client_name || 'Unknown',
+            couple_name: project.couple_name || 'Unknown',
+            link_type: project.link_type || '',
+          },
+          status: 'pending',
+        });
+
+        return res.status(200).json({ success: true });
+      }
+
+      if (action === 'start_cloud_download') {
+        const pid = req.body.projectId || req.body.id;
+        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        if (!project.assigned_machine) return res.status(400).json({ error: 'No machine assigned' });
+
+        // Update status to downloading
+        await supabasePatch(`download_projects?id=eq.${pid}`, {
+          download_status: 'downloading',
+          queue_position: null,
+        });
+
+        // Send start_download command with cloud info
+        await supabasePost('download_commands', {
+          machine_name: project.assigned_machine,
+          command: 'start_download',
+          project_id: pid,
+          payload: {
+            cloud_folder_path: project.cloud_folder_path || '',
+            link_type: project.link_type || '',
+            couple_name: project.couple_name || '',
+            client_name: project.client_name || 'Unknown',
+            target_drive: project.target_drive || '',
+          },
+          status: 'pending',
+        });
+
+        return res.status(200).json({ success: true });
       }
 
       return res.status(400).json({ error: `Unknown action: ${action}` });

@@ -912,6 +912,10 @@ body {
 .dp-list-action-btn.primary:hover { background: #b5d000; }
 .dp-list-action-btn.danger { color: #ef4444; border-color: #fecaca; }
 .dp-list-action-btn.danger:hover { background: #fef2f2; }
+.dp-list-action-btn.cloud { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+.dp-list-action-btn.cloud:hover { background: #bfdbfe; }
+.dp-list-action-btn.warn { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.dp-list-action-btn.warn:hover { background: #fde68a; }
 
 /* Editable text cell */
 .dp-list-editable {
