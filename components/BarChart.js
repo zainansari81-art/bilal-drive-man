@@ -3,37 +3,24 @@ import { formatTB } from '../lib/format';
 
 export default function BarChart({ drives }) {
   const [hoveredDrive, setHoveredDrive] = useState(null);
+  const [expanded, setExpanded] = useState(false);
   const totalUsed = drives.reduce((s, d) => s + d.used, 0);
   const totalFree = drives.reduce((s, d) => s + d.free, 0);
 
-  // Show top 8 drives by total size, rest grouped as "Others"
-  const MAX_VISIBLE = 8;
+  const DEFAULT_VISIBLE = 8;
   const sorted = [...drives].sort((a, b) => (b.total || 0) - (a.total || 0));
-  const visible = sorted.slice(0, MAX_VISIBLE);
-  const overflow = sorted.slice(MAX_VISIBLE);
 
-  const hasOverflow = overflow.length > 0;
-  const overflowUsed = overflow.reduce((s, d) => s + (d.used || 0), 0);
-  const overflowFree = overflow.reduce((s, d) => s + (d.free || 0), 0);
-  const overflowTotal = overflowUsed + overflowFree;
-
-  // Build display list
-  const displayDrives = [...visible];
-  if (hasOverflow) {
-    displayDrives.push({
-      name: `+${overflow.length} more`,
-      used: overflowUsed,
-      free: overflowFree,
-      total: overflowTotal,
-      connected: true,
-      isOverflow: true,
-    });
-  }
+  // When collapsed show top 8, when expanded show all
+  const displayDrives = expanded ? sorted : sorted.slice(0, DEFAULT_VISIBLE);
+  const hiddenCount = drives.length - DEFAULT_VISIBLE;
 
   const maxDriveBytes = displayDrives.length > 0 ? Math.max(...displayDrives.map(d => d.total || 0)) : 4e12;
   const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12 || 4e12;
   const steps = 4;
   const chartHeight = 170;
+
+  // When expanded with many drives, use a wider scrollable area
+  const needsScroll = expanded && displayDrives.length > 10;
 
   return (
     <div className="chart-card">
@@ -58,64 +45,72 @@ export default function BarChart({ drives }) {
           No drives to display
         </div>
       ) : (
-        <div className="bar-chart">
-          <div className="bar-chart-y-axis">
-            {Array.from({ length: steps + 1 }, (_, i) => {
-              const val = maxBytes - (maxBytes / steps) * i;
-              return <div className="bar-chart-y-label" key={i}>{val === 0 ? '0' : formatTB(val)}</div>;
-            })}
-          </div>
-          <div className="bar-chart-area">
-            <div className="bar-chart-gridlines">
-              {Array.from({ length: steps + 1 }, (_, i) => (
-                <div className="bar-chart-gridline" key={i}></div>
-              ))}
+        <div className={`bar-chart-scroll-wrapper ${needsScroll ? 'scrollable' : ''}`}>
+          <div className="bar-chart" style={needsScroll ? { minWidth: displayDrives.length * 70 } : undefined}>
+            <div className="bar-chart-y-axis">
+              {Array.from({ length: steps + 1 }, (_, i) => {
+                const val = maxBytes - (maxBytes / steps) * i;
+                return <div className="bar-chart-y-label" key={i}>{val === 0 ? '0' : formatTB(val)}</div>;
+              })}
             </div>
-            {displayDrives.map((d, i) => {
-              const usedH = maxBytes > 0 ? (d.used / maxBytes) * chartHeight : 0;
-              const freeH = maxBytes > 0 ? (d.free / maxBytes) * chartHeight : 0;
-              const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
-              const isHovered = hoveredDrive === i;
-              return (
-                <div
-                  className={`bar-group ${d.isOverflow ? 'overflow-group' : ''}`}
-                  key={i}
-                  onMouseEnter={() => setHoveredDrive(i)}
-                  onMouseLeave={() => setHoveredDrive(null)}
-                >
-                  {isHovered && (
-                    <div className="bar-hover-card">
-                      <div className="bar-hover-name">{d.isOverflow ? `${overflow.length} other drives` : d.name}</div>
-                      <div className="bar-hover-row"><span className="bar-hover-dot used"></span>{formatTB(d.used)} used</div>
-                      <div className="bar-hover-row"><span className="bar-hover-dot free"></span>{formatTB(d.free)} free</div>
-                      <div className="bar-hover-pct">{pct}% full</div>
-                    </div>
-                  )}
-                  <div className="bar used" style={{ height: usedH }}></div>
-                  <div className="bar free" style={{ height: freeH }}></div>
-                  <div className="bar-label">
-                    {d.isOverflow ? d.name : (d.name && d.name.length > 10 ? d.name.slice(0, 9) + '\u2026' : d.name)}
-                    {!d.isOverflow && (
+            <div className="bar-chart-area">
+              <div className="bar-chart-gridlines">
+                {Array.from({ length: steps + 1 }, (_, i) => (
+                  <div className="bar-chart-gridline" key={i}></div>
+                ))}
+              </div>
+              {displayDrives.map((d, i) => {
+                const usedH = maxBytes > 0 ? (d.used / maxBytes) * chartHeight : 0;
+                const freeH = maxBytes > 0 ? (d.free / maxBytes) * chartHeight : 0;
+                const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
+                const isHovered = hoveredDrive === i;
+                return (
+                  <div
+                    className="bar-group"
+                    key={i}
+                    onMouseEnter={() => setHoveredDrive(i)}
+                    onMouseLeave={() => setHoveredDrive(null)}
+                  >
+                    {isHovered && (
+                      <div className="bar-hover-card">
+                        <div className="bar-hover-name">{d.name}</div>
+                        <div className="bar-hover-row"><span className="bar-hover-dot used"></span>{formatTB(d.used)} used</div>
+                        <div className="bar-hover-row"><span className="bar-hover-dot free"></span>{formatTB(d.free)} free</div>
+                        <div className="bar-hover-pct">{pct}% full</div>
+                      </div>
+                    )}
+                    <div className="bar used" style={{ height: usedH }}></div>
+                    <div className="bar free" style={{ height: freeH }}></div>
+                    <div className="bar-label">
+                      {d.name && d.name.length > 10 ? d.name.slice(0, 9) + '\u2026' : d.name}
                       <span style={{
                         display: 'block', width: 6, height: 6, borderRadius: '50%',
                         background: d.connected ? '#22c55e' : '#ef4444', margin: '4px auto 0'
                       }}></span>
-                    )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
 
-      <div className="chart-legend">
-        <div className="legend-item">
-          <div className="legend-dot" style={{ background: '#c8e600' }}></div> Used
+      <div className="chart-bottom-row">
+        <div className="chart-legend">
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: '#c8e600' }}></div> Used
+          </div>
+          <div className="legend-item">
+            <div className="legend-dot" style={{ background: '#93c5fd' }}></div> Free
+          </div>
         </div>
-        <div className="legend-item">
-          <div className="legend-dot" style={{ background: '#93c5fd' }}></div> Free
-        </div>
+
+        {hiddenCount > 0 && (
+          <button className="chart-expand-btn" onClick={() => setExpanded(!expanded)}>
+            {expanded ? '\u25B2 Show less' : `\u25BC Show all ${drives.length} drives`}
+          </button>
+        )}
       </div>
     </div>
   );
