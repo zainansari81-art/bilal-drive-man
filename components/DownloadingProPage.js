@@ -176,12 +176,10 @@ export default function DownloadingProPage({ drives }) {
           <div className="dp-list-container">
             {/* Table header */}
             <div className="dp-list-header">
+              <span className="dp-list-col dp-col-expand" />
               <span className="dp-list-col dp-col-name">Project</span>
               <span className="dp-list-col dp-col-client">Client</span>
               <span className="dp-list-col dp-col-date">Date</span>
-              <span className="dp-list-col dp-col-size">Size</span>
-              <span className="dp-list-col dp-col-drive">Drive</span>
-              <span className="dp-list-col dp-col-source">Source</span>
               <span className="dp-list-col dp-col-status">Status</span>
               <span className="dp-list-col dp-col-queue">Queue</span>
               <span className="dp-list-col dp-col-actions">Actions</span>
@@ -232,6 +230,7 @@ function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
 
 /* ===== LIST VIEW ROW ===== */
 function ProjectRow({ project, connectedDrives, onAction }) {
+  const [expanded, setExpanded] = useState(false);
   const projectId = project.id;
   const downloadStatus = project.download_status || 'idle';
   const downloadLink = project.download_link || '';
@@ -245,20 +244,12 @@ function ProjectRow({ project, connectedDrives, onAction }) {
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
   };
 
-  const sourceOptions = [
-    { value: '', label: '—', color: '#8c8ca1', bg: '#f0f1f3' },
-    { value: 'dropbox', label: 'Dropbox', color: '#1a56db', bg: '#e8f0fe' },
-    { value: 'google_drive', label: 'Google Drive', color: '#b45309', bg: '#fef3e2' },
-    { value: 'wetransfer', label: 'WeTransfer', color: '#7c3aed', bg: '#f3e8ff' },
-    { value: 'other', label: 'Other', color: '#8c8ca1', bg: '#f0f1f3' },
-  ];
-
-  // Detect current source
   const isDropbox = /dropbox/i.test(downloadLink);
   const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
   const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
-  const currentSource = isDropbox ? 'dropbox' : isGDrive ? 'google_drive' : isWeTransfer ? 'wetransfer' : downloadLink ? 'other' : '';
-  const srcOpt = sourceOptions.find(s => s.value === currentSource) || sourceOptions[0];
+  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : '—';
+  const sourceColor = isDropbox ? '#1a56db' : isGDrive ? '#b45309' : isWeTransfer ? '#7c3aed' : '#8c8ca1';
+  const sourceBg = isDropbox ? '#e8f0fe' : isGDrive ? '#fef3e2' : isWeTransfer ? '#f3e8ff' : '#f0f1f3';
 
   const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
 
@@ -267,111 +258,130 @@ function ProjectRow({ project, connectedDrives, onAction }) {
   };
 
   return (
-    <div className="dp-list-row">
-      <span className="dp-list-col dp-col-name">
-        <EditableText
-          value={project.couple_name || ''}
-          placeholder="Project name"
-          bold
-          onSave={(val) => updateField('couple_name', val)}
-        />
-      </span>
-      <span className="dp-list-col dp-col-client">
-        <EditableText
-          value={project.client_name || ''}
-          placeholder="Client name"
-          onSave={(val) => updateField('client_name', val)}
-        />
-      </span>
-      <span className="dp-list-col dp-col-date">
-        <input
-          type="date"
-          className="dp-list-input dp-list-date-input"
-          value={project.project_date || ''}
-          onChange={(e) => updateField('project_date', e.target.value)}
-        />
-      </span>
-      <span className="dp-list-col dp-col-size">
-        <EditableText
-          value={project.size_gb || ''}
-          placeholder="—"
-          onSave={(val) => updateField('size_gb', val)}
-        />
-      </span>
-      <span className="dp-list-col dp-col-drive">
-        <select
-          value={project.target_drive || ''}
-          onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
-          className="dp-list-select"
-        >
-          <option value="">Select...</option>
-          {connectedDrives.map((d, i) => (
-            <option key={i} value={d.name}>{d.name}</option>
-          ))}
-        </select>
-      </span>
-      <span className="dp-list-col dp-col-source">
-        <select
-          className="dp-list-select-badge"
-          value={currentSource}
-          onChange={(e) => {
-            // Source is auto-detected from link, so let user paste a link instead
-          }}
-          style={{ background: srcOpt.bg, color: srcOpt.color }}
-          disabled
-          title="Source is auto-detected from download link"
-        >
-          {sourceOptions.map(s => (
-            <option key={s.value} value={s.value}>{s.label}</option>
-          ))}
-        </select>
-      </span>
-      <span className="dp-list-col dp-col-status">
-        <select
-          className="dp-list-select-badge"
-          value={downloadStatus}
-          onChange={(e) => updateField('download_status', e.target.value)}
-          style={{ background: sCfg.bg, color: sCfg.color }}
-        >
-          {Object.entries(statusConfig).map(([key, cfg]) => (
-            <option key={key} value={key}>{cfg.label}</option>
-          ))}
-        </select>
-      </span>
-      <span className="dp-list-col dp-col-queue">
-        {downloadStatus === 'idle' || downloadStatus === 'queued' ? (
+    <div className={`dp-list-row-wrapper ${expanded ? 'expanded' : ''}`}>
+      {/* Main row */}
+      <div className="dp-list-row" onClick={() => setExpanded(!expanded)}>
+        <span className="dp-list-col dp-col-expand">
+          <span className={`dp-expand-arrow ${expanded ? 'open' : ''}`}>{'\u25B6'}</span>
+        </span>
+        <span className="dp-list-col dp-col-name">
+          <EditableText
+            value={project.couple_name || ''}
+            placeholder="Project name"
+            bold
+            onSave={(val) => updateField('couple_name', val)}
+          />
+        </span>
+        <span className="dp-list-col dp-col-client">
+          <EditableText
+            value={project.client_name || ''}
+            placeholder="Client name"
+            onSave={(val) => updateField('client_name', val)}
+          />
+        </span>
+        <span className="dp-list-col dp-col-date">
+          <input
+            type="date"
+            className="dp-list-input dp-list-date-input"
+            value={project.project_date || ''}
+            onChange={(e) => { e.stopPropagation(); updateField('project_date', e.target.value); }}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </span>
+        <span className="dp-list-col dp-col-status">
           <select
-            className="dp-list-queue-select"
-            value={project.queue_position || ''}
-            onChange={(e) => {
-              const pos = parseInt(e.target.value);
-              if (pos) {
-                onAction(projectId, 'queue', { position: pos });
-              } else {
-                // Unqueue — set back to idle
-                onAction(projectId, 'cancel');
-              }
-            }}
+            className="dp-list-select-badge"
+            value={downloadStatus}
+            onChange={(e) => { e.stopPropagation(); updateField('download_status', e.target.value); }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: sCfg.bg, color: sCfg.color }}
           >
-            <option value="">—</option>
-            <option value="1">Q1</option>
-            <option value="2">Q2</option>
-            <option value="3">Q3</option>
-            <option value="4">Q4</option>
-            <option value="5">Q5</option>
+            {Object.entries(statusConfig).map(([key, cfg]) => (
+              <option key={key} value={key}>{cfg.label}</option>
+            ))}
           </select>
-        ) : (
-          <span style={{ fontSize: 11, color: '#b0b0c0' }}>—</span>
-        )}
-      </span>
-      <span className="dp-list-col dp-col-actions">
-        {downloadStatus === 'idle' && (
-          <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Download</button>
-        )}
-        {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
-          <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
-        )}
-      </span>
+        </span>
+        <span className="dp-list-col dp-col-queue" onClick={(e) => e.stopPropagation()}>
+          {downloadStatus === 'idle' || downloadStatus === 'queued' ? (
+            <select
+              className="dp-list-queue-select"
+              value={project.queue_position || ''}
+              onChange={(e) => {
+                const pos = parseInt(e.target.value);
+                if (pos) {
+                  onAction(projectId, 'queue', { position: pos });
+                } else {
+                  onAction(projectId, 'cancel');
+                }
+              }}
+            >
+              <option value="">—</option>
+              <option value="1">Q1</option>
+              <option value="2">Q2</option>
+              <option value="3">Q3</option>
+              <option value="4">Q4</option>
+              <option value="5">Q5</option>
+            </select>
+          ) : (
+            <span style={{ fontSize: 11, color: '#b0b0c0' }}>—</span>
+          )}
+        </span>
+        <span className="dp-list-col dp-col-actions" onClick={(e) => e.stopPropagation()}>
+          {downloadStatus === 'idle' && (
+            <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Download</button>
+          )}
+          {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
+            <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
+          )}
+        </span>
+      </div>
+
+      {/* Expandable detail panel */}
+      {expanded && (
+        <div className="dp-list-detail">
+          <div className="dp-detail-grid">
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Size</label>
+              <EditableText
+                value={project.size_gb || ''}
+                placeholder="Enter size..."
+                onSave={(val) => updateField('size_gb', val)}
+              />
+            </div>
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Target Drive</label>
+              <select
+                value={project.target_drive || ''}
+                onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
+                className="dp-list-select"
+              >
+                <option value="">Select drive...</option>
+                {connectedDrives.map((d, i) => (
+                  <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
+                ))}
+              </select>
+            </div>
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Source</label>
+              <span className="dp-list-badge" style={{ background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
+            </div>
+            <div className="dp-detail-field">
+              <label className="dp-detail-label">Download Link</label>
+              {downloadLink ? (
+                <a href={downloadLink} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}>
+                  {downloadLink.length > 70 ? downloadLink.substring(0, 70) + '...' : downloadLink}
+                </a>
+              ) : (
+                <span style={{ fontSize: 12, color: '#b0b0c0' }}>No link</span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'remove')}>Remove Project</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

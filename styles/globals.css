@@ -840,23 +840,46 @@ body {
 
 .dp-list-row {
   display: flex; align-items: center; padding: 14px 20px;
-  border-bottom: 1px solid #f0f1f3;
-  transition: all 0.15s ease;
+  transition: all 0.15s ease; cursor: pointer;
 }
-.dp-list-row:last-child { border-bottom: none; }
 .dp-list-row:hover { background: #fafde8; }
 
 /* Column widths */
 .dp-list-col { display: flex; align-items: center; }
-.dp-col-name { flex: 2.2; min-width: 0; }
-.dp-col-client { flex: 1.6; min-width: 0; }
-.dp-col-date { flex: 0.8; }
-.dp-col-size { flex: 0.7; }
-.dp-col-drive { flex: 1.1; }
-.dp-col-source { flex: 0.9; }
-.dp-col-status { flex: 1.1; }
+.dp-col-expand { flex: 0 0 28px; justify-content: center; }
+.dp-col-name { flex: 2.5; min-width: 0; }
+.dp-col-client { flex: 2; min-width: 0; }
+.dp-col-date { flex: 1; }
+.dp-col-status { flex: 1.2; }
 .dp-col-queue { flex: 0.5; justify-content: center; }
-.dp-col-actions { flex: 0.8; justify-content: flex-end; }
+.dp-col-actions { flex: 1; justify-content: flex-end; }
+
+/* Expand arrow */
+.dp-expand-arrow {
+  font-size: 9px; color: #b0b0c0; transition: transform 0.2s ease;
+  display: inline-block;
+}
+.dp-expand-arrow.open { transform: rotate(90deg); color: #1a1a2e; }
+
+/* Row wrapper for expand */
+.dp-list-row-wrapper { border-bottom: 1px solid #f0f1f3; }
+.dp-list-row-wrapper:last-child { border-bottom: none; }
+.dp-list-row-wrapper.expanded { background: #fafbfc; }
+
+/* Detail panel (slide down) */
+.dp-list-detail {
+  padding: 14px 20px 14px 48px;
+  border-top: 1px solid #f0f1f3;
+  animation: slideDown 0.2s ease forwards;
+}
+.dp-detail-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+}
+.dp-detail-field { display: flex; flex-direction: column; gap: 4px; }
+.dp-detail-label {
+  font-size: 10px; font-weight: 700; color: #8c8ca1;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
 
 /* List row text styles */
 .dp-list-name { font-size: 13px; font-weight: 700; color: #1a1a2e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -955,7 +978,8 @@ body {
   .dp-col-name { flex: 1 1 100%; }
   .dp-col-client { flex: 1 1 45%; }
   .dp-col-date { flex: 1 1 45%; }
-  .dp-col-size, .dp-col-drive, .dp-col-source, .dp-col-queue { display: none; }
+  .dp-col-queue { display: none; }
+  .dp-detail-grid { grid-template-columns: repeat(2, 1fr); }
   .dp-col-status { flex: 1 1 50%; }
   .dp-col-actions { flex: 1 1 50%; }
 }
