@@ -2,19 +2,19 @@ import { useState } from 'react';
 import { formatTB, formatSize } from '../lib/format';
 
 export default function DevicesPage({ drives }) {
-  // Only show currently connected drives
-  const connectedOnly = drives.filter(d => d.connected);
-
-  // Group drives by source_machine
+  // Group ALL drives by source_machine (so offline machines still appear)
   const machines = {};
-  for (const d of connectedOnly) {
+  for (const d of drives) {
     const machine = d.sourceMachine || 'Unknown Device';
     if (!machines[machine]) {
-      machines[machine] = { name: machine, drives: [], totalUsed: 0, totalSize: 0 };
+      machines[machine] = { name: machine, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0 };
     }
-    machines[machine].drives.push(d);
-    machines[machine].totalUsed += d.used || 0;
-    machines[machine].totalSize += d.total || 0;
+    machines[machine].allDrives.push(d);
+    if (d.connected) {
+      machines[machine].connectedDrives.push(d);
+      machines[machine].totalUsed += d.used || 0;
+      machines[machine].totalSize += d.total || 0;
+    }
   }
 
   const machineList = Object.values(machines).sort((a, b) => a.name.localeCompare(b.name));
@@ -44,9 +44,9 @@ export default function DevicesPage({ drives }) {
 function MachineCard({ machine }) {
   const [expanded, setExpanded] = useState(false);
   const [showHardDrives, setShowHardDrives] = useState(false);
-  const connectedDrives = machine.drives;
+  const connectedDrives = machine.connectedDrives;
   const isOnline = connectedDrives.length > 0;
-  const lastSeen = machine.drives.reduce((latest, d) => {
+  const lastSeen = machine.allDrives.reduce((latest, d) => {
     if (!d.lastSeen) return latest;
     const t = new Date(d.lastSeen).getTime();
     return t > latest ? t : latest;
@@ -76,25 +76,27 @@ function MachineCard({ machine }) {
       </div>
 
       <div className="device-meta">
-        {connectedDrives.length} drive{connectedDrives.length !== 1 ? 's' : ''} connected &nbsp;|&nbsp; Total: {formatTB(machine.totalSize)} &nbsp;|&nbsp; Used: {formatTB(machine.totalUsed)}
+        {connectedDrives.length} drive{connectedDrives.length !== 1 ? 's' : ''} connected &nbsp;|&nbsp; {formatTB(machine.totalSize)} total &nbsp;|&nbsp; {formatTB(machine.totalUsed)} used
       </div>
 
-      <div className="device-expand-buttons">
-        <button
-          className={`device-expand-btn ${showHardDrives ? 'expanded' : ''}`}
-          onClick={() => setShowHardDrives(!showHardDrives)}
-        >
-          <span className="device-expand-arrow">{showHardDrives ? '\u25B2' : '\u25BC'}</span>
-          {showHardDrives ? 'Hide Hard Drives' : 'Show Hard Drives'}
-        </button>
-        <button
-          className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
-          onClick={() => setExpanded(!expanded)}
-        >
-          <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
-          {expanded ? 'Hide Clients & Couples' : 'Show Clients & Couples'}
-        </button>
-      </div>
+      {connectedDrives.length > 0 && (
+        <div className="device-expand-buttons">
+          <button
+            className={`device-expand-btn ${showHardDrives ? 'expanded' : ''}`}
+            onClick={() => setShowHardDrives(!showHardDrives)}
+          >
+            <span className="device-expand-arrow">{showHardDrives ? '\u25B2' : '\u25BC'}</span>
+            {showHardDrives ? 'Hide Hard Drives' : 'Show Hard Drives'}
+          </button>
+          <button
+            className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
+            onClick={() => setExpanded(!expanded)}
+          >
+            <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
+            {expanded ? 'Hide Clients & Couples' : 'Show Clients & Couples'}
+          </button>
+        </div>
+      )}
 
       {showHardDrives && (
         <div className="device-details-panel">
