@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, username }) {
+export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, username, collapsed, onToggleCollapse }) {
   const [scanning, setScanning] = useState(false);
 
   const handleLogout = async () => {
@@ -24,14 +24,25 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
   ];
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="logo">
         <div className="logo-circle">B</div>
-        <div>
-          <div className="logo-text">Bilal - Drive Man</div>
-          <div className="logo-sub">by TXB</div>
-        </div>
+        {!collapsed && (
+          <div>
+            <div className="logo-text">Bilal - Drive Man</div>
+            <div className="logo-sub">by TXB</div>
+          </div>
+        )}
       </div>
+
+      <button
+        className="sidebar-toggle"
+        onClick={onToggleCollapse}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {collapsed ? '\u276F' : '\u276E'}
+      </button>
+
       <div className="sidebar-divider"></div>
 
       <div className="nav-items">
@@ -40,48 +51,55 @@ export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, u
             key={item.id}
             className={`nav-item${currentPage === item.id ? ' active' : ''}`}
             onClick={() => onNavigate(item.id)}
+            title={collapsed ? item.label : ''}
           >
             <span className="nav-icon">{item.icon}</span>
-            {item.label}
-            {item.badge && <span className="nav-badge">{item.badge}</span>}
+            {!collapsed && item.label}
+            {!collapsed && item.badge && <span className="nav-badge">{item.badge}</span>}
           </button>
         ))}
       </div>
 
       <div className="sidebar-bottom">
-        <div className="scan-card">
-          <h3>Scan Drives</h3>
-          <p>Rescan all connected external drives</p>
-          <button className="scan-btn" onClick={handleScan} disabled={scanning}>
-            {scanning ? 'Scanning...' : 'Scan Now'}
-          </button>
-        </div>
-        <div className="sidebar-brand">Powered by TXB</div>
-        <button
-          onClick={handleLogout}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            width: '100%',
-            marginTop: '12px',
-            padding: '10px 16px',
-            background: 'none',
-            border: '1px solid #e5e7eb',
-            borderRadius: '10px',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: 500,
-            color: '#8c8ca1',
-            fontFamily: 'inherit',
-            transition: 'all 0.15s',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = '#f7f8fa'; e.currentTarget.style.color = '#4a4a6a'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#8c8ca1'; }}
-        >
-          <span style={{ fontSize: '16px' }}>{'\u2190'}</span>
-          Logout{username ? ` (${username})` : ''}
-        </button>
+        {!collapsed ? (
+          <>
+            <div className="scan-card">
+              <h3>Scan Drives</h3>
+              <p>Rescan all connected external drives</p>
+              <button className="scan-btn" onClick={handleScan} disabled={scanning}>
+                {scanning ? 'Scanning...' : 'Scan Now'}
+              </button>
+            </div>
+            <div className="sidebar-brand">Powered by TXB</div>
+            <button
+              onClick={handleLogout}
+              className="sidebar-logout-btn"
+            >
+              <span style={{ fontSize: '16px' }}>{'\u2190'}</span>
+              Logout{username ? ` (${username})` : ''}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="nav-item"
+              onClick={handleScan}
+              disabled={scanning}
+              title="Scan Drives"
+              style={{ justifyContent: 'center' }}
+            >
+              <span className="nav-icon">{scanning ? '\u23F3' : '\u{1F50D}'}</span>
+            </button>
+            <button
+              className="nav-item"
+              onClick={handleLogout}
+              title="Logout"
+              style={{ justifyContent: 'center' }}
+            >
+              <span className="nav-icon">{'\u2190'}</span>
+            </button>
+          </>
+        )}
       </div>
     </aside>
   );

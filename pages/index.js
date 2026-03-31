@@ -61,6 +61,20 @@ export default function Home({ username, initialDrives, initialActivities }) {
   const [activities, setActivities] = useState(initialActivities || []);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // Persist sidebar state
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    if (saved === 'true') setSidebarCollapsed(true);
+  }, []);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed(prev => {
+      localStorage.setItem('sidebarCollapsed', !prev);
+      return !prev;
+    });
+  };
 
   // Restore page from URL hash on mount + listen for hash changes
   useEffect(() => {
@@ -166,6 +180,8 @@ export default function Home({ username, initialDrives, initialActivities }) {
           driveCount={drives.length}
           onScan={handleScan}
           username={username}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
         />
 
         <main className="main">

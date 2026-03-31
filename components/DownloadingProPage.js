@@ -96,28 +96,33 @@ export default function DownloadingProPage({ drives }) {
     }
   };
 
-  // Only show relevant statuses: idle (not downloaded), downloading, copying, completed (downloaded)
-  const visibleStatuses = ['idle', 'downloading', 'copying', 'completed'];
-  const visibleProjects = projects.filter(p => visibleStatuses.includes(p.download_status || 'idle'));
-
   // Stats
-  const totalCount = visibleProjects.length;
-  const notDownloadedCount = visibleProjects.filter(p => (p.download_status || 'idle') === 'idle').length;
-  const downloadingCount = visibleProjects.filter(p => p.download_status === 'downloading' || p.download_status === 'copying').length;
-  const completedCount = visibleProjects.filter(p => p.download_status === 'completed').length;
+  const totalCount = projects.length;
+  const notDownloadedCount = projects.filter(p => (p.download_status || 'idle') === 'idle').length;
+  const activeCount = projects.filter(p => ['downloading', 'copying', 'queued', 'paused'].includes(p.download_status)).length;
+  const completedCount = projects.filter(p => p.download_status === 'completed').length;
+  const failedCount = projects.filter(p => p.download_status === 'failed').length;
 
   // Filter and sort
-  const baseFiltered = filter === 'all' ? visibleProjects
-    : filter === 'idle' ? visibleProjects.filter(p => (p.download_status || 'idle') === 'idle')
-    : filter === 'downloading' ? visibleProjects.filter(p => p.download_status === 'downloading' || p.download_status === 'copying')
-    : filter === 'completed' ? visibleProjects.filter(p => p.download_status === 'completed')
-    : visibleProjects;
+  const statusFilter = (p) => {
+    const s = p.download_status || 'idle';
+    if (filter === 'all') return true;
+    if (filter === 'idle') return s === 'idle';
+    if (filter === 'active') return ['downloading', 'copying', 'queued', 'paused'].includes(s);
+    if (filter === 'completed') return s === 'completed';
+    if (filter === 'failed') return s === 'failed';
+    return true;
+  };
 
-  const filtered = [...baseFiltered].sort((a, b) => {
-    const order = { downloading: 0, copying: 0, idle: 1, completed: 2 };
-    const aOrder = order[a.download_status] ?? 3;
-    const bOrder = order[b.download_status] ?? 3;
-    return aOrder - bOrder;
+  const filtered = [...projects].filter(statusFilter).sort((a, b) => {
+    const order = { downloading: 0, copying: 0, paused: 1, queued: 2, idle: 3, completed: 4, failed: 5 };
+    const aOrder = order[a.download_status] ?? 6;
+    const bOrder = order[b.download_status] ?? 6;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    if (a.download_status === 'queued' && b.download_status === 'queued') {
+      return (a.queue_position || 99) - (b.queue_position || 99);
+    }
+    return 0;
   });
 
   if (loading) {
@@ -132,10 +137,11 @@ export default function DownloadingProPage({ drives }) {
     <div>
       {/* Stat Cards */}
       <div className="stat-cards animate-in">
-        <StatCard icon={'\u{1F4CB}'} iconBg="#f0fde0" label="Total Projects" value={totalCount} sub="From Notion sync" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <StatCard icon={'\u{1F4E5}'} iconBg="#fef3c7" label="Not Downloaded" value={notDownloadedCount} sub="Waiting to download" active={filter === 'idle'} onClick={() => setFilter('idle')} />
-        <StatCard icon={'\u2B07'} iconBg="#dbeafe" label="Downloading" value={downloadingCount} sub="In progress now" active={filter === 'downloading'} onClick={() => setFilter('downloading')} />
+        <StatCard icon={'\u{1F4CB}'} iconBg="#f0fde0" label="Total" value={totalCount} sub="All projects" active={filter === 'all'} onClick={() => setFilter('all')} />
+        <StatCard icon={'\u{1F4E5}'} iconBg="#fef3c7" label="Not Downloaded" value={notDownloadedCount} sub="Waiting" active={filter === 'idle'} onClick={() => setFilter('idle')} />
+        <StatCard icon={'\u2B07'} iconBg="#dbeafe" label="Active" value={activeCount} sub="Downloading / Queued / Paused" active={filter === 'active'} onClick={() => setFilter('active')} />
         <StatCard icon={'\u2705'} iconBg="#d1fae5" label="Downloaded" value={completedCount} sub="Completed" active={filter === 'completed'} onClick={() => setFilter('completed')} />
+        {failedCount > 0 && <StatCard icon={'\u274C'} iconBg="#fee2e2" label="Failed" value={failedCount} sub="Needs attention" active={filter === 'failed'} onClick={() => setFilter('failed')} />}
       </div>
 
       {/* Toolbar */}

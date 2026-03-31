@@ -1,17 +1,45 @@
+import { useState } from 'react';
 import { formatTB } from '../lib/format';
 
 export default function BarChart({ drives }) {
-  const maxDriveBytes = drives.length > 0 ? Math.max(...drives.map(d => d.total || 0)) : 4e12;
-  const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12 || 4e12; // Round up to nearest TB, fallback 4TB
+  const [hoveredDrive, setHoveredDrive] = useState(null);
   const totalUsed = drives.reduce((s, d) => s + d.used, 0);
   const totalFree = drives.reduce((s, d) => s + d.free, 0);
+
+  // Show top 8 drives by total size, rest grouped as "Others"
+  const MAX_VISIBLE = 8;
+  const sorted = [...drives].sort((a, b) => (b.total || 0) - (a.total || 0));
+  const visible = sorted.slice(0, MAX_VISIBLE);
+  const overflow = sorted.slice(MAX_VISIBLE);
+
+  const hasOverflow = overflow.length > 0;
+  const overflowUsed = overflow.reduce((s, d) => s + (d.used || 0), 0);
+  const overflowFree = overflow.reduce((s, d) => s + (d.free || 0), 0);
+  const overflowTotal = overflowUsed + overflowFree;
+
+  // Build display list
+  const displayDrives = [...visible];
+  if (hasOverflow) {
+    displayDrives.push({
+      name: `+${overflow.length} more`,
+      used: overflowUsed,
+      free: overflowFree,
+      total: overflowTotal,
+      connected: true,
+      isOverflow: true,
+    });
+  }
+
+  const maxDriveBytes = displayDrives.length > 0 ? Math.max(...displayDrives.map(d => d.total || 0)) : 4e12;
+  const maxBytes = Math.ceil(maxDriveBytes / 1e12) * 1e12 || 4e12;
   const steps = 4;
+  const chartHeight = 170;
 
   return (
     <div className="chart-card">
       <div className="chart-header">
         <div className="chart-title">{'\u2587'} Drive Space Usage</div>
-        <div className="chart-subtitle">Used vs Free</div>
+        <div className="chart-subtitle">{drives.length} drive{drives.length !== 1 ? 's' : ''}</div>
       </div>
 
       <div className="chart-stats">
@@ -43,23 +71,36 @@ export default function BarChart({ drives }) {
                 <div className="bar-chart-gridline" key={i}></div>
               ))}
             </div>
-            {drives.map((d, i) => {
-              const usedH = maxBytes > 0 ? (d.used / maxBytes) * 170 : 0;
-              const freeH = maxBytes > 0 ? (d.free / maxBytes) * 170 : 0;
+            {displayDrives.map((d, i) => {
+              const usedH = maxBytes > 0 ? (d.used / maxBytes) * chartHeight : 0;
+              const freeH = maxBytes > 0 ? (d.free / maxBytes) * chartHeight : 0;
+              const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
+              const isHovered = hoveredDrive === i;
               return (
-                <div className="bar-group" key={i}>
-                  <div className="bar used" style={{ height: usedH }}>
-                    <div className="bar-tooltip">{formatTB(d.used)} Used</div>
-                  </div>
-                  <div className="bar free" style={{ height: freeH }}>
-                    <div className="bar-tooltip">{formatTB(d.free)} Free</div>
-                  </div>
+                <div
+                  className={`bar-group ${d.isOverflow ? 'overflow-group' : ''}`}
+                  key={i}
+                  onMouseEnter={() => setHoveredDrive(i)}
+                  onMouseLeave={() => setHoveredDrive(null)}
+                >
+                  {isHovered && (
+                    <div className="bar-hover-card">
+                      <div className="bar-hover-name">{d.isOverflow ? `${overflow.length} other drives` : d.name}</div>
+                      <div className="bar-hover-row"><span className="bar-hover-dot used"></span>{formatTB(d.used)} used</div>
+                      <div className="bar-hover-row"><span className="bar-hover-dot free"></span>{formatTB(d.free)} free</div>
+                      <div className="bar-hover-pct">{pct}% full</div>
+                    </div>
+                  )}
+                  <div className="bar used" style={{ height: usedH }}></div>
+                  <div className="bar free" style={{ height: freeH }}></div>
                   <div className="bar-label">
-                    {d.name}
-                    <span style={{
-                      display: 'block', width: 6, height: 6, borderRadius: '50%',
-                      background: d.connected ? '#22c55e' : '#ef4444', margin: '4px auto 0'
-                    }}></span>
+                    {d.isOverflow ? d.name : (d.name && d.name.length > 10 ? d.name.slice(0, 9) + '\u2026' : d.name)}
+                    {!d.isOverflow && (
+                      <span style={{
+                        display: 'block', width: 6, height: 6, borderRadius: '50%',
+                        background: d.connected ? '#22c55e' : '#ef4444', margin: '4px auto 0'
+                      }}></span>
+                    )}
                   </div>
                 </div>
               );
