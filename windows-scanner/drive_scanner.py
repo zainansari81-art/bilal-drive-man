@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.32.0'
+VERSION = '3.33.0'
 
 import os
 import sys
@@ -728,6 +728,8 @@ def poll_download_commands(config, known_drives):
                     args=(handle_start_download, config, project_id, payload, known_drives, cmd_id),
                     daemon=True
                 ).start()
+            elif command == 'delete_data':
+                handle_delete_data(config, payload, known_drives, cmd_id)
             elif command == 'add_to_cloud':
                 handle_add_to_cloud(config, project_id, payload, cmd_id)
             elif command == 'check_cloud_status':
@@ -1013,6 +1015,87 @@ def handle_check_cloud_status(config, project_id, payload, cmd_id):
     })
 
     logging.info(f"Cloud status for {couple_name}: {offline_files}/{total_files} files offline ({format_size(total_size)})")
+
+
+def handle_delete_data(config, payload, known_drives, cmd_id):
+    """Delete a client/couple folder from a drive, sending it to Recycle Bin."""
+    drive_label = payload.get('drive_label', '')
+    client_name = payload.get('client_name', '')
+    couple_name = payload.get('couple_name', '')
+
+    if not drive_label or not client_name:
+        raise Exception("Missing drive_label or client_name in payload")
+
+    # Find the drive path
+    target_path = None
+    for label, drive in known_drives.items():
+        if label == drive_label:
+            target_path = drive['path']
+            break
+
+    if not target_path:
+        raise Exception(f"Drive not found or not connected: {drive_label}")
+
+    # Build path to the folder to delete
+    if couple_name:
+        folder_path = os.path.join(target_path, client_name, couple_name)
+    else:
+        folder_path = os.path.join(target_path, client_name)
+
+    if not os.path.exists(folder_path):
+        raise Exception(f"Folder not found: {folder_path}")
+
+    # Use send2trash to move to Recycle Bin (safe delete)
+    try:
+        from send2trash import send2trash
+        send2trash(folder_path)
+        logging.info(f"Moved to Recycle Bin: {folder_path}")
+    except ImportError:
+        # Fallback: use Windows shell COM to recycle
+        try:
+            import ctypes
+            from ctypes import wintypes
+            # SHFileOperationW with FOF_ALLOWUNDO sends to Recycle Bin
+            class SHFILEOPSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ('hwnd', wintypes.HWND),
+                    ('wFunc', ctypes.c_uint),
+                    ('pFrom', ctypes.c_wchar_p),
+                    ('pTo', ctypes.c_wchar_p),
+                    ('fFlags', wintypes.WORD),
+                    ('fAnyOperationsAborted', wintypes.BOOL),
+                    ('hNameMappings', ctypes.c_void_p),
+                    ('lpszProgressTitle', ctypes.c_wchar_p),
+                ]
+            FO_DELETE = 3
+            FOF_ALLOWUNDO = 0x0040
+            FOF_NOCONFIRMATION = 0x0010
+            FOF_SILENT = 0x0004
+
+            op = SHFILEOPSTRUCT()
+            op.wFunc = FO_DELETE
+            op.pFrom = folder_path + '\0'
+            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+
+            result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+            if result != 0:
+                raise Exception(f"SHFileOperation failed with code {result}")
+            logging.info(f"Moved to Recycle Bin (fallback): {folder_path}")
+        except Exception as fallback_err:
+            raise Exception(f"Cannot move to Recycle Bin: {fallback_err}")
+
+    # Clean up empty client folder if couple was deleted
+    if couple_name:
+        client_folder = os.path.join(target_path, client_name)
+        if os.path.exists(client_folder) and not os.listdir(client_folder):
+            os.rmdir(client_folder)
+            logging.info(f"Removed empty client folder: {client_folder}")
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id, 'status': 'completed'
+    })
+
+    logging.info(f"Delete completed: {drive_label}/{client_name}/{couple_name}")
 
 
 # ─── Drive Monitor ──────────────────────────────────────────────────────────

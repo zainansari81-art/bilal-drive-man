@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatSize, formatTB } from '../lib/format';
+import DeleteConfirmModal from './DeleteConfirmModal';
 
 export default function DrivesPage({ drives }) {
   const connected = drives.filter(d => d.connected);
@@ -64,7 +65,7 @@ function DriveCard({ drive }) {
         </summary>
         <div style={{ padding: '4px 0 0' }}>
           {(d.clients || []).map((client, ci) => (
-            <ClientBlock key={ci} client={client} />
+            <ClientBlock key={ci} client={client} drive={d} />
           ))}
         </div>
       </details>
@@ -72,9 +73,33 @@ function DriveCard({ drive }) {
   );
 }
 
-function ClientBlock({ client }) {
+function ClientBlock({ client, drive }) {
   const [open, setOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const clientTotal = client.couples.reduce((s, c) => s + c.size, 0);
+
+  const handleDeleteCouple = (couple) => {
+    setDeleteTarget({
+      type: 'couple',
+      driveName: drive.name,
+      clientName: client.name,
+      coupleName: couple.name,
+      size: couple.size,
+      sourceMachine: drive.sourceMachine,
+    });
+  };
+
+  const handleDeleteClient = () => {
+    setDeleteTarget({
+      type: 'client',
+      driveName: drive.name,
+      clientName: client.name,
+      coupleName: '',
+      size: clientTotal,
+      coupleCount: client.couples.length,
+      sourceMachine: drive.sourceMachine,
+    });
+  };
 
   return (
     <div className="client-block">
@@ -83,6 +108,15 @@ function ClientBlock({ client }) {
         <span className="client-name">{client.name}</span>
         <span className="client-count">({client.couples.length} couples)</span>
         <span className="client-size">{formatSize(clientTotal)}</span>
+        {drive.connected && (
+          <button
+            className="delete-btn-small"
+            onClick={(e) => { e.stopPropagation(); handleDeleteClient(); }}
+            title="Delete entire client folder"
+          >
+            {'\uD83D\uDDD1'}
+          </button>
+        )}
       </div>
       {open && (
         <div className="couple-list">
@@ -91,9 +125,24 @@ function ClientBlock({ client }) {
               <div className="couple-dot"></div>
               <span className="couple-name">{couple.name}</span>
               <span className="couple-size">{formatSize(couple.size)}</span>
+              {drive.connected && (
+                <button
+                  className="delete-btn-small"
+                  onClick={() => handleDeleteCouple(couple)}
+                  title="Delete this couple folder"
+                >
+                  {'\uD83D\uDDD1'}
+                </button>
+              )}
             </div>
           ))}
         </div>
+      )}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

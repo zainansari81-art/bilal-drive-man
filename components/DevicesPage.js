@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatTB, formatSize } from '../lib/format';
+import DeleteConfirmModal from './DeleteConfirmModal';
 
 export default function DevicesPage({ drives }) {
   // Group ALL drives by source_machine (so offline machines still appear)
@@ -121,11 +122,36 @@ function MachineCard({ machine }) {
 
 function DriveDetails({ drive }) {
   const [openClients, setOpenClients] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const clients = drive.clients || [];
   const totalCouples = clients.reduce((s, c) => s + (c.couples || []).length, 0);
 
   const toggleClient = (idx) => {
     setOpenClients(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  const handleDeleteCouple = (client, couple) => {
+    setDeleteTarget({
+      type: 'couple',
+      driveName: drive.name,
+      clientName: client.name,
+      coupleName: couple.name,
+      size: couple.size || 0,
+      sourceMachine: drive.sourceMachine,
+    });
+  };
+
+  const handleDeleteClient = (client) => {
+    const clientSize = (client.couples || []).reduce((s, c) => s + (c.size || 0), 0);
+    setDeleteTarget({
+      type: 'client',
+      driveName: drive.name,
+      clientName: client.name,
+      coupleName: '',
+      size: clientSize,
+      coupleCount: (client.couples || []).length,
+      sourceMachine: drive.sourceMachine,
+    });
   };
 
   return (
@@ -150,6 +176,15 @@ function DriveDetails({ drive }) {
               <span className="device-client-name">{client.name}</span>
               <span className="device-client-count">{(client.couples || []).length} couples</span>
               <span className="device-client-size">{formatSize(clientSize)}</span>
+              {drive.connected && (
+                <span
+                  className="delete-btn-small"
+                  onClick={(e) => { e.stopPropagation(); handleDeleteClient(client); }}
+                  title="Delete entire client folder"
+                >
+                  {'\uD83D\uDDD1'}
+                </span>
+              )}
             </button>
 
             {isOpen && (
@@ -159,6 +194,15 @@ function DriveDetails({ drive }) {
                     <span className="device-couple-dot"></span>
                     <span className="device-couple-name">{couple.name}</span>
                     <span className="device-couple-size">{formatSize(couple.size || 0)}</span>
+                    {drive.connected && (
+                      <span
+                        className="delete-btn-small"
+                        onClick={() => handleDeleteCouple(client, couple)}
+                        title="Delete this couple folder"
+                      >
+                        {'\uD83D\uDDD1'}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
@@ -166,6 +210,13 @@ function DriveDetails({ drive }) {
           </div>
         );
       })}
+
+      {deleteTarget && (
+        <DeleteConfirmModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }
