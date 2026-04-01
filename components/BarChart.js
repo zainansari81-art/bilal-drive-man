@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { formatTB } from '../lib/format';
 
 function ChartContent({ drives, maxBytes, steps, chartHeight, hoveredDrive, setHoveredDrive, fullPage }) {
@@ -141,8 +142,8 @@ export default function BarChart({ drives }) {
         </div>
       </div>
 
-      {/* Full-page overlay */}
-      {fullPage && (
+      {/* Full-page overlay rendered via portal to escape overflow:hidden */}
+      {fullPage && typeof document !== 'undefined' && createPortal(
         <div className="chart-fullpage-overlay" onClick={() => setFullPage(false)}>
           <div className="chart-fullpage-modal" onClick={(e) => e.stopPropagation()}>
             <div className="chart-fullpage-header">
@@ -181,7 +182,8 @@ export default function BarChart({ drives }) {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
