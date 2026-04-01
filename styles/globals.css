@@ -280,6 +280,9 @@ body {
 .charts-row {
   display: grid; grid-template-columns: 3fr 2fr;
   gap: 16px; margin-bottom: 20px;
+  position: relative; z-index: 1;
+  overflow: hidden;
+  border-radius: 14px;
 }
 
 .chart-card {
@@ -530,6 +533,7 @@ body {
 /* ===== BOTTOM ROW ===== */
 .bottom-row {
   display: grid; grid-template-columns: 3fr 2fr; gap: 16px;
+  position: relative; z-index: 2;
 }
 
 .list-card {
