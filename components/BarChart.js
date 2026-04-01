@@ -63,7 +63,7 @@ export default function BarChart({ drives }) {
   const totalUsed = drives.reduce((s, d) => s + d.used, 0);
   const totalFree = drives.reduce((s, d) => s + d.free, 0);
 
-  const DEFAULT_VISIBLE = 8;
+  const DEFAULT_VISIBLE = 6;
   const sorted = [...drives].sort((a, b) => (b.total || 0) - (a.total || 0));
   const previewDrives = sorted.slice(0, DEFAULT_VISIBLE);
   const hiddenCount = drives.length - DEFAULT_VISIBLE;
