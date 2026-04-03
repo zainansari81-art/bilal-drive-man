@@ -532,22 +532,16 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
     if not os.path.exists(folder_path):
         raise Exception(f"Folder not found: {folder_path}")
 
-    # Use send2trash to move to Trash (safe delete)
-    try:
-        from send2trash import send2trash
-        send2trash(folder_path)
-        logging.info(f"Moved to Trash: {folder_path}")
-    except ImportError:
-        # Fallback: move to ~/.Trash
-        trash_path = os.path.expanduser('~/.Trash')
-        dest_name = os.path.basename(folder_path)
-        trash_dest = os.path.join(trash_path, dest_name)
-        # Handle name collision
-        if os.path.exists(trash_dest):
-            import time as t
-            trash_dest = os.path.join(trash_path, f"{dest_name}_{int(t.time())}")
-        shutil.move(folder_path, trash_dest)
-        logging.info(f"Moved to ~/.Trash: {folder_path}")
+    # Use Finder via AppleScript to move to Trash (has proper macOS permissions)
+    import subprocess
+    escaped_path = folder_path.replace('"', '\\"')
+    result = subprocess.run(
+        ['osascript', '-e', f'tell application "Finder" to delete POSIX file "{escaped_path}"'],
+        capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        raise Exception(f"Finder trash failed: {result.stderr.strip()}")
+    logging.info(f"Moved to Trash via Finder: {folder_path}")
 
     # Clean up empty client folder if we deleted a couple
     if couple_name:
