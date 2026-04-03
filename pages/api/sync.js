@@ -52,7 +52,22 @@ export default requireApiKey(async function handler(req, res) {
         drive_id: driveId,
         client_name: sanitizeString(c.name, 255),
       }));
-      const clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name');
+      let clientResults;
+      try {
+        clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name');
+      } catch (e) {
+        console.error('Client batch upsert failed, trying one by one:', e.message);
+        clientResults = [];
+        for (const row of clientRows) {
+          try {
+            const r = await supabasePost('clients', row, 'drive_id,client_name');
+            if (Array.isArray(r)) clientResults.push(...r);
+            else if (r) clientResults.push(r);
+          } catch (e2) {
+            console.error(`Client upsert failed for ${row.client_name}:`, e2.message);
+          }
+        }
+      }
 
       // Build client name -> id map
       const clientMap = {};
@@ -99,7 +114,18 @@ export default requireApiKey(async function handler(req, res) {
             row.first_seen = new Date().toISOString();
           }
         }
-        await supabasePost('couples', coupleRows, 'client_id,couple_name');
+        try {
+          await supabasePost('couples', coupleRows, 'client_id,couple_name');
+        } catch (e) {
+          console.error('Couple batch upsert failed, trying one by one:', e.message);
+          for (const row of coupleRows) {
+            try {
+              await supabasePost('couples', row, 'client_id,couple_name');
+            } catch (e2) {
+              console.error(`Couple upsert failed for ${row.couple_name}:`, e2.message);
+            }
+          }
+        }
       }
 
       // Log history for new and changed couples
@@ -163,7 +189,11 @@ export default requireApiKey(async function handler(req, res) {
 
       // Batch insert all history entries
       if (historyEntries.length > 0) {
-        await supabasePost('history', historyEntries);
+        try {
+          await supabasePost('history', historyEntries);
+        } catch (e) {
+          console.error('History batch insert failed:', e.message);
+        }
       }
     }
 
