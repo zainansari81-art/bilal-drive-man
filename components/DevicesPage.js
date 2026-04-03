@@ -223,7 +223,7 @@ function DriveDetails({ drive }) {
 
 function DeviceDriveRow({ drive }) {
   const pct = drive.total > 0 ? Math.round(drive.used / drive.total * 100) : 0;
-  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #f8e838, #f0dc20)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
+  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #eab308, #ca8a04)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
   const totalClients = drive.clients ? drive.clients.length : 0;
   const totalCouples = drive.clients ? drive.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
 

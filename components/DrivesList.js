@@ -7,7 +7,7 @@ const DEFAULT_VISIBLE = 5;
 function DriveRow({ d, fullPage }) {
   const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
   const pctCls = pct < 70 ? 'low' : pct < 90 ? 'mid' : 'high';
-  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #f8e838, #f0dc20)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
+  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #eab308, #ca8a04)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
   const totalClients = d.clients ? d.clients.length : 0;
   const totalCouples = d.clients ? d.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
 
