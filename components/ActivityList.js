@@ -10,6 +10,7 @@ const eventLabels = {
   folder_removed: 'Folder Removed',
   folder_returned: 'Folder Returned',
   scan_triggered: 'Scan Triggered',
+  data_deleted: 'Data Deleted',
 };
 
 const iconMap = {
@@ -24,6 +25,7 @@ const iconMap = {
   folder_removed: { symbol: '\u2212', cls: 'red' },
   folder_returned: { symbol: '\u21BA', cls: 'blue' },
   scan_triggered: { symbol: '\u21BB', cls: 'orange' },
+  data_deleted: { symbol: '\uD83D\uDDD1', cls: 'red' },
 };
 
 export default function ActivityList({ activities }) {

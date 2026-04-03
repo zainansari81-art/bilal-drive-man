@@ -12,6 +12,7 @@ const eventLabels = {
   folder_removed: 'Folder Removed',
   folder_returned: 'Folder Returned',
   scan_triggered: 'Scan Triggered',
+  data_deleted: 'Data Deleted',
 };
 
 const eventColors = {
@@ -26,6 +27,7 @@ const eventColors = {
   folder_removed: '#ef4444',
   folder_returned: '#3b82f6',
   scan_triggered: '#8b5cf6',
+  data_deleted: '#ef4444',
 };
 
 export default function HistoryPage() {
