@@ -1,10 +1,10 @@
 """
-Mac Scanner V.3.33.0 - BILAL DRIVE MAN
+Mac Scanner V.3.34.0 - BILAL DRIVE MAN
 Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.33.0'
+VERSION = '3.34.0'
 
 import os
 import sys
