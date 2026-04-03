@@ -1,10 +1,10 @@
 """
-Mac Scanner V.3.29.3 - BILAL DRIVE MAN
+Mac Scanner V.3.33.0 - BILAL DRIVE MAN
 Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.31.0'
+VERSION = '3.33.0'
 
 import os
 import sys
@@ -418,6 +418,8 @@ def poll_download_commands(config, known_drives):
         try:
             if command == 'copy_to_drive':
                 handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id)
+            elif command == 'delete_data':
+                handle_delete_data(config, payload, known_drives, cmd_id)
             elif command == 'cancel_download':
                 # Just mark complete — actual cancellation handled by status check
                 api_patch(config, 'download-commands', {
@@ -499,6 +501,65 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     })
 
     logging.info(f"Copied {client_name}/{couple_name} to {target_drive_label} ({format_size(total_copied)})")
+
+
+def handle_delete_data(config, payload, known_drives, cmd_id):
+    """Delete a client/couple folder from a drive, sending it to Trash."""
+    drive_label = payload.get('drive_label', '')
+    client_name = payload.get('client_name', '')
+    couple_name = payload.get('couple_name', '')
+
+    if not drive_label or not client_name:
+        raise Exception("Missing drive_label or client_name in payload")
+
+    # Find the drive path
+    target_path = None
+    for label in known_drives:
+        if label == drive_label:
+            # On Mac, drives are at /Volumes/<label>
+            target_path = f"/Volumes/{label}"
+            break
+
+    if not target_path or not os.path.exists(target_path):
+        raise Exception(f"Drive not found or not connected: {drive_label}")
+
+    # Build path to the folder to delete
+    if couple_name:
+        folder_path = os.path.join(target_path, client_name, couple_name)
+    else:
+        folder_path = os.path.join(target_path, client_name)
+
+    if not os.path.exists(folder_path):
+        raise Exception(f"Folder not found: {folder_path}")
+
+    # Use send2trash to move to Trash (safe delete)
+    try:
+        from send2trash import send2trash
+        send2trash(folder_path)
+        logging.info(f"Moved to Trash: {folder_path}")
+    except ImportError:
+        # Fallback: move to ~/.Trash
+        trash_path = os.path.expanduser('~/.Trash')
+        dest_name = os.path.basename(folder_path)
+        trash_dest = os.path.join(trash_path, dest_name)
+        # Handle name collision
+        if os.path.exists(trash_dest):
+            import time as t
+            trash_dest = os.path.join(trash_path, f"{dest_name}_{int(t.time())}")
+        shutil.move(folder_path, trash_dest)
+        logging.info(f"Moved to ~/.Trash: {folder_path}")
+
+    # Clean up empty client folder if we deleted a couple
+    if couple_name:
+        client_dir = os.path.join(target_path, client_name)
+        if os.path.exists(client_dir) and not os.listdir(client_dir):
+            os.rmdir(client_dir)
+            logging.info(f"Removed empty client folder: {client_dir}")
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id, 'status': 'completed'
+    })
+    logging.info(f"Delete command completed: {drive_label}/{client_name}/{couple_name}")
 
 
 def watch_cloud_sync_folder(config, known_drives):
