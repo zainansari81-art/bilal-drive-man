@@ -18,7 +18,6 @@ export default requireAuth(async function handler(req, res) {
     const result = await supabasePost('download_commands', {
       machine_name: sanitizeString(machine_name),
       command: 'delete_data',
-      project_id: null,
       payload: {
         drive_label: sanitizeString(drive_label),
         client_name: sanitizeString(client_name),
