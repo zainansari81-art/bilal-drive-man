@@ -707,6 +707,8 @@ def run_menubar():
             self.monitor = DriveMonitor(config, on_status=self._on_status)
             self.status_item = rumps.MenuItem("Status: Starting...")
             self.status_item.set_callback(None)
+            self.version_item = rumps.MenuItem(f"V.{VERSION}")
+            self.version_item.set_callback(None)
             self.menu = [
                 self.status_item,
                 None,
@@ -714,6 +716,8 @@ def run_menubar():
                 rumps.MenuItem("Open Dashboard", callback=self._open_dashboard),
                 None,
                 rumps.MenuItem("View Log", callback=self._view_log),
+                None,
+                self.version_item,
             ]
             # Start monitor after app launches
             rumps.Timer(self._start_monitor, 1).start()
