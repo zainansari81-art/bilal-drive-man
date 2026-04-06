@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.29.3 - BILAL DRIVE MAN
+Windows Scanner V.3.36.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.33.0'
+VERSION = '3.36.0'
 
 import os
 import sys
@@ -1026,11 +1026,11 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
     if not drive_label or not client_name:
         raise Exception("Missing drive_label or client_name in payload")
 
-    # Find the drive path
+    # Find the drive path (Windows drives use 'letter' key, e.g. 'D:')
     target_path = None
     for label, drive in known_drives.items():
         if label == drive_label:
-            target_path = drive['path']
+            target_path = drive.get('path') or drive.get('letter') or f"{label}\\"
             break
 
     if not target_path:
@@ -1096,6 +1096,25 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
     })
 
     logging.info(f"Delete completed: {drive_label}/{client_name}/{couple_name}")
+
+    # Immediately rescan and sync the drive so portal updates right away
+    try:
+        drive_info = known_drives.get(drive_label)
+        if drive_info:
+            drive_path = drive_info.get('path') or drive_info.get('letter') or target_path
+            logging.info(f"Triggering immediate rescan of {drive_label} after delete...")
+            clients_after = scan_drive_folders(drive_path)
+            rescan_drive = {
+                'label': drive_label,
+                'total': drive_info.get('total', 0),
+                'used': drive_info.get('used', 0),
+                'free': drive_info.get('free', 0),
+                'letter': drive_info.get('letter', ''),
+            }
+            sync_drive(config, rescan_drive, clients_after)
+            logging.info(f"Post-delete rescan and sync complete for {drive_label}")
+    except Exception as rescan_err:
+        logging.error(f"Post-delete rescan failed (will sync on next cycle): {rescan_err}")
 
 
 # ─── Drive Monitor ──────────────────────────────────────────────────────────
