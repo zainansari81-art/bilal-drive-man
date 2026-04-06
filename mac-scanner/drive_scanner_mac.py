@@ -1,10 +1,10 @@
 """
-Mac Scanner V.3.35.0 - BILAL DRIVE MAN
+Mac Scanner V.3.36.0 - BILAL DRIVE MAN
 Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.35.0'
+VERSION = '3.36.0'
 
 import os
 import sys
@@ -38,8 +38,11 @@ def auto_update():
         with open(script_path, 'r') as f:
             current = f.read()
 
-        req = urllib.request.Request(GITHUB_RAW_URL)
-        req.add_header('Cache-Control', 'no-cache')
+        # Add timestamp to bust GitHub raw CDN cache
+        cache_bust_url = f"{GITHUB_RAW_URL}?t={int(time.time())}"
+        req = urllib.request.Request(cache_bust_url)
+        req.add_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        req.add_header('Pragma', 'no-cache')
         with urllib.request.urlopen(req, timeout=15) as resp:
             latest = resp.read().decode('utf-8')
 
