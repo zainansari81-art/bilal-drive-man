@@ -1,10 +1,10 @@
 """
-Mac Scanner V.3.34.0 - BILAL DRIVE MAN
+Mac Scanner V.3.35.0 - BILAL DRIVE MAN
 Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.34.0'
+VERSION = '3.35.0'
 
 import os
 import sys
@@ -554,6 +554,25 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
         'id': cmd_id, 'status': 'completed'
     })
     logging.info(f"Delete command completed: {drive_label}/{client_name}/{couple_name}")
+
+    # Immediately rescan and sync the drive so portal updates right away
+    try:
+        drive_info = known_drives.get(drive_label)
+        if drive_info:
+            drive_path = drive_info.get('path', target_path)
+            logging.info(f"Triggering immediate rescan of {drive_label} after delete...")
+            clients_after = scan_drive_folders(drive_path)
+            rescan_drive = {
+                'label': drive_label,
+                'total': drive_info.get('total', 0),
+                'used': drive_info.get('used', 0),
+                'free': drive_info.get('free', 0),
+                'path': drive_path,
+            }
+            sync_drive(config, rescan_drive, clients_after)
+            logging.info(f"Post-delete rescan and sync complete for {drive_label}")
+    except Exception as rescan_err:
+        logging.error(f"Post-delete rescan failed (will sync on next cycle): {rescan_err}")
 
 
 def watch_cloud_sync_folder(config, known_drives):
