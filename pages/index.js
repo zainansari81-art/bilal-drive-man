@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Head from 'next/head';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
@@ -62,6 +62,8 @@ export default function Home({ username, initialDrives, initialActivities }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [refreshCountdown, setRefreshCountdown] = useState(30);
+  const [lastRefreshed, setLastRefreshed] = useState(null);
 
   // Persist sidebar state
   useEffect(() => {
@@ -104,15 +106,25 @@ export default function Home({ username, initialDrives, initialActivities }) {
       const historyData = await historyRes.json();
       setDrives(Array.isArray(drivesData) ? drivesData : []);
       setActivities(Array.isArray(historyData) ? historyData : []);
+      setLastRefreshed(new Date());
     } catch (err) {
       console.error('Failed to fetch data:', err);
     }
+    setRefreshCountdown(30);
   }, []);
 
   useEffect(() => {
-    // Auto-refresh every 30 seconds (data already loaded from server)
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    // Countdown timer — tick every second, fetch when it hits 0
+    const tick = setInterval(() => {
+      setRefreshCountdown(prev => {
+        if (prev <= 1) {
+          fetchData();
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(tick);
   }, [fetchData]);
 
   // Scroll reveal observer
@@ -189,6 +201,9 @@ export default function Home({ username, initialDrives, initialActivities }) {
             currentPage={currentPage}
             onNavigate={handleNavigate}
             onQuickSearch={handleQuickSearch}
+            refreshCountdown={refreshCountdown}
+            lastRefreshed={lastRefreshed}
+            onRefreshNow={() => { fetchData(); setRefreshCountdown(30); }}
           />
 
           <div className="content" ref={contentRef}>
