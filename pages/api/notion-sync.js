@@ -259,8 +259,52 @@ export default requireAuth(async function handler(req, res) {
       }
     }
 
+    // Step 6: Clean up old projects not in current Notion results
+    // Remove projects with idle/non-active status that weren't returned by Notion
+    let cleaned = 0;
+    try {
+      const currentNotionIds = new Set(allPages.map(p => p.id));
+      const syncedNotionIds = new Set(projectRows.map(r => r.notion_page_id));
+      const cleanableStatuses = ['idle', 'completed', 'failed'];
+
+      // Get all existing projects from DB
+      const allExisting = await supabaseFetch(
+        'download_projects?select=id,notion_page_id,download_status'
+      );
+
+      const idsToDelete = [];
+      for (const row of allExisting || []) {
+        // Only clean projects that have a notion_page_id, aren't in current results,
+        // and aren't actively downloading/copying
+        if (
+          row.notion_page_id &&
+          !syncedNotionIds.has(row.notion_page_id) &&
+          cleanableStatuses.includes(row.download_status)
+        ) {
+          idsToDelete.push(row.id);
+        }
+      }
+
+      if (idsToDelete.length > 0) {
+        // Delete in batches
+        const DEL_CHUNK = 50;
+        for (let i = 0; i < idsToDelete.length; i += DEL_CHUNK) {
+          const chunk = idsToDelete.slice(i, i + DEL_CHUNK);
+          const idList = chunk.join(',');
+          await supabaseFetch(`download_projects?id=in.(${idList})`, {
+            method: 'DELETE',
+            prefer: 'return=minimal',
+          });
+          cleaned += chunk.length;
+        }
+      }
+    } catch (cleanErr) {
+      console.error('Cleanup of old projects failed:', cleanErr.message);
+    }
+
     return res.status(200).json({
       synced,
+      cleaned,
       total: allPages.length,
       skippedIncomplete,
       newClients: newRelationIds.size,
