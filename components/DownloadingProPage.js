@@ -222,7 +222,7 @@ export default function DownloadingProPage({ drives }) {
             </div>
             {/* Table rows */}
             {filtered.map((project, i) => (
-              <div key={project.id || i} className="scroll-reveal" style={{ transitionDelay: `${i * 40}ms` }}>
+              <div key={project.id || i}>
                 <ProjectRow
                   project={project}
                   connectedDrives={connectedDrives}
@@ -236,7 +236,7 @@ export default function DownloadingProPage({ drives }) {
           /* ===== GRID VIEW ===== */
           <div className="devices-grid">
             {filtered.map((project, i) => (
-              <div key={project.id || i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}>
+              <div key={project.id || i}>
                 <ProjectCard
                   project={project}
                   connectedDrives={connectedDrives}
