@@ -62,7 +62,8 @@ export default function Home({ username, initialDrives, initialActivities }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [refreshCountdown, setRefreshCountdown] = useState(30);
+  const REFRESH_INTERVAL = 300; // 5 minutes
+  const [refreshCountdown, setRefreshCountdown] = useState(REFRESH_INTERVAL);
   const [lastRefreshed, setLastRefreshed] = useState(null);
 
   // Persist sidebar state
@@ -110,8 +111,8 @@ export default function Home({ username, initialDrives, initialActivities }) {
     } catch (err) {
       console.error('Failed to fetch data:', err);
     }
-    setRefreshCountdown(30);
-  }, []);
+    setRefreshCountdown(REFRESH_INTERVAL);
+  }, [REFRESH_INTERVAL]);
 
   useEffect(() => {
     // Countdown timer — tick every second, fetch when it hits 0
@@ -119,13 +120,13 @@ export default function Home({ username, initialDrives, initialActivities }) {
       setRefreshCountdown(prev => {
         if (prev <= 1) {
           fetchData();
-          return 30;
+          return REFRESH_INTERVAL;
         }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(tick);
-  }, [fetchData]);
+  }, [fetchData, REFRESH_INTERVAL]);
 
   // Scroll reveal observer
   const contentRef = useRef(null);
@@ -203,7 +204,8 @@ export default function Home({ username, initialDrives, initialActivities }) {
             onQuickSearch={handleQuickSearch}
             refreshCountdown={refreshCountdown}
             lastRefreshed={lastRefreshed}
-            onRefreshNow={() => { fetchData(); setRefreshCountdown(30); }}
+            refreshInterval={REFRESH_INTERVAL}
+            onRefreshNow={() => { fetchData(); setRefreshCountdown(REFRESH_INTERVAL); }}
           />
 
           <div className="content" ref={contentRef}>
