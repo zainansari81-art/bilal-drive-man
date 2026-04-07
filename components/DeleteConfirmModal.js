@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { formatSize } from '../lib/format';
 
 export default function DeleteConfirmModal({ target, onClose }) {
@@ -36,7 +37,13 @@ export default function DeleteConfirmModal({ target, onClose }) {
     }
   };
 
-  return (
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const modal = (
     <div className="delete-modal-overlay" onClick={onClose}>
       <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
         {result === 'success' ? (
@@ -110,4 +117,8 @@ export default function DeleteConfirmModal({ target, onClose }) {
       </div>
     </div>
   );
+
+  // Render via portal to document.body so position:fixed always works
+  if (typeof window === 'undefined') return modal;
+  return createPortal(modal, document.body);
 }
