@@ -21,18 +21,10 @@ function getTextValue(page, propName) {
     if (withHref) return withHref.href;
     return prop.rich_text.map(t => t.plain_text).join('');
   }
-  if (prop.type === 'url' && prop.url) {
-    return prop.url;
-  }
-  if (prop.type === 'select' && prop.select) {
-    return prop.select.name;
-  }
-  if (prop.type === 'status' && prop.status) {
-    return prop.status.name;
-  }
-  if (prop.type === 'date' && prop.date) {
-    return prop.date.start;
-  }
+  if (prop.type === 'url' && prop.url) return prop.url;
+  if (prop.type === 'select' && prop.select) return prop.select.name;
+  if (prop.type === 'status' && prop.status) return prop.status.name;
+  if (prop.type === 'date' && prop.date) return prop.date.start;
   if (prop.type === 'multi_select' && prop.multi_select?.length > 0) {
     return prop.multi_select.map(s => s.name).join(', ');
   }
@@ -64,8 +56,7 @@ export default requireAuth(async function handler(req, res) {
       return res.status(500).json({ error: 'Notion integration not configured' });
     }
 
-    // Step 1: Fetch existing projects from DB (client names + statuses) — one fast query
-    // This avoids resolving relations for projects we already know
+    // Step 1: Fetch existing projects from DB (for client name cache + status protection)
     let existingProjects = {};
     try {
       const existing = await supabaseFetch(
@@ -83,13 +74,24 @@ export default requireAuth(async function handler(req, res) {
       console.error('Failed to fetch existing projects:', e.message);
     }
 
-    // Step 2: Fetch ALL pages from Notion (paginated)
+    // Step 2: Fetch pages from Notion
+    // Only fetch recently modified pages (last 7 days) to stay within Vercel timeout
+    // This keeps the request fast (~1-2 seconds instead of 10+)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
     let allPages = [];
     let hasMore = true;
     let startCursor = undefined;
 
     while (hasMore) {
-      const body = { page_size: 100 };
+      const body = {
+        page_size: 100,
+        filter: {
+          timestamp: 'last_edited_time',
+          last_edited_time: { after: sevenDaysAgo },
+        },
+        sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+      };
       if (startCursor) body.start_cursor = startCursor;
 
       const response = await fetch(
@@ -117,50 +119,44 @@ export default requireAuth(async function handler(req, res) {
       startCursor = data.next_cursor;
     }
 
-    // Step 3: Find NEW relation IDs that we haven't resolved yet
-    // Only resolve client names for projects not already in our DB
+    // Step 3: Resolve client names for NEW projects only
+    const clientNameCache = {};
     const newRelationIds = new Set();
     for (const page of allPages) {
       const relation = page.properties['Client name']?.relation || [];
       if (relation.length > 0) {
         const existing = existingProjects[page.id];
-        // Only resolve if project is new OR client is still 'Unknown'
         if (!existing || existing.clientName === 'Unknown') {
           newRelationIds.add(relation[0].id);
         }
       }
     }
 
-    // Resolve only NEW relations in parallel (max 10 concurrent)
-    const clientNameCache = {};
     if (newRelationIds.size > 0) {
       const idsToResolve = [...newRelationIds];
-      const BATCH_SIZE = 10;
-      for (let i = 0; i < idsToResolve.length; i += BATCH_SIZE) {
-        const batch = idsToResolve.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map(async (id) => {
-            const resp = await fetch(`https://api.notion.com/v1/pages/${id}`, {
-              headers: {
-                'Authorization': `Bearer ${NOTION_API_KEY}`,
-                'Notion-Version': '2022-06-28',
-              },
-            });
-            if (resp.ok) {
-              const pg = await resp.json();
-              for (const prop of Object.values(pg.properties)) {
-                if (prop.type === 'title' && prop.title?.length > 0) {
-                  return { id, name: prop.title.map(t => t.plain_text).join('') };
-                }
+      // Resolve all at once in parallel (should be small number for incremental sync)
+      const results = await Promise.allSettled(
+        idsToResolve.map(async (id) => {
+          const resp = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+            headers: {
+              'Authorization': `Bearer ${NOTION_API_KEY}`,
+              'Notion-Version': '2022-06-28',
+            },
+          });
+          if (resp.ok) {
+            const pg = await resp.json();
+            for (const prop of Object.values(pg.properties)) {
+              if (prop.type === 'title' && prop.title?.length > 0) {
+                return { id, name: prop.title.map(t => t.plain_text).join('') };
               }
             }
-            return { id, name: null };
-          })
-        );
-        for (const r of results) {
-          if (r.status === 'fulfilled' && r.value.name) {
-            clientNameCache[r.value.id] = r.value.name;
           }
+          return { id, name: null };
+        })
+      );
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value.name) {
+          clientNameCache[r.value.id] = r.value.name;
         }
       }
     }
@@ -173,7 +169,6 @@ export default requireAuth(async function handler(req, res) {
       const projectName = getTextValue(page, 'Name');
       if (!projectName) continue;
 
-      // Get client name: use DB cache first, then newly resolved, then 'Unknown'
       const existingProject = existingProjects[page.id];
       let clientName = 'Unknown';
       if (existingProject && existingProject.clientName !== 'Unknown') {
@@ -205,7 +200,6 @@ export default requireAuth(async function handler(req, res) {
       if (sizeGb) projectData.size_gb = sanitizeString(sizeGb);
       if (hardDrive) projectData.target_drive = sanitizeString(hardDrive);
 
-      // Map Notion progress to download_status (skip if dashboard is actively managing)
       const notionStatus = mapNotionStatus(progress);
       if (notionStatus) {
         const currentStatus = existingProject?.status;
@@ -217,25 +211,26 @@ export default requireAuth(async function handler(req, res) {
       projectRows.push(projectData);
     }
 
-    // Step 5: Batch upsert to Supabase in chunks of 100
+    // Step 5: Batch upsert to Supabase
     let synced = 0;
     const errors = [];
-    const CHUNK_SIZE = 100;
 
-    for (let i = 0; i < projectRows.length; i += CHUNK_SIZE) {
-      const chunk = projectRows.slice(i, i + CHUNK_SIZE);
-      try {
-        await supabasePost('download_projects', chunk, 'notion_page_id');
-        synced += chunk.length;
-      } catch (batchErr) {
-        console.error(`Batch upsert failed for chunk ${i}-${i + chunk.length}:`, batchErr.message);
-        // Fallback: try one-by-one
-        for (const row of chunk) {
-          try {
-            await supabasePost('download_projects', row, 'notion_page_id');
-            synced++;
-          } catch (rowErr) {
-            errors.push(`${row.couple_name}: ${rowErr.message}`);
+    if (projectRows.length > 0) {
+      const CHUNK_SIZE = 100;
+      for (let i = 0; i < projectRows.length; i += CHUNK_SIZE) {
+        const chunk = projectRows.slice(i, i + CHUNK_SIZE);
+        try {
+          await supabasePost('download_projects', chunk, 'notion_page_id');
+          synced += chunk.length;
+        } catch (batchErr) {
+          console.error(`Batch upsert failed:`, batchErr.message);
+          for (const row of chunk) {
+            try {
+              await supabasePost('download_projects', row, 'notion_page_id');
+              synced++;
+            } catch (rowErr) {
+              errors.push(`${row.couple_name}: ${rowErr.message}`);
+            }
           }
         }
       }
