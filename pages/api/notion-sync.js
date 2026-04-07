@@ -39,41 +39,6 @@ function getTextValue(page, propName) {
   return null;
 }
 
-// Resolve a batch of relation IDs in parallel (max 5 concurrent)
-async function resolveRelationsBatch(uniqueIds, notionApiKey) {
-  const cache = {};
-  const BATCH_SIZE = 5;
-
-  for (let i = 0; i < uniqueIds.length; i += BATCH_SIZE) {
-    const batch = uniqueIds.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (id) => {
-        const response = await fetch(`https://api.notion.com/v1/pages/${id}`, {
-          headers: {
-            'Authorization': `Bearer ${notionApiKey}`,
-            'Notion-Version': '2022-06-28',
-          },
-        });
-        if (response.ok) {
-          const page = await response.json();
-          for (const prop of Object.values(page.properties)) {
-            if (prop.type === 'title' && prop.title?.length > 0) {
-              return { id, name: prop.title.map(t => t.plain_text).join('') };
-            }
-          }
-        }
-        return { id, name: null };
-      })
-    );
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.name) {
-        cache[r.value.id] = r.value.name;
-      }
-    }
-  }
-  return cache;
-}
-
 function mapNotionStatus(progress) {
   if (!progress) return null;
   const p = progress.toLowerCase();
@@ -99,7 +64,26 @@ export default requireAuth(async function handler(req, res) {
       return res.status(500).json({ error: 'Notion integration not configured' });
     }
 
-    // Step 1: Fetch ALL pages from Notion (paginated)
+    // Step 1: Fetch existing projects from DB (client names + statuses) — one fast query
+    // This avoids resolving relations for projects we already know
+    let existingProjects = {};
+    try {
+      const existing = await supabaseFetch(
+        'download_projects?select=notion_page_id,client_name,download_status'
+      );
+      for (const row of existing || []) {
+        if (row.notion_page_id) {
+          existingProjects[row.notion_page_id] = {
+            clientName: row.client_name,
+            status: row.download_status,
+          };
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch existing projects:', e.message);
+    }
+
+    // Step 2: Fetch ALL pages from Notion (paginated)
     let allPages = [];
     let hasMore = true;
     let startCursor = undefined;
@@ -133,39 +117,73 @@ export default requireAuth(async function handler(req, res) {
       startCursor = data.next_cursor;
     }
 
-    // Step 2: Collect unique client relation IDs and resolve them in parallel
-    const uniqueRelationIds = new Set();
+    // Step 3: Find NEW relation IDs that we haven't resolved yet
+    // Only resolve client names for projects not already in our DB
+    const newRelationIds = new Set();
     for (const page of allPages) {
       const relation = page.properties['Client name']?.relation || [];
-      if (relation.length > 0) uniqueRelationIds.add(relation[0].id);
-    }
-    const clientNameCache = await resolveRelationsBatch([...uniqueRelationIds], NOTION_API_KEY);
-
-    // Step 3: Fetch all existing project statuses in one query (to avoid 1000 individual lookups)
-    const activeStatuses = ['downloading', 'queued', 'copying', 'paused'];
-    let existingStatusMap = {};
-    try {
-      const existing = await supabaseFetch(
-        'download_projects?select=notion_page_id,download_status'
-      );
-      for (const row of existing || []) {
-        if (row.notion_page_id) {
-          existingStatusMap[row.notion_page_id] = row.download_status;
+      if (relation.length > 0) {
+        const existing = existingProjects[page.id];
+        // Only resolve if project is new OR client is still 'Unknown'
+        if (!existing || existing.clientName === 'Unknown') {
+          newRelationIds.add(relation[0].id);
         }
       }
-    } catch (e) {
-      console.error('Failed to fetch existing statuses:', e.message);
     }
 
-    // Step 4: Build all project rows
+    // Resolve only NEW relations in parallel (max 10 concurrent)
+    const clientNameCache = {};
+    if (newRelationIds.size > 0) {
+      const idsToResolve = [...newRelationIds];
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < idsToResolve.length; i += BATCH_SIZE) {
+        const batch = idsToResolve.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map(async (id) => {
+            const resp = await fetch(`https://api.notion.com/v1/pages/${id}`, {
+              headers: {
+                'Authorization': `Bearer ${NOTION_API_KEY}`,
+                'Notion-Version': '2022-06-28',
+              },
+            });
+            if (resp.ok) {
+              const pg = await resp.json();
+              for (const prop of Object.values(pg.properties)) {
+                if (prop.type === 'title' && prop.title?.length > 0) {
+                  return { id, name: prop.title.map(t => t.plain_text).join('') };
+                }
+              }
+            }
+            return { id, name: null };
+          })
+        );
+        for (const r of results) {
+          if (r.status === 'fulfilled' && r.value.name) {
+            clientNameCache[r.value.id] = r.value.name;
+          }
+        }
+      }
+    }
+
+    // Step 4: Build project rows
+    const activeStatuses = ['downloading', 'queued', 'copying', 'paused'];
     const projectRows = [];
+
     for (const page of allPages) {
       const projectName = getTextValue(page, 'Name');
       if (!projectName) continue;
 
-      const clientRelation = page.properties['Client name']?.relation || [];
-      const clientId = clientRelation.length > 0 ? clientRelation[0].id : null;
-      const clientName = clientId ? (clientNameCache[clientId] || 'Unknown') : 'Unknown';
+      // Get client name: use DB cache first, then newly resolved, then 'Unknown'
+      const existingProject = existingProjects[page.id];
+      let clientName = 'Unknown';
+      if (existingProject && existingProject.clientName !== 'Unknown') {
+        clientName = existingProject.clientName;
+      } else {
+        const relation = page.properties['Client name']?.relation || [];
+        if (relation.length > 0) {
+          clientName = clientNameCache[relation[0].id] || 'Unknown';
+        }
+      }
 
       const downloadLink = getTextValue(page, 'Raw Data');
       const progress = getTextValue(page, 'progress');
@@ -190,7 +208,7 @@ export default requireAuth(async function handler(req, res) {
       // Map Notion progress to download_status (skip if dashboard is actively managing)
       const notionStatus = mapNotionStatus(progress);
       if (notionStatus) {
-        const currentStatus = existingStatusMap[page.id];
+        const currentStatus = existingProject?.status;
         if (!currentStatus || !activeStatuses.includes(currentStatus)) {
           projectData.download_status = notionStatus;
         }
@@ -199,10 +217,10 @@ export default requireAuth(async function handler(req, res) {
       projectRows.push(projectData);
     }
 
-    // Step 5: Batch upsert to Supabase in chunks of 50
+    // Step 5: Batch upsert to Supabase in chunks of 100
     let synced = 0;
     const errors = [];
-    const CHUNK_SIZE = 50;
+    const CHUNK_SIZE = 100;
 
     for (let i = 0; i < projectRows.length; i += CHUNK_SIZE) {
       const chunk = projectRows.slice(i, i + CHUNK_SIZE);
@@ -211,7 +229,7 @@ export default requireAuth(async function handler(req, res) {
         synced += chunk.length;
       } catch (batchErr) {
         console.error(`Batch upsert failed for chunk ${i}-${i + chunk.length}:`, batchErr.message);
-        // Fallback: try one-by-one for this chunk
+        // Fallback: try one-by-one
         for (const row of chunk) {
           try {
             await supabasePost('download_projects', row, 'notion_page_id');
@@ -223,7 +241,12 @@ export default requireAuth(async function handler(req, res) {
       }
     }
 
-    return res.status(200).json({ synced, total: allPages.length, errors: errors.length > 0 ? errors : undefined });
+    return res.status(200).json({
+      synced,
+      total: allPages.length,
+      newClients: newRelationIds.size,
+      errors: errors.length > 0 ? errors : undefined,
+    });
   } catch (err) {
     console.error('Notion Sync API error:', err);
     return res.status(500).json({ error: err.message || 'Internal server error' });
