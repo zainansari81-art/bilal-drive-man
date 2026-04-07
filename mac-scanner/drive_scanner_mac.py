@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.36.0'
+VERSION = '3.37.0'
 
 import os
 import sys
@@ -16,6 +16,7 @@ import logging
 import threading
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
 
 # Fix SSL certificate verification on macOS
@@ -401,7 +402,8 @@ import shutil
 def poll_download_commands(config, known_drives):
     """Check for pending download commands from the dashboard."""
     machine = get_machine_name()
-    commands = api_get(config, f'download-commands?machine={machine}')
+    encoded_machine = urllib.parse.quote(machine, safe='')
+    commands = api_get(config, f'download-commands?machine={encoded_machine}')
     if not commands or not isinstance(commands, list):
         return
 
@@ -535,16 +537,47 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
     if not os.path.exists(folder_path):
         raise Exception(f"Folder not found: {folder_path}")
 
-    # Use Finder via AppleScript to move to Trash (has proper macOS permissions)
-    import subprocess
-    escaped_path = folder_path.replace('"', '\\"')
-    result = subprocess.run(
-        ['osascript', '-e', f'tell application "Finder" to delete POSIX file "{escaped_path}"'],
-        capture_output=True, text=True, timeout=30
-    )
-    if result.returncode != 0:
-        raise Exception(f"Finder trash failed: {result.stderr.strip()}")
-    logging.info(f"Moved to Trash via Finder: {folder_path}")
+    # Try multiple methods to delete
+    deleted = False
+
+    # Method 1: Finder via AppleScript (respects macOS permissions, moves to Trash)
+    try:
+        escaped_path = folder_path.replace('"', '\\"')
+        result = subprocess.run(
+            ['osascript', '-e', f'tell application "Finder" to delete POSIX file "{escaped_path}"'],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            logging.info(f"Moved to Trash via Finder: {folder_path}")
+            deleted = True
+        else:
+            logging.warning(f"Finder trash failed: {result.stderr.strip()}, trying fallback...")
+    except Exception as e:
+        logging.warning(f"Finder method failed: {e}, trying fallback...")
+
+    # Method 2: macOS 'mv' to Trash manually
+    if not deleted:
+        try:
+            trash_path = os.path.expanduser('~/.Trash')
+            folder_name = os.path.basename(folder_path)
+            dest = os.path.join(trash_path, folder_name)
+            # Handle name collision in Trash
+            if os.path.exists(dest):
+                dest = os.path.join(trash_path, f"{folder_name}_{int(time.time())}")
+            shutil.move(folder_path, dest)
+            logging.info(f"Moved to Trash manually: {folder_path} -> {dest}")
+            deleted = True
+        except Exception as e:
+            logging.warning(f"Manual trash failed: {e}, trying direct delete...")
+
+    # Method 3: Direct delete (last resort, not recoverable)
+    if not deleted:
+        try:
+            shutil.rmtree(folder_path)
+            logging.info(f"Directly deleted (not recoverable): {folder_path}")
+            deleted = True
+        except Exception as e:
+            raise Exception(f"All delete methods failed. Last error: {e}")
 
     # Clean up empty client folder if we deleted a couple
     if couple_name:
