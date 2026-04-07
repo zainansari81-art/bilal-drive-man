@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.36.0'
+VERSION = '3.37.0'
 
 import os
 import sys
@@ -112,7 +112,8 @@ def get_volume_label(drive_letter):
             ctypes.byref(flags), fs_name, 1024
         )
         if result:
-            return volume_name.value
+            label = volume_name.value.strip()
+            return label if label else None
     except Exception as e:
         logging.error(f"Volume label error for {drive_letter}: {e}")
     return None
@@ -150,16 +151,20 @@ def get_external_drives():
             # 2=Removable, 3=Fixed, 4=Network/Cloud (Dropbox, OneDrive, etc.)
             if dt in (2, 3, 4) and letter != 'C':
                 label = get_volume_label(dl)
-                if label:
-                    try:
-                        usage = get_drive_usage(dl)
-                        drives.append({
-                            'letter': dl,
-                            'label': label,
-                            **usage,
-                        })
-                    except Exception as e:
-                        logging.error(f"Error reading {dl}: {e}")
+                if not label:
+                    # Fallback: use drive letter as label so we never skip a real drive
+                    label = f"Drive {dl}"
+                    logging.warning(f"No volume label for {dl} (type={dt}), using fallback: {label}")
+                try:
+                    usage = get_drive_usage(dl)
+                    drives.append({
+                        'letter': dl,
+                        'label': label,
+                        **usage,
+                    })
+                    logging.info(f"Detected drive: {dl} label='{label}' type={dt} total={usage.get('total', 0)}")
+                except Exception as e:
+                    logging.error(f"Error reading {dl}: {e}")
     return drives
 
 
