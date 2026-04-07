@@ -99,8 +99,12 @@ export default requireApiKey(async function handler(req, res) {
         }
       }
 
-      // Get existing couples before upsert to detect changes
-      const existingCouples = await supabaseGet(`couples?client_id=in.(${Object.values(clientMap).join(',')})`);
+      // Get existing couples for current clients to detect new vs changed
+      const currentClientIds = Object.values(clientMap).filter(Boolean);
+      let existingCouples = [];
+      if (currentClientIds.length > 0) {
+        existingCouples = await supabaseGet(`couples?client_id=in.(${currentClientIds.join(',')})`);
+      }
       const existingMap = {};
       for (const ec of existingCouples) {
         existingMap[`${ec.client_id}:${ec.couple_name}`] = ec;
@@ -160,16 +164,31 @@ export default requireApiKey(async function handler(req, res) {
         }
       }
 
-      // Check for removed couples
-      for (const ec of existingCouples) {
+      // Get ALL clients for this drive (including ones no longer in scan)
+      const allDriveClients = await supabaseGet(`clients?drive_id=eq.${driveId}`);
+      const allClientIds = allDriveClients.map(c => c.id).filter(Boolean);
+
+      // Get ALL couples for this drive (not just current scan's clients)
+      let allDriveCouples = [];
+      if (allClientIds.length > 0) {
+        allDriveCouples = await supabaseGet(`couples?client_id=in.(${allClientIds.join(',')})`);
+      }
+
+      // Build reverse map: client_id -> client_name
+      const clientIdToName = {};
+      for (const c of allDriveClients) {
+        clientIdToName[c.id] = c.client_name;
+      }
+
+      // Check for removed couples across ALL clients on this drive
+      for (const ec of allDriveCouples) {
         if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
           foldersRemoved++;
-          const clientName = Object.entries(clientMap).find(([, id]) => id === ec.client_id)?.[0] || '';
           historyEntries.push({
             drive_id: driveId,
             volume_label: volumeLabel,
             event_type: 'folder_removed',
-            folder_name: `${clientName} / ${ec.couple_name}`,
+            folder_name: `${clientIdToName[ec.client_id] || ''} / ${ec.couple_name}`,
             details: `Removed from ${volumeLabel} (${machineName})`,
           });
         }
@@ -177,7 +196,7 @@ export default requireApiKey(async function handler(req, res) {
 
       // Mark removed couples
       if (foldersRemoved > 0) {
-        for (const ec of existingCouples) {
+        for (const ec of allDriveCouples) {
           if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
             await supabasePatch(`couples?id=eq.${ec.id}`, {
               is_present: false,
