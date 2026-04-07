@@ -33,9 +33,10 @@ function getTextValue(page, propName) {
 
 function mapNotionStatus(progress) {
   if (!progress) return null;
-  const p = progress.toLowerCase();
+  const p = progress.toLowerCase().trim();
   if (p === 'not downloaded') return 'idle';
   if (p === 'downloading') return 'downloading';
+  if (p === 'copying') return 'copying';
   if (p === 'downloaded') return 'completed';
   if (p === 'cancelled' || p === 'canceled') return 'idle';
   if (p === 'failed') return 'failed';
@@ -75,9 +76,8 @@ export default requireAuth(async function handler(req, res) {
     }
 
     // Step 2: Fetch pages from Notion
-    // Only fetch recently modified pages (last 7 days) to stay within Vercel timeout
-    // This keeps the request fast (~1-2 seconds instead of 10+)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Only fetch projects from last 30 days with actionable statuses
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     let allPages = [];
     let hasMore = true;
@@ -87,8 +87,19 @@ export default requireAuth(async function handler(req, res) {
       const body = {
         page_size: 100,
         filter: {
-          timestamp: 'last_edited_time',
-          last_edited_time: { after: sevenDaysAgo },
+          and: [
+            {
+              timestamp: 'last_edited_time',
+              last_edited_time: { after: thirtyDaysAgo },
+            },
+            {
+              or: [
+                { property: 'progress', status: { equals: 'Not Downloaded' } },
+                { property: 'progress', status: { equals: 'Downloading' } },
+                { property: 'progress', status: { equals: 'copying ' } },
+              ],
+            },
+          ],
         },
         sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
       };
@@ -161,13 +172,22 @@ export default requireAuth(async function handler(req, res) {
       }
     }
 
-    // Step 4: Build project rows
+    // Step 4: Build project rows — only include projects with complete details
     const activeStatuses = ['downloading', 'queued', 'copying', 'paused'];
     const projectRows = [];
+    let skippedIncomplete = 0;
 
     for (const page of allPages) {
       const projectName = getTextValue(page, 'Name');
       if (!projectName) continue;
+
+      const downloadLink = getTextValue(page, 'Raw Data');
+
+      // Skip projects missing download link — incomplete for downloading
+      if (!downloadLink) {
+        skippedIncomplete++;
+        continue;
+      }
 
       const existingProject = existingProjects[page.id];
       let clientName = 'Unknown';
@@ -180,7 +200,12 @@ export default requireAuth(async function handler(req, res) {
         }
       }
 
-      const downloadLink = getTextValue(page, 'Raw Data');
+      // Skip projects missing client name — incomplete for downloading
+      if (clientName === 'Unknown') {
+        skippedIncomplete++;
+        continue;
+      }
+
       const progress = getTextValue(page, 'progress');
       const projectDate = getTextValue(page, 'Date');
       const sizeGb = getTextValue(page, 'Size in Gbs');
@@ -190,12 +215,10 @@ export default requireAuth(async function handler(req, res) {
         notion_page_id: page.id,
         couple_name: sanitizeString(projectName),
         client_name: sanitizeString(clientName),
+        download_link: sanitizeString(downloadLink, 2048),
+        link_type: detectLinkType(downloadLink),
       };
 
-      if (downloadLink) {
-        projectData.download_link = sanitizeString(downloadLink, 2048);
-        projectData.link_type = detectLinkType(downloadLink);
-      }
       if (projectDate) projectData.project_date = projectDate;
       if (sizeGb) projectData.size_gb = sanitizeString(sizeGb);
       if (hardDrive) projectData.target_drive = sanitizeString(hardDrive);
@@ -239,6 +262,7 @@ export default requireAuth(async function handler(req, res) {
     return res.status(200).json({
       synced,
       total: allPages.length,
+      skippedIncomplete,
       newClients: newRelationIds.size,
       errors: errors.length > 0 ? errors : undefined,
     });
