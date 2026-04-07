@@ -13,10 +13,10 @@ import json
 import string
 import ctypes
 import logging
+import subprocess
 import threading
 import urllib.request
 import urllib.error
-import urllib.parse
 import urllib.parse
 from datetime import datetime
 
@@ -99,6 +99,8 @@ def save_config(config):
 # ─── Drive Detection ────────────────────────────────────────────────────────
 
 def get_volume_label(drive_letter):
+    """Get volume label using multiple methods as fallback."""
+    # Method 1: Windows API (fastest, works for most NTFS/exFAT drives)
     try:
         kernel32 = ctypes.windll.kernel32
         volume_name = ctypes.create_unicode_buffer(1024)
@@ -113,9 +115,41 @@ def get_volume_label(drive_letter):
         )
         if result:
             label = volume_name.value.strip()
-            return label if label else None
+            if label:
+                return label
     except Exception as e:
-        logging.error(f"Volume label error for {drive_letter}: {e}")
+        logging.warning(f"Volume label API failed for {drive_letter}: {e}")
+
+    # Method 2: WMIC command (works when API returns empty)
+    try:
+        result = subprocess.run(
+            ['wmic', 'logicaldisk', 'where', f'DeviceID="{drive_letter}"', 'get', 'VolumeName'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip() and l.strip() != 'VolumeName']
+            if lines and lines[0]:
+                logging.info(f"Got label for {drive_letter} via WMIC: {lines[0]}")
+                return lines[0]
+    except Exception as e:
+        logging.warning(f"WMIC label failed for {drive_letter}: {e}")
+
+    # Method 3: VOL command (last resort)
+    try:
+        result = subprocess.run(
+            ['cmd', '/c', 'vol', drive_letter],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and ' is ' in result.stdout:
+            # Output: " Volume in drive D is Newyork 4tb"
+            label = result.stdout.split(' is ')[-1].strip().split('\n')[0].strip()
+            if label:
+                logging.info(f"Got label for {drive_letter} via VOL: {label}")
+                return label
+    except Exception as e:
+        logging.warning(f"VOL label failed for {drive_letter}: {e}")
+
+    logging.error(f"All label methods failed for {drive_letter}")
     return None
 
 
@@ -152,9 +186,8 @@ def get_external_drives():
             if dt in (2, 3, 4) and letter != 'C':
                 label = get_volume_label(dl)
                 if not label:
-                    # Fallback: use drive letter as label so we never skip a real drive
-                    label = f"Drive {dl}"
-                    logging.warning(f"No volume label for {dl} (type={dt}), using fallback: {label}")
+                    logging.warning(f"Skipping {dl} (type={dt}) — no label from any method (unreadable filesystem?)")
+                    continue
                 try:
                     usage = get_drive_usage(dl)
                     drives.append({
