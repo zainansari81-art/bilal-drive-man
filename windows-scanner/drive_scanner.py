@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.37.0'
+VERSION = '3.38.0'
 
 import os
 import sys
@@ -229,12 +229,53 @@ def get_folder_size(path):
     return total_size, file_count
 
 
-def scan_drive_folders(drive_letter):
+def get_folder_mtime(path):
+    """Get the latest modification time across a folder tree."""
+    latest = 0
+    try:
+        latest = os.path.getmtime(path)
+        for dirpath, dirnames, filenames in os.walk(path):
+            try:
+                t = os.path.getmtime(dirpath)
+                if t > latest:
+                    latest = t
+            except (OSError, PermissionError):
+                pass
+    except (OSError, PermissionError):
+        pass
+    return latest
+
+
+# Cache: { folder_path: { 'mtime': float, 'size': int, 'file_count': int } }
+_scan_cache = {}
+
+
+def get_folder_size_cached(path):
+    """Get folder size, using cache if folder hasn't changed."""
+    mtime = get_folder_mtime(path)
+    cached = _scan_cache.get(path)
+    if cached and cached['mtime'] >= mtime:
+        return cached['size'], cached['file_count']
+
+    # Folder changed or not cached — do full walk
+    size, file_count = get_folder_size(path)
+    _scan_cache[path] = {'mtime': mtime, 'size': size, 'file_count': file_count}
+    return size, file_count
+
+
+def scan_drive_folders(drive_letter, force_full=False):
     """
     Scan drive with Client > Couple folder structure.
     Root level = clients, second level = couples.
+    Uses cached sizes for unchanged folders (incremental scan).
     """
     root = f"{drive_letter}\\"
+
+    if force_full:
+        keys_to_remove = [k for k in _scan_cache if k.startswith(root)]
+        for k in keys_to_remove:
+            del _scan_cache[k]
+
     clients = []
 
     try:
@@ -262,7 +303,7 @@ def scan_drive_folders(drive_letter):
                 if couple_name.startswith('.') or couple_name.startswith('$'):
                     continue
                 has_subdirs = True
-                size, file_count = get_folder_size(couple_path)
+                size, file_count = get_folder_size_cached(couple_path)
                 couples.append({
                     'name': couple_name,
                     'size': size,
@@ -270,8 +311,7 @@ def scan_drive_folders(drive_letter):
                 })
 
         if not has_subdirs:
-            # No subdirectories — treat the client folder itself as a single couple
-            size, file_count = get_folder_size(client_path)
+            size, file_count = get_folder_size_cached(client_path)
             couples.append({
                 'name': client_name,
                 'size': size,
@@ -1141,7 +1181,7 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
         if drive_info:
             drive_path = drive_info.get('path') or drive_info.get('letter') or target_path
             logging.info(f"Triggering immediate rescan of {drive_label} after delete...")
-            clients_after = scan_drive_folders(drive_path)
+            clients_after = scan_drive_folders(drive_path, force_full=True)
             rescan_drive = {
                 'label': drive_label,
                 'total': drive_info.get('total', 0),
