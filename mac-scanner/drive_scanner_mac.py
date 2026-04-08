@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.38.0'
+VERSION = '3.39.0'
 
 import os
 import sys
@@ -506,8 +506,12 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     if not target_path:
         raise Exception(f"Target drive not found: {target_drive_label}")
 
-    # Create client/couple folder structure on target drive
+    # Path traversal check
     dest = os.path.join(target_path, client_name, couple_name)
+    real_dest = os.path.realpath(dest)
+    if not real_dest.startswith(os.path.realpath(target_path)):
+        raise Exception("Path traversal detected — refusing to copy outside drive")
+
     os.makedirs(dest, exist_ok=True)
 
     # Report copying status
@@ -577,6 +581,11 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
         folder_path = os.path.join(target_path, client_name, couple_name)
     else:
         folder_path = os.path.join(target_path, client_name)
+
+    # Path traversal check
+    real_path = os.path.realpath(folder_path)
+    if not real_path.startswith(os.path.realpath(target_path)):
+        raise Exception("Path traversal detected — refusing to delete outside drive")
 
     if not os.path.exists(folder_path):
         raise Exception(f"Folder not found: {folder_path}")

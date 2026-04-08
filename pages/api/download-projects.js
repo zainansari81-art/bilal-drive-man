@@ -39,8 +39,8 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'add_to_cloud') {
         const { id, assigned_machine } = req.body;
-        if (!id) {
-          return res.status(400).json({ error: 'Missing project id' });
+        if (!id || typeof id !== 'string' || !/^[a-f0-9-]+$/i.test(id)) {
+          return res.status(400).json({ error: 'Invalid id' });
         }
 
         const updated = await supabasePatch(`download_projects?id=eq.${id}`, {
@@ -61,8 +61,8 @@ export default requireAuth(async function handler(req, res) {
       if (action === 'queue') {
         const { id, projectId, assigned_machine, position } = req.body;
         const pid = projectId || id;
-        if (!pid) {
-          return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
         }
 
         let queuePos;
@@ -92,8 +92,8 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'download_now') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) {
-          return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
         }
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
@@ -125,7 +125,7 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'pause') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'paused',
@@ -147,7 +147,7 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'resume') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'downloading',
@@ -175,8 +175,8 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'cancel') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) {
-          return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
         }
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
@@ -200,8 +200,8 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'remove') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) {
-          return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
         }
 
         await supabaseFetch(`download_projects?id=eq.${pid}`, {
@@ -213,7 +213,7 @@ export default requireAuth(async function handler(req, res) {
       if (action === 'set-target') {
         const { projectId, targetDrive } = req.body;
         const pid = projectId || req.body.id;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           target_drive: sanitizeString(targetDrive || ''),
         });
@@ -223,7 +223,8 @@ export default requireAuth(async function handler(req, res) {
       if (action === 'update') {
         const { projectId, fields } = req.body;
         const pid = projectId || req.body.id;
-        if (!pid || !fields) return res.status(400).json({ error: 'Missing project id or fields' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
+        if (!fields) return res.status(400).json({ error: 'Missing fields' });
         const sanitized = {};
         const allowedFields = ['couple_name', 'client_name', 'project_date', 'size_gb', 'target_drive', 'download_link', 'download_status', 'assigned_machine', 'cloud_folder_path'];
         for (const [key, value] of Object.entries(fields)) {
@@ -241,7 +242,7 @@ export default requireAuth(async function handler(req, res) {
       if (action === 'assign_machine') {
         const pid = req.body.projectId || req.body.id;
         const { machine_name } = req.body;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           assigned_machine: machine_name ? sanitizeString(machine_name) : null,
@@ -251,7 +252,7 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'copy_to_drive') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
 
         // Get project details
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
@@ -285,7 +286,7 @@ export default requireAuth(async function handler(req, res) {
 
       if (action === 'start_cloud_download') {
         const pid = req.body.projectId || req.body.id;
-        if (!pid) return res.status(400).json({ error: 'Missing project id' });
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) return res.status(400).json({ error: 'Invalid id' });
 
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
@@ -340,10 +341,17 @@ export default requireAuth(async function handler(req, res) {
         return res.status(400).json({ error: 'Missing project id' });
       }
 
-      // Sanitize string fields
+      if (!id || typeof id !== 'string' || !/^[a-f0-9-]+$/i.test(id)) {
+        return res.status(400).json({ error: 'Invalid id' });
+      }
+
+      // Whitelist allowed fields
+      const allowedPatchFields = ['download_status', 'download_link', 'link_type', 'target_drive', 'assigned_machine', 'size_gb', 'error_message', 'progress_percent'];
       const sanitized = {};
       for (const [key, value] of Object.entries(fields)) {
-        sanitized[key] = typeof value === 'string' ? sanitizeString(value) : value;
+        if (allowedPatchFields.includes(key)) {
+          sanitized[key] = typeof value === 'string' ? sanitizeString(value) : value;
+        }
       }
 
       const updated = await supabasePatch(`download_projects?id=eq.${id}`, sanitized);

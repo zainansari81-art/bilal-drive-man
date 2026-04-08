@@ -40,6 +40,10 @@ async function handler(req, res) {
         return res.status(400).json({ error: 'Missing required fields: id, status' });
       }
 
+      if (typeof id !== 'string' || !/^[a-f0-9-]+$/i.test(id)) {
+        return res.status(400).json({ error: 'Invalid id' });
+      }
+
       const updateBody = {
         status: sanitizeString(status),
       };
