@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.39.0'
+VERSION = '3.40.0'
 
 import os
 import sys
@@ -24,8 +24,8 @@ try:
     import certifi
     ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
 except ImportError:
-    # If certifi not available, disable verification as fallback
-    ssl._create_default_https_context = ssl._create_unverified_context
+    logging.warning("certifi not installed — using system SSL certificates. Install with: pip3 install certifi")
+    # Don't disable SSL verification — use system defaults instead
 from pathlib import Path
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
@@ -321,7 +321,20 @@ def scan_drive_folders(drive_path, force_full=False):
 
 # ─── API Sync ───────────────────────────────────────────────────────────────
 
-API_KEY = 'bilal-scanner-key-2024'
+API_KEY = os.environ.get('SCANNER_API_KEY', '')
+if not API_KEY:
+    # Try loading from config file
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_config.json')
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+                API_KEY = cfg.get('api_key', '')
+        except:
+            pass
+    if not API_KEY:
+        API_KEY = 'bilal-scanner-key-2024'  # Legacy fallback — rotate this!
+        logging.warning("Using legacy hardcoded API key — set SCANNER_API_KEY env var or create scanner_config.json")
 
 
 def api_request(config, endpoint, data):

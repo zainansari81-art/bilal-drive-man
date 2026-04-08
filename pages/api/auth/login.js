@@ -30,7 +30,7 @@ export default async function handler(req, res) {
 
   const token = createSessionToken(username);
 
-  res.setHeader('Set-Cookie', `session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${24 * 60 * 60}`);
+  res.setHeader('Set-Cookie', `session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${24 * 60 * 60}`);
   console.info(`[SECURITY] Successful login for user "${username}" from IP: ${ip}`);
   return res.status(200).json({ success: true, username });
 }
