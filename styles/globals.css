@@ -243,6 +243,7 @@ body {
 
 .content {
   flex: 1; overflow-y: auto; padding: 10px 30px 30px;
+  max-width: 1600px; width: 100%;
 }
 
 /* ===== STAT CARDS ROW ===== */
