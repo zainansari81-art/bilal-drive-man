@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.43.0'
+VERSION = '3.44.0'
 
 import os
 import sys
@@ -828,15 +828,20 @@ class DriveMonitor:
         total_couples = sum(len(c['couples']) for c in clients)
         self.status(f"Found {len(clients)} clients, {total_couples} couples on {drive['label']}")
 
-        # Safety guard: if scan returned 0 clients but we previously saw clients
-        # on this drive, it's a transient OS read failure — skip to avoid wiping dashboard
+        # Safety guard: if scan returned 0 clients but the disk cache has entries
+        # for this drive (from this or a previous session), it's a transient OS
+        # read failure — skip sync to avoid wiping the dashboard
         prev_count = self.last_known_clients.get(drive['label'], 0)
-        if len(clients) == 0 and prev_count > 0:
+        cache_entries = sum(1 for p in _scan_cache if p.startswith(drive['path']))
+        if len(clients) == 0 and (prev_count > 0 or cache_entries > 0):
             logging.warning(
-                f"Scan returned 0 clients for {drive['label']} but previously had "
-                f"{prev_count} — skipping sync to avoid data loss (will retry)"
+                f"Scan returned 0 clients for {drive['label']} but "
+                f"previously had {prev_count} clients / {cache_entries} cache entries "
+                f"— skipping sync to avoid data loss (will retry)"
             )
-            self.status(f"Scan skipped for {drive['label']} (transient read error, retrying next cycle)")
+            self.status(f"Scan skipped for {drive['label']} (transient read error, retrying)")
+            # Still mark as scanned so we wait a full cycle before retrying
+            self.last_scan[drive['label']] = time.time()
             return
 
         # Update known client count
