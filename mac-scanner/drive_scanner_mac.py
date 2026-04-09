@@ -88,7 +88,8 @@ LOG_FILE = os.path.join(CONFIG_DIR, 'scanner.log')
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True  # Override any handlers set up by early logging calls
 )
 
 DEFAULT_CONFIG = {
