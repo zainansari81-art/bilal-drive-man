@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.40.0'
+VERSION = '3.41.0'
 
 import os
 import sys
@@ -240,11 +240,44 @@ def get_folder_mtime(path):
 
 
 # Cache: { folder_path: { 'mtime': float, 'size': int, 'file_count': int } }
+# Persisted to disk so restarts don't trigger full re-scans
+CACHE_FILE = os.path.join(CONFIG_DIR, 'scan_cache.json')
 _scan_cache = {}
+_cache_dirty = False
+
+
+def _load_cache():
+    """Load scan cache from disk on startup."""
+    global _scan_cache
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r') as f:
+                _scan_cache = json.load(f)
+            logging.info(f"Loaded scan cache with {len(_scan_cache)} entries from disk")
+    except Exception as e:
+        logging.warning(f"Could not load scan cache: {e} — starting fresh")
+        _scan_cache = {}
+
+
+def _save_cache():
+    """Persist scan cache to disk."""
+    global _cache_dirty
+    if not _cache_dirty:
+        return
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(_scan_cache, f)
+        _cache_dirty = False
+    except Exception as e:
+        logging.warning(f"Could not save scan cache: {e}")
+
+
+_load_cache()
 
 
 def get_folder_size_cached(path):
     """Get folder size, using cache if folder hasn't changed."""
+    global _cache_dirty
     mtime = get_folder_mtime(path)
     cached = _scan_cache.get(path)
     if cached and cached['mtime'] >= mtime:
@@ -253,6 +286,7 @@ def get_folder_size_cached(path):
     # Folder changed or not cached — do full walk
     size, file_count = get_folder_size(path)
     _scan_cache[path] = {'mtime': mtime, 'size': size, 'file_count': file_count}
+    _cache_dirty = True
     return size, file_count
 
 
@@ -672,6 +706,7 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
                 'path': drive_path,
             }
             sync_drive(config, rescan_drive, clients_after)
+            _save_cache()
             logging.info(f"Post-delete rescan and sync complete for {drive_label}")
     except Exception as rescan_err:
         logging.error(f"Post-delete rescan failed (will sync on next cycle): {rescan_err}")
@@ -779,6 +814,9 @@ class DriveMonitor:
             self.status(f"Synced {drive['label']} successfully")
         else:
             self.status(f"Failed to sync {drive['label']} - will retry")
+
+        # Persist cache to disk so restarts don't trigger full re-scans
+        _save_cache()
 
         self.last_scan[drive['label']] = time.time()
 
