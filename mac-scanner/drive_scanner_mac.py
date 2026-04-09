@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.41.0'
+VERSION = '3.42.0'
 
 import os
 import sys
@@ -824,6 +824,23 @@ class DriveMonitor:
 
         total_couples = sum(len(c['couples']) for c in clients)
         self.status(f"Found {len(clients)} clients, {total_couples} couples on {drive['label']}")
+
+        # Safety guard: if scan returned 0 clients but drive still has folders,
+        # it's a transient read failure — skip sync to avoid wiping the dashboard
+        if len(clients) == 0:
+            try:
+                visible = [e for e in os.listdir(drive['path'])
+                           if not e.startswith('.') and not e.startswith('$')
+                           and e not in ('System Volume Information',)]
+                if len(visible) > 0:
+                    logging.warning(
+                        f"Scan returned 0 clients for {drive['label']} but drive has "
+                        f"{len(visible)} visible folders — skipping sync to avoid data loss"
+                    )
+                    self.status(f"Scan skipped for {drive['label']} (transient read error)")
+                    return
+            except Exception:
+                pass  # Drive truly unreadable — fall through and let sync handle it
 
         self.status(f"Syncing {drive['label']} to dashboard...")
         success = sync_drive(self.config, drive, clients)
