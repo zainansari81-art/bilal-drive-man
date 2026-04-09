@@ -32,12 +32,18 @@ from pathlib import Path
 
 GITHUB_RAW_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/mac-scanner/drive_scanner_mac.py'
 
+def _parse_version(v):
+    """Parse version string like '3.41.0' into a tuple for comparison."""
+    try:
+        return tuple(int(x) for x in v.strip().split('.'))
+    except Exception:
+        return (0,)
+
+
 def auto_update():
     """Check GitHub for newer version and replace self if updated."""
     try:
         script_path = os.path.abspath(__file__)
-        with open(script_path, 'r') as f:
-            current = f.read()
 
         # Add timestamp to bust GitHub raw CDN cache
         cache_bust_url = f"{GITHUB_RAW_URL}?t={int(time.time())}"
@@ -47,14 +53,25 @@ def auto_update():
         with urllib.request.urlopen(req, timeout=15) as resp:
             latest = resp.read().decode('utf-8')
 
-        if latest.strip() != current.strip() and len(latest) > 100:
+        if len(latest) < 100:
+            logging.warning("Auto-update: GitHub response too short, skipping")
+            return
+
+        # Extract version from downloaded script
+        latest_version = '0.0.0'
+        for line in latest.splitlines():
+            if line.startswith("VERSION = '") or line.startswith('VERSION = "'):
+                latest_version = line.split("'")[1] if "'" in line else line.split('"')[1]
+                break
+
+        if _parse_version(latest_version) > _parse_version(VERSION):
             with open(script_path, 'w') as f:
                 f.write(latest)
-            print("[AUTO-UPDATE] Updated to latest version. Restarting...")
-            logging.info("Auto-updated from GitHub. Restarting...")
+            print(f"[AUTO-UPDATE] Updated {VERSION} → {latest_version}. Restarting...")
+            logging.info(f"Auto-updated {VERSION} → {latest_version}. Restarting...")
             os.execv(sys.executable, [sys.executable] + sys.argv)
         else:
-            logging.info("Auto-update check: already up to date")
+            logging.info(f"Auto-update check: already up to date (v{VERSION}, GitHub has v{latest_version})")
     except Exception as e:
         logging.error(f"Auto-update check failed (will retry next start): {e}")
 
