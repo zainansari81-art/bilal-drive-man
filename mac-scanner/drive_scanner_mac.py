@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.42.0'
+VERSION = '3.43.0'
 
 import os
 import sys
@@ -746,6 +746,7 @@ class DriveMonitor:
         self.running = False
         self.known_drives = {}
         self.last_scan = {}
+        self.last_known_clients = {}  # { drive_label: last known client count }
         self.last_update_check = 0
         self.on_status = on_status
 
@@ -782,6 +783,8 @@ class DriveMonitor:
             label = drive['label']
             if label not in self.known_drives:
                 self.status(f"Drive connected: {label} ({drive['path']})")
+                # Small delay to let the drive fully mount before scanning
+                time.sleep(3)
                 self._scan_and_sync(drive)
 
         # Disconnected drives
@@ -825,22 +828,20 @@ class DriveMonitor:
         total_couples = sum(len(c['couples']) for c in clients)
         self.status(f"Found {len(clients)} clients, {total_couples} couples on {drive['label']}")
 
-        # Safety guard: if scan returned 0 clients but drive still has folders,
-        # it's a transient read failure — skip sync to avoid wiping the dashboard
-        if len(clients) == 0:
-            try:
-                visible = [e for e in os.listdir(drive['path'])
-                           if not e.startswith('.') and not e.startswith('$')
-                           and e not in ('System Volume Information',)]
-                if len(visible) > 0:
-                    logging.warning(
-                        f"Scan returned 0 clients for {drive['label']} but drive has "
-                        f"{len(visible)} visible folders — skipping sync to avoid data loss"
-                    )
-                    self.status(f"Scan skipped for {drive['label']} (transient read error)")
-                    return
-            except Exception:
-                pass  # Drive truly unreadable — fall through and let sync handle it
+        # Safety guard: if scan returned 0 clients but we previously saw clients
+        # on this drive, it's a transient OS read failure — skip to avoid wiping dashboard
+        prev_count = self.last_known_clients.get(drive['label'], 0)
+        if len(clients) == 0 and prev_count > 0:
+            logging.warning(
+                f"Scan returned 0 clients for {drive['label']} but previously had "
+                f"{prev_count} — skipping sync to avoid data loss (will retry)"
+            )
+            self.status(f"Scan skipped for {drive['label']} (transient read error, retrying next cycle)")
+            return
+
+        # Update known client count
+        if len(clients) > 0:
+            self.last_known_clients[drive['label']] = len(clients)
 
         self.status(f"Syncing {drive['label']} to dashboard...")
         success = sync_drive(self.config, drive, clients)
