@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.46.0'
+VERSION = '3.47.0'
 
 import os
 import sys
@@ -1007,6 +1007,15 @@ def run_console():
     monitor = DriveMonitor(config, on_status=on_status)
     monitor.start()
 
+    # If running in background (no terminal), keep main thread alive with sleep
+    if not sys.stdin.isatty():
+        try:
+            while monitor.running:
+                time.sleep(10)
+        except KeyboardInterrupt:
+            monitor.stop()
+        return
+
     try:
         while True:
             cmd = input("\nCommands: [s]can now, [d]ashboard, [q]uit > ").strip().lower()
@@ -1018,6 +1027,13 @@ def run_console():
             elif cmd == 'q':
                 monitor.stop()
                 break
+    except EOFError:
+        # stdin closed — keep running in background
+        try:
+            while monitor.running:
+                time.sleep(10)
+        except KeyboardInterrupt:
+            monitor.stop()
     except KeyboardInterrupt:
         monitor.stop()
         print("\nStopped.")
