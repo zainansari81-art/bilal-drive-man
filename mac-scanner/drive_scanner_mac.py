@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.45.0'
+VERSION = '3.46.0'
 
 import os
 import sys
@@ -103,30 +103,35 @@ logging.basicConfig(
 )
 
 # ─── Process Lock (prevent duplicate instances) ──────────────────────────────
+import fcntl
+import atexit
+
 LOCK_FILE = os.path.join(CONFIG_DIR, 'scanner.lock')
+_lock_fd = None
 
 def _acquire_lock():
-    """Write PID to lock file. Exit if another instance is already running."""
-    if os.path.exists(LOCK_FILE):
-        try:
-            with open(LOCK_FILE, 'r') as f:
-                old_pid = int(f.read().strip())
-            # Check if that PID is still alive
-            os.kill(old_pid, 0)
-            print(f"[LOCK] Another scanner instance (PID {old_pid}) is already running. Exiting.")
-            sys.exit(0)
-        except (ProcessLookupError, ValueError):
-            pass  # Old PID is dead — stale lock, overwrite it
-    with open(LOCK_FILE, 'w') as f:
-        f.write(str(os.getpid()))
+    """Acquire exclusive lock using fcntl — atomic, no race condition."""
+    global _lock_fd
+    _lock_fd = open(LOCK_FILE, 'w')
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fd.write(str(os.getpid()))
+        _lock_fd.flush()
+    except BlockingIOError:
+        print(f"[LOCK] Another scanner instance is already running. Exiting.")
+        logging.info("Duplicate instance detected — exiting.")
+        sys.exit(0)
 
 def _release_lock():
-    try:
-        os.remove(LOCK_FILE)
-    except OSError:
-        pass
+    global _lock_fd
+    if _lock_fd:
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            _lock_fd.close()
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass
 
-import atexit
 _acquire_lock()
 atexit.register(_release_lock)
 
