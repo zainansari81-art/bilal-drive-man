@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.44.0'
+VERSION = '3.45.0'
 
 import os
 import sys
@@ -40,8 +40,13 @@ def _parse_version(v):
         return (0,)
 
 
-def auto_update():
+# Flag set by background update check — main loop restarts cleanly
+_needs_restart = False
+
+
+def auto_update(from_main_thread=False):
     """Check GitHub for newer version and replace self if updated."""
+    global _needs_restart
     try:
         script_path = os.path.abspath(__file__)
 
@@ -69,13 +74,18 @@ def auto_update():
                 f.write(latest)
             print(f"[AUTO-UPDATE] Updated {VERSION} → {latest_version}. Restarting...")
             logging.info(f"Auto-updated {VERSION} → {latest_version}. Restarting...")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            if from_main_thread:
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                # Signal main thread to restart — calling os.execv from a
+                # background thread on macOS spawns duplicate processes
+                _needs_restart = True
         else:
             logging.info(f"Auto-update check: already up to date (v{VERSION}, GitHub has v{latest_version})")
     except Exception as e:
         logging.error(f"Auto-update check failed (will retry next start): {e}")
 
-auto_update()
+auto_update(from_main_thread=True)
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -91,6 +101,34 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     force=True  # Override any handlers set up by early logging calls
 )
+
+# ─── Process Lock (prevent duplicate instances) ──────────────────────────────
+LOCK_FILE = os.path.join(CONFIG_DIR, 'scanner.lock')
+
+def _acquire_lock():
+    """Write PID to lock file. Exit if another instance is already running."""
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, 'r') as f:
+                old_pid = int(f.read().strip())
+            # Check if that PID is still alive
+            os.kill(old_pid, 0)
+            print(f"[LOCK] Another scanner instance (PID {old_pid}) is already running. Exiting.")
+            sys.exit(0)
+        except (ProcessLookupError, ValueError):
+            pass  # Old PID is dead — stale lock, overwrite it
+    with open(LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def _release_lock():
+    try:
+        os.remove(LOCK_FILE)
+    except OSError:
+        pass
+
+import atexit
+_acquire_lock()
+atexit.register(_release_lock)
 
 DEFAULT_CONFIG = {
     'api_url': 'https://bilal-drive-man.vercel.app',
@@ -811,10 +849,16 @@ class DriveMonitor:
         except Exception as e:
             logging.error(f"Download command poll error: {e}")
 
-        # Check for updates every 5 minutes
+        # Check for updates every 5 minutes (background thread sets _needs_restart flag)
         if time.time() - self.last_update_check > 300:
             self.last_update_check = time.time()
-            threading.Thread(target=auto_update, daemon=True).start()
+            threading.Thread(target=lambda: auto_update(from_main_thread=False), daemon=True).start()
+
+        # Apply pending restart from background update check
+        global _needs_restart
+        if _needs_restart:
+            logging.info("Restarting to apply update (triggered from main loop)...")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _scan_and_sync(self, drive):
         # Set low priority so scanning doesn't affect workflow
