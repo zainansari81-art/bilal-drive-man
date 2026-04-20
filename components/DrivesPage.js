@@ -34,6 +34,7 @@ export default function DrivesPage({ drives }) {
 }
 
 function DriveCard({ drive }) {
+  const [open, setOpen] = useState(false);
   const d = drive;
   const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
   const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #eab308, #ca8a04)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
@@ -41,34 +42,33 @@ function DriveCard({ drive }) {
   const statusText = d.connected ? `Connected (${d.letter})` : 'Disconnected';
   const totalCouples = d.clients ? d.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
   const lowThreshold = 100 * 1024 * 1024 * 1024; // 100 GB in bytes
+  const lowSpace = d.free > 0 && d.free < lowThreshold;
 
   return (
     <div className="drive-detail-card">
-      <div className="drive-detail-top">
+      <div className="drive-detail-row" onClick={() => setOpen(!open)}>
+        <span className="drive-detail-caret">{open ? '\u25BC' : '\u25B6'}</span>
         <span className="drive-detail-name">{d.name}</span>
+        <span className="drive-detail-meta">
+          {formatTB(d.used)} / {formatTB(d.total)} &nbsp;·&nbsp; {pct}% &nbsp;·&nbsp; {d.clients ? d.clients.length : 0}C / {totalCouples}Cp
+          {lowSpace && <span className="drive-low-inline"> &nbsp;·&nbsp; {'\u26A0'} {formatSize(d.free)} left</span>}
+        </span>
+        <div className="drive-progress-bar-mini">
+          <div className="drive-progress-fill-mini" style={{ background: barColor, width: `${pct}%` }}></div>
+        </div>
         <span className="drive-detail-status" style={{ color: statusColor }}>{statusText}</span>
       </div>
-      <div className="drive-detail-meta">
-        Used: {formatTB(d.used)} &nbsp;|&nbsp; Free: {formatTB(d.free)} &nbsp;|&nbsp; Total: {formatTB(d.total)} &nbsp;|&nbsp; {pct}% &nbsp;|&nbsp; {d.clients ? d.clients.length : 0} Clients, {totalCouples} Couples
-      </div>
-      <div className="drive-progress-bar">
-        <div className="drive-progress-fill" style={{ background: barColor, width: `${pct}%` }}></div>
-      </div>
-      {d.free > 0 && d.free < lowThreshold && (
-        <div className="low-space-warning">
-          {'\u26A0'} LOW SPACE: Only {formatSize(d.free)} remaining!
+      {open && (
+        <div className="drive-detail-expanded">
+          {(d.clients || []).length === 0 ? (
+            <div className="drive-empty-note">No clients on this drive.</div>
+          ) : (
+            (d.clients || []).map((client, ci) => (
+              <ClientBlock key={ci} client={client} drive={d} />
+            ))
+          )}
         </div>
       )}
-      <details style={{ marginTop: 12 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 13, color: '#1a1a2e', fontWeight: 600, marginBottom: 8 }}>
-          Clients &amp; Couples ({d.clients ? d.clients.length : 0} clients, {totalCouples} couples)
-        </summary>
-        <div style={{ padding: '4px 0 0' }}>
-          {(d.clients || []).map((client, ci) => (
-            <ClientBlock key={ci} client={client} drive={d} />
-          ))}
-        </div>
-      </details>
     </div>
   );
 }
