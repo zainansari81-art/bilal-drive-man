@@ -718,38 +718,45 @@ body {
 }
 
 .drive-detail-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 8px 14px; cursor: pointer;
+  /* Fixed column grid so every row aligns vertically:
+     caret | name | meta (flex) | progress | status */
+  display: grid;
+  grid-template-columns: 14px 220px 1fr 100px 180px;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  cursor: pointer;
   user-select: none;
 }
 
 .drive-detail-caret {
-  font-size: 10px; color: #8c8ca1; width: 10px; flex-shrink: 0;
+  font-size: 10px; color: #8c8ca1;
   transition: color 0.15s ease;
 }
 
 .drive-detail-name {
   font-size: 14px; font-weight: 700; color: #1a1a2e;
-  min-width: 140px; flex-shrink: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .drive-detail-status {
-  font-size: 11px; font-weight: 600; flex-shrink: 0;
+  font-size: 11px; font-weight: 600;
   white-space: nowrap;
+  text-align: right;
 }
 
 .drive-detail-meta {
   font-size: 11px; color: #8c8ca1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 1; min-width: 0;
+  min-width: 0;
 }
 
 .drive-low-inline { color: #f97316; font-weight: 600; }
 
 .drive-progress-bar-mini {
   background: #e5e7eb; height: 4px; border-radius: 3px; overflow: hidden;
-  width: 90px; flex-shrink: 0;
+  width: 100%;
 }
 
 .drive-progress-fill-mini {
@@ -1864,10 +1871,21 @@ details[open] > div {
 
   .list-card { padding: 16px; }
 
-  .drive-detail-row { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
-  .drive-detail-name { font-size: 13px; min-width: 0; flex: 1 1 auto; }
-  .drive-detail-meta { font-size: 10px; flex-basis: 100%; order: 5; }
-  .drive-progress-bar-mini { width: 60px; }
+  /* On tablet/mobile, collapse to 2-column grid with meta/progress wrapping underneath */
+  .drive-detail-row {
+    grid-template-columns: 14px 1fr auto;
+    grid-template-areas:
+      "caret name status"
+      ".     meta meta"
+      ".     bar  bar";
+    padding: 8px 12px;
+    gap: 6px 10px;
+  }
+  .drive-detail-caret { grid-area: caret; }
+  .drive-detail-name { grid-area: name; font-size: 13px; }
+  .drive-detail-status { grid-area: status; }
+  .drive-detail-meta { grid-area: meta; font-size: 10px; white-space: normal; }
+  .drive-progress-bar-mini { grid-area: bar; width: 100%; max-width: 200px; }
 
   .search-bar-large { padding: 10px 14px; }
   .search-bar-large input { font-size: 14px; }
