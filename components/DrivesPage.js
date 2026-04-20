@@ -3,10 +3,38 @@ import { formatSize, formatTB } from '../lib/format';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 export default function DrivesPage({ drives }) {
-  const connected = drives.filter(d => d.connected).sort((a, b) => a.name.localeCompare(b.name));
-  const disconnected = drives.filter(d => !d.connected).sort((a, b) => a.name.localeCompare(b.name));
+  // Optimistic-hide state: keys for clients/couples the user just deleted.
+  // Key format: "drive|client|*" for a whole client, "drive|client|couple" for a couple.
+  const [hidden, setHidden] = useState(() => new Set());
 
-  if (drives.length === 0) {
+  const handleDeleted = ({ driveName, clientName, coupleName, type }) => {
+    const key = type === 'client'
+      ? `${driveName}|${clientName}|*`
+      : `${driveName}|${clientName}|${coupleName}`;
+    setHidden(prev => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  };
+
+  // Apply hidden filter so just-deleted items disappear without a refresh
+  const visibleDrives = drives.map(d => {
+    const clients = (d.clients || [])
+      .filter(c => !hidden.has(`${d.name}|${c.name}|*`))
+      .map(c => ({
+        ...c,
+        couples: (c.couples || []).filter(cp =>
+          !hidden.has(`${d.name}|${c.name}|${cp.name}`)
+        ),
+      }));
+    return { ...d, clients };
+  });
+
+  const connected = visibleDrives.filter(d => d.connected).sort((a, b) => a.name.localeCompare(b.name));
+  const disconnected = visibleDrives.filter(d => !d.connected).sort((a, b) => a.name.localeCompare(b.name));
+
+  if (visibleDrives.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
         <p style={{ fontSize: 18 }}>No drives found yet.</p>
@@ -20,20 +48,20 @@ export default function DrivesPage({ drives }) {
       {connected.length > 0 && (
         <>
           <h3 style={{ color: '#22c55e', margin: '10px 0' }}>Connected ({connected.length})</h3>
-          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} /></div>)}
+          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} /></div>)}
         </>
       )}
       {disconnected.length > 0 && (
         <>
           <h3 style={{ color: '#8c8ca1', margin: '20px 0 10px' }}>Disconnected ({disconnected.length})</h3>
-          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} /></div>)}
+          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} /></div>)}
         </>
       )}
     </div>
   );
 }
 
-function DriveCard({ drive }) {
+function DriveCard({ drive, onDeleted }) {
   const [open, setOpen] = useState(false);
   const d = drive;
   const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
@@ -64,7 +92,7 @@ function DriveCard({ drive }) {
             <div className="drive-empty-note">No clients on this drive.</div>
           ) : (
             (d.clients || []).map((client, ci) => (
-              <ClientBlock key={ci} client={client} drive={d} />
+              <ClientBlock key={ci} client={client} drive={d} onDeleted={onDeleted} />
             ))
           )}
         </div>
@@ -73,7 +101,7 @@ function DriveCard({ drive }) {
   );
 }
 
-function ClientBlock({ client, drive }) {
+function ClientBlock({ client, drive, onDeleted }) {
   const [open, setOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const clientTotal = client.couples.reduce((s, c) => s + c.size, 0);
@@ -142,6 +170,7 @@ function ClientBlock({ client, drive }) {
         <DeleteConfirmModal
           target={deleteTarget}
           onClose={() => setDeleteTarget(null)}
+          onDeleted={onDeleted}
         />
       )}
     </div>

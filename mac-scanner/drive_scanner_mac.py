@@ -368,20 +368,33 @@ def scan_drive_folders(drive_path, force_full=False):
 
     try:
         entries = os.listdir(drive_path)
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as e:
+        logging.error(f"Cannot list {drive_path}: {type(e).__name__}: {e}")
         return clients
 
+    logging.info(f"scan_drive_folders: {drive_path} has {len(entries)} raw entries")
+
+    skipped_not_dir = 0
+    skipped_hidden = 0
     for client_name in entries:
         client_path = os.path.join(drive_path, client_name)
-        if not os.path.isdir(client_path):
+        try:
+            if not os.path.isdir(client_path):
+                skipped_not_dir += 1
+                continue
+        except OSError as e:
+            logging.warning(f"isdir check failed for {client_path}: {e}")
+            skipped_not_dir += 1
             continue
         if client_name.startswith('.') or client_name.startswith('$') or client_name in SKIP_FOLDERS:
+            skipped_hidden += 1
             continue
 
         couples = []
         try:
             sub_entries = os.listdir(client_path)
-        except (OSError, PermissionError):
+        except (OSError, PermissionError) as e:
+            logging.warning(f"Cannot list client folder {client_path}: {type(e).__name__}: {e}")
             sub_entries = []
 
         has_subdirs = False
@@ -411,6 +424,8 @@ def scan_drive_folders(drive_path, force_full=False):
             'couples': couples,
         })
 
+    logging.info(f"scan_drive_folders: {drive_path} -> {len(clients)} clients "
+                 f"(skipped {skipped_not_dir} non-dirs, {skipped_hidden} hidden/system)")
     return clients
 
 
