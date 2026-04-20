@@ -677,33 +677,33 @@ body {
 .result-status.disconnected { background: #ffedd5; color: #f97316; }
 
 /* ===== CLIENT/COUPLE FOLDER TREE ===== */
-.client-block { margin-bottom: 6px; }
+.client-block { margin-bottom: 0; }
 
 .client-header {
-  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  display: flex; align-items: center; gap: 6px; padding: 3px 4px;
   cursor: pointer; user-select: none;
 }
-.client-header:hover { opacity: 0.8; }
+.client-header:hover { opacity: 0.85; }
 
 .client-icon {
-  width: 22px; height: 22px; border-radius: 5px; background: #f0f2f5;
+  width: 14px; height: 14px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; color: #4a4a6a; flex-shrink: 0;
+  font-size: 9px; color: #8c8ca1; flex-shrink: 0;
 }
 
-.client-name { font-size: 13px; font-weight: 600; color: #1a1a2e; }
-.client-count { font-size: 11px; color: #8c8ca1; }
+.client-name { font-size: 12px; font-weight: 600; color: #1a1a2e; }
+.client-count { font-size: 10px; color: #8c8ca1; }
 .client-size { font-size: 11px; color: #8c8ca1; margin-left: auto; }
 
-.couple-list { padding-left: 30px; }
+.couple-list { padding-left: 22px; }
 
 .couple-row {
-  display: flex; align-items: center; gap: 8px; padding: 4px 0;
-  font-size: 12px;
+  display: flex; align-items: center; gap: 6px; padding: 2px 4px;
+  font-size: 11px;
 }
 
 .couple-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex-shrink: 0;
+  width: 4px; height: 4px; border-radius: 50%; background: #22c55e; flex-shrink: 0;
 }
 
 .couple-name { color: #4a4a6a; flex: 1; }
@@ -1320,8 +1320,7 @@ body {
 }
 
 .drive-detail-card:hover {
-  transform: scale(1.02) translateY(-3px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 .result-card:hover {
@@ -1466,15 +1465,12 @@ details[open] > div {
 
 /* Client header hover */
 .client-header {
-  transition: all 0.15s ease;
-  border-radius: 6px;
-  padding-left: 4px;
-  padding-right: 4px;
+  transition: background 0.15s ease;
+  border-radius: 4px;
 }
 
 .client-header:hover {
-  background: #f7f8fa;
-  transform: translateX(3px);
+  background: #f0f2f5;
 }
 
 /* Badge count pop */
@@ -1573,14 +1569,12 @@ details[open] > div {
 
 /* Couple row hover */
 .couple-row {
-  transition: all 0.15s ease;
-  border-radius: 4px;
-  padding-left: 4px;
+  transition: background 0.15s ease;
+  border-radius: 3px;
 }
 
 .couple-row:hover {
-  background: #f0f2f5;
-  transform: translateX(4px);
+  background: #eef0f3;
 }
 
 /* Stat card color swap on hover */
@@ -1618,23 +1612,22 @@ details[open] > div {
   background: linear-gradient(135deg, #fff 60%, #f8fde0 100%);
 }
 
-/* Drive detail card -> green bg on hover */
+/* Drive detail card -> subtle row hover only (not the whole expanded card) */
 .drive-detail-card {
-  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-.drive-detail-card:hover {
-  background: #c8e600;
-  border-color: #c8e600;
+.drive-detail-row {
+  transition: background 0.15s ease;
 }
 
-.drive-detail-card .drive-detail-name,
-.drive-detail-card .drive-detail-meta {
-  transition: color 0.3s ease;
+.drive-detail-row:hover {
+  background: #f7faea;
 }
 
-.drive-detail-card:hover .drive-detail-name { color: #1a1a2e; }
-.drive-detail-card:hover .drive-detail-meta { color: #3a3a2e; }
+.drive-detail-card:has(.drive-detail-expanded) {
+  border-color: #d4da9e;
+}
 
 /* Result card -> green bg on hover */
 .result-card {
