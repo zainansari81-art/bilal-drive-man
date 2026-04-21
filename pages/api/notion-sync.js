@@ -91,20 +91,14 @@ export default requireAuth(async function handler(req, res) {
     while (hasMore) {
       const body = {
         page_size: 100,
+        // Only filter by date — NOT by status. We want every project in the
+        // window to come back so Supabase mirrors whatever Notion says,
+        // including "Downloaded", "Failed", "Cancelled" etc. Without that,
+        // flipping a project from Downloading → Downloaded in Notion would
+        // leave Supabase stuck on "downloading".
         filter: {
-          and: [
-            {
-              property: 'Date',
-              date: { on_or_after: cutoffISO },
-            },
-            {
-              or: [
-                { property: 'progress', status: { equals: 'Not Downloaded' } },
-                { property: 'progress', status: { equals: 'Downloading' } },
-                { property: 'progress', status: { equals: 'copying ' } },
-              ],
-            },
-          ],
+          property: 'Date',
+          date: { on_or_after: cutoffISO },
         },
         sorts: [{ property: 'Date', direction: 'descending' }],
       };
@@ -177,8 +171,10 @@ export default requireAuth(async function handler(req, res) {
       }
     }
 
-    // Step 4: Build project rows — only include projects with complete details
-    const activeStatuses = ['downloading', 'queued', 'copying', 'paused'];
+    // Step 4: Build project rows. Notion is the source of truth for status —
+    // whatever progress value Notion has wins, no "protect the active state"
+    // carve-outs. Portal actions (Download, pause, etc.) write back to Notion
+    // so the next sync sees the right status and doesn't revert anything.
     const projectRows = [];
     let skippedIncomplete = 0;
 
@@ -229,23 +225,14 @@ export default requireAuth(async function handler(req, res) {
 
       if (incompleteError) {
         skippedIncomplete++;
-        // Always set the error so the user sees what's missing. Only force
-        // status to 'failed' when the project isn't currently in-flight — we
-        // don't want to clobber an active download/copy.
         projectData.error_message = incompleteError;
-        const currentStatus = existingProject?.status;
-        if (!currentStatus || !activeStatuses.includes(currentStatus)) {
-          projectData.download_status = 'failed';
-        }
+        projectData.download_status = 'failed';
       } else {
-        // Complete project — clear any stale error and let Notion status drive it
+        // Notion wins — whatever the user set in Notion is the truth.
         projectData.error_message = null;
         const notionStatus = mapNotionStatus(progress);
         if (notionStatus) {
-          const currentStatus = existingProject?.status;
-          if (!currentStatus || !activeStatuses.includes(currentStatus)) {
-            projectData.download_status = notionStatus;
-          }
+          projectData.download_status = notionStatus;
         }
       }
 

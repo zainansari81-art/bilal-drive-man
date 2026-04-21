@@ -1,5 +1,16 @@
 import { supabaseFetch, supabasePost, supabasePatch } from '../../lib/supabase';
 import { requireAuth, sanitizeString } from '../../lib/auth';
+import { updateNotionProjectStatus } from '../../lib/notion';
+
+/**
+ * Fire-and-forget Notion status write. Wraps updateNotionProjectStatus so
+ * portal actions don't have to await it and don't fail if Notion write
+ * permission is missing.
+ */
+function syncNotionStatus(pageId, status) {
+  if (!pageId) return;
+  updateNotionProjectStatus(pageId, status).catch(() => {});
+}
 
 function detectLinkType(url) {
   if (!url) return 'unknown';
@@ -87,6 +98,11 @@ export default requireAuth(async function handler(req, res) {
         }
 
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, updateBody);
+
+        // Mirror to Notion so the next sync doesn't revert our change.
+        const rowsQ = await supabaseFetch(`download_projects?id=eq.${pid}&select=notion_page_id`);
+        syncNotionStatus(rowsQ?.[0]?.notion_page_id, 'queued');
+
         return res.status(200).json(updated);
       }
 
@@ -137,6 +153,10 @@ export default requireAuth(async function handler(req, res) {
           `download_projects?id=eq.${pid}`,
           updatePayload
         );
+
+        // Mirror status to Notion so the next Notion → Supabase sync doesn't
+        // revert us back to "Not Downloaded".
+        syncNotionStatus(project.notion_page_id, 'downloading');
 
         // For Dropbox / Google Drive shared links, the scanner must first add
         // the link to the user's cloud account so the desktop app syncs it.
@@ -227,6 +247,8 @@ export default requireAuth(async function handler(req, res) {
             status: 'pending',
           });
         }
+        // 'paused' maps to 'Downloading' in Notion (no native Paused state).
+        syncNotionStatus(project?.notion_page_id, 'paused');
         return res.status(200).json(updated);
       }
 
@@ -255,6 +277,7 @@ export default requireAuth(async function handler(req, res) {
             status: 'pending',
           });
         }
+        syncNotionStatus(project?.notion_page_id, 'downloading');
         return res.status(200).json(updated);
       }
 
@@ -279,6 +302,7 @@ export default requireAuth(async function handler(req, res) {
             project_id: pid,
           });
         }
+        syncNotionStatus(project?.notion_page_id, 'idle');
 
         return res.status(200).json(updated);
       }
@@ -321,6 +345,14 @@ export default requireAuth(async function handler(req, res) {
           sanitized.link_type = detectLinkType(sanitized.download_link);
         }
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, sanitized);
+
+        // If the user changed download_status via the inline dropdown, push
+        // the new value up to Notion too.
+        if (sanitized.download_status) {
+          const rowsU = await supabaseFetch(`download_projects?id=eq.${pid}&select=notion_page_id`);
+          syncNotionStatus(rowsU?.[0]?.notion_page_id, sanitized.download_status);
+        }
+
         return res.status(200).json(updated);
       }
 
@@ -350,6 +382,7 @@ export default requireAuth(async function handler(req, res) {
         await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'copying',
         });
+        syncNotionStatus(project.notion_page_id, 'copying');
 
         // Send copy command to the scanner
         await supabasePost('download_commands', {
@@ -383,6 +416,7 @@ export default requireAuth(async function handler(req, res) {
           download_status: 'downloading',
           queue_position: null,
         });
+        syncNotionStatus(project.notion_page_id, 'downloading');
 
         // Step 1: Send add_to_cloud command (adds shared link to user's cloud account)
         if (project.download_link && (project.link_type === 'dropbox' || project.link_type === 'google_drive')) {
@@ -440,6 +474,13 @@ export default requireAuth(async function handler(req, res) {
       }
 
       const updated = await supabasePatch(`download_projects?id=eq.${id}`, sanitized);
+
+      // Status-write paths need to mirror up to Notion.
+      if (sanitized.download_status) {
+        const rowsP = await supabaseFetch(`download_projects?id=eq.${id}&select=notion_page_id`);
+        syncNotionStatus(rowsP?.[0]?.notion_page_id, sanitized.download_status);
+      }
+
       return res.status(200).json(updated);
     }
 

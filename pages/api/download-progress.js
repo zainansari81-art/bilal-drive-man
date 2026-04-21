@@ -1,5 +1,6 @@
 import { supabaseFetch, supabasePost, supabasePatch } from '../../lib/supabase';
 import { requireApiKey, sanitizeString } from '../../lib/auth';
+import { updateNotionProjectStatus } from '../../lib/notion';
 
 export default requireApiKey(async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -38,7 +39,30 @@ export default requireApiKey(async function handler(req, res) {
       updateBody.download_phase = null;
     }
 
+    // Fetch current state BEFORE the patch so we can detect a real status
+    // transition and avoid spamming Notion on every progress-bytes update.
+    let priorStatus = null;
+    let notionId = null;
+    if (status) {
+      try {
+        const rows = await supabaseFetch(
+          `download_projects?id=eq.${project_id}&select=notion_page_id,download_status`
+        );
+        priorStatus = rows?.[0]?.download_status || null;
+        notionId = rows?.[0]?.notion_page_id || null;
+      } catch (e) {
+        // Non-fatal — Notion write just gets skipped.
+      }
+    }
+
     const updated = await supabasePatch(`download_projects?id=eq.${project_id}`, updateBody);
+
+    // Push scanner-reported status up to Notion — but only when the status
+    // actually changed. The scanner hits this endpoint every 30s during sync
+    // and once per file during copy; we don't want to hammer Notion's API.
+    if (status && notionId && status !== priorStatus) {
+      updateNotionProjectStatus(notionId, status).catch(() => {});
+    }
 
     // If completed, check for next queued project on the same machine
     if (status === 'completed') {
@@ -60,6 +84,9 @@ export default requireApiKey(async function handler(req, res) {
           await supabasePatch(`download_projects?id=eq.${nextProject.id}`, {
             download_status: 'downloading',
           });
+          if (nextProject.notion_page_id) {
+            updateNotionProjectStatus(nextProject.notion_page_id, 'downloading').catch(() => {});
+          }
 
           // Create start_download command for the machine
           await supabasePost('download_commands', {
