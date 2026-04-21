@@ -16,8 +16,10 @@ const DotLottieReact = dynamic(
 
 /**
  * Shared loading-screen component used across the portal. Wraps the
- * "No Internet" Lottie by Asad (downloaded to /public/loading.lottie)
- * and an optional caption.
+ * "Red Cat With A Witch's Hat" Lottie by Alexander Rozhkov (downloaded
+ * to /public/cat.lottie) and an optional caption. The cat is the
+ * loading-screen mascot everywhere except the download splash, which
+ * uses the wizard from DownloadMagicAnimation.
  *
  * Props:
  *   label?  — caption shown below the animation (default "Loading...")
@@ -48,7 +50,7 @@ export default function LoadingAnimation({
     >
       <div style={{ width: dim, height: dim }}>
         <DotLottieReact
-          src="/loading.lottie"
+          src="/cat.lottie"
           autoplay
           loop
           style={{ width: '100%', height: '100%' }}

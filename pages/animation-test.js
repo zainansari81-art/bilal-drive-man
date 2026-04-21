@@ -9,10 +9,16 @@ import DownloadMagicAnimation from '../components/DownloadMagicAnimation';
  * Route: /animation-test
  * Safe to visit in prod — does nothing but show the animation.
  */
+const MASCOTS = [
+  { id: 'wizard', label: 'Classic wizard (default)', src: '/wizard.lottie' },
+  { id: 'cat', label: 'Witch-hat cat', src: '/cat.lottie' },
+];
+
 export default function AnimationTest() {
   const [playing, setPlaying] = useState(false);
   const [projectName, setProjectName] = useState('Test Project');
   const [playCount, setPlayCount] = useState(0);
+  const [mascot, setMascot] = useState('wizard');
 
   const handlePlay = () => {
     setPlaying(true);
@@ -43,6 +49,31 @@ export default function AnimationTest() {
         Isolated harness. Clicking Play triggers the animation only — no
         download, no API calls, no state changes anywhere else in the portal.
       </p>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {MASCOTS.map((m) => {
+          const active = mascot === m.id;
+          return (
+            <button
+              key={m.id}
+              onClick={() => setMascot(m.id)}
+              disabled={playing}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 999,
+                border: active ? '1px solid #a855f7' : '1px solid #4a3070',
+                background: active ? 'rgba(168, 85, 247, 0.18)' : 'transparent',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: playing ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
 
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280 }}>
         <span style={{ fontSize: 13, opacity: 0.75 }}>Project name (shown on card)</span>
@@ -87,6 +118,7 @@ export default function AnimationTest() {
         <DownloadMagicAnimation
           projectName={projectName}
           onDone={handleDone}
+          mascotSrc={MASCOTS.find((m) => m.id === mascot)?.src}
         />
       )}
     </div>

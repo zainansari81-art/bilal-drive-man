@@ -2,9 +2,10 @@ import LoadingAnimation from '../components/LoadingAnimation';
 
 /**
  * Isolated test harness for the shared LoadingAnimation component.
- * Shows the Lottie "No Internet" loader in all three sizes on one page
- * so we can eyeball whether it actually renders — this is what the
+ * Shows the witch-hat cat loader in all three sizes on one page so we
+ * can eyeball whether it actually renders — this is what the
  * history/downloading/projects screens flash while data is fetching.
+ * (The wizard is reserved for the download splash.)
  *
  * Route: /loading-test
  * Safe in prod — does no API calls and has no auth requirement.
