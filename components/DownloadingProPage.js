@@ -315,6 +315,11 @@ function ProjectRow({ project, connectedDrives, machines, onAction }) {
             bold
             onSave={(val) => updateField('couple_name', val)}
           />
+          {project.error_message && (
+            <span className="dp-row-error" title={project.error_message}>
+              {project.error_message}
+            </span>
+          )}
         </span>
         <span className="dp-list-col dp-col-client">
           <EditableText

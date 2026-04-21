@@ -188,12 +188,6 @@ export default requireAuth(async function handler(req, res) {
 
       const downloadLink = getTextValue(page, 'Raw Data');
 
-      // Skip projects missing download link — incomplete for downloading
-      if (!downloadLink) {
-        skippedIncomplete++;
-        continue;
-      }
-
       const existingProject = existingProjects[page.id];
       let clientName = 'Unknown';
       if (existingProject && existingProject.clientName !== 'Unknown') {
@@ -205,10 +199,12 @@ export default requireAuth(async function handler(req, res) {
         }
       }
 
-      // Skip projects missing client name — incomplete for downloading
-      if (clientName === 'Unknown') {
-        skippedIncomplete++;
-        continue;
+      // Detect what's missing so the row can tell the user to fix it in Notion
+      let incompleteError = null;
+      if (!downloadLink) {
+        incompleteError = 'ERROR; DOWNLOADING LINK IS MISSING';
+      } else if (clientName === 'Unknown') {
+        incompleteError = 'ERROR; CLIENT NAME IS MISSING';
       }
 
       const progress = getTextValue(page, 'progress');
@@ -219,8 +215,11 @@ export default requireAuth(async function handler(req, res) {
       const projectData = {
         notion_page_id: page.id,
         couple_name: sanitizeString(projectName),
+        // client_name column is NOT NULL — fall back to 'Unknown' for display
         client_name: sanitizeString(clientName),
-        download_link: sanitizeString(downloadLink, 2048),
+        // download_link column is nullable; leave null if missing so the
+        // "Download Link" field in the UI reads as blank instead of junk
+        download_link: downloadLink ? sanitizeString(downloadLink, 2048) : null,
         link_type: detectLinkType(downloadLink),
       };
 
@@ -228,11 +227,25 @@ export default requireAuth(async function handler(req, res) {
       if (sizeGb) projectData.size_gb = sanitizeString(sizeGb);
       if (hardDrive) projectData.target_drive = sanitizeString(hardDrive);
 
-      const notionStatus = mapNotionStatus(progress);
-      if (notionStatus) {
+      if (incompleteError) {
+        skippedIncomplete++;
+        // Always set the error so the user sees what's missing. Only force
+        // status to 'failed' when the project isn't currently in-flight — we
+        // don't want to clobber an active download/copy.
+        projectData.error_message = incompleteError;
         const currentStatus = existingProject?.status;
         if (!currentStatus || !activeStatuses.includes(currentStatus)) {
-          projectData.download_status = notionStatus;
+          projectData.download_status = 'failed';
+        }
+      } else {
+        // Complete project — clear any stale error and let Notion status drive it
+        projectData.error_message = null;
+        const notionStatus = mapNotionStatus(progress);
+        if (notionStatus) {
+          const currentStatus = existingProject?.status;
+          if (!currentStatus || !activeStatuses.includes(currentStatus)) {
+            projectData.download_status = notionStatus;
+          }
         }
       }
 
