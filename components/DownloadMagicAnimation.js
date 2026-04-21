@@ -9,16 +9,27 @@ import { createPortal } from 'react-dom';
  * Duration: ~2.4s total. onDone fires when the animation finishes.
  */
 export default function DownloadMagicAnimation({ projectName, onDone }) {
+  // Lock body scroll for the duration of the animation. Empty dep array so
+  // parent re-renders don't re-run the effect. Previously this depended on
+  // `onDone`, which is usually an inline arrow — every parent render created
+  // a new reference, re-firing the effect and clearing the unmount timer
+  // before it fired, leaving the overlay stuck at opacity 0 (the end frame
+  // of magicWrapFade) blocking the UI.
   useEffect(() => {
     document.body.style.overflow = 'hidden';
-    const t = setTimeout(() => {
-      if (onDone) onDone();
-    }, 2400);
     return () => {
-      clearTimeout(t);
       document.body.style.overflow = '';
     };
-  }, [onDone]);
+  }, []);
+
+  // Fire onDone when the CSS animation actually ends. Ties unmount to the
+  // real animation lifecycle instead of a racey setTimeout. The wrap's
+  // `magicWrapFade` is 2.4s; onAnimationEnd fires once when it completes.
+  // Guard against sparkle/inner-element animation-end events bubbling up.
+  const handleAnimationEnd = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (onDone) onDone();
+  };
 
   // 12 sparkles bursting outward at varied angles, distances, sizes.
   const sparkles = Array.from({ length: 12 }, (_, i) => {
@@ -49,7 +60,11 @@ export default function DownloadMagicAnimation({ projectName, onDone }) {
 
   const content = (
     <div className="delete-modal-overlay" style={{ background: 'rgba(30, 10, 55, 0.55)' }}>
-      <div className="magic-anim-wrap" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="magic-anim-wrap"
+        onClick={(e) => e.stopPropagation()}
+        onAnimationEnd={handleAnimationEnd}
+      >
         <span className="magic-anim-halo" />
         <span className="magic-anim-wizard">{'\u{1F9D9}'}</span>
         <span className="magic-anim-wand">{'\u{1FA84}'}</span>
