@@ -76,8 +76,13 @@ export default requireAuth(async function handler(req, res) {
     }
 
     // Step 2: Fetch pages from Notion
-    // Only fetch projects from last 30 days with actionable statuses
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Only fetch projects whose project Date is within the last MAX_AGE_DAYS.
+    // Filtering on the Notion "Date" property (shoot date) — NOT last_edited_time,
+    // so an old project being edited doesn't leak through.
+    const MAX_AGE_DAYS = 50;
+    const cutoffISO = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10); // YYYY-MM-DD for Notion date filter
 
     let allPages = [];
     let hasMore = true;
@@ -89,8 +94,8 @@ export default requireAuth(async function handler(req, res) {
         filter: {
           and: [
             {
-              timestamp: 'last_edited_time',
-              last_edited_time: { after: thirtyDaysAgo },
+              property: 'Date',
+              date: { on_or_after: cutoffISO },
             },
             {
               or: [
@@ -101,7 +106,7 @@ export default requireAuth(async function handler(req, res) {
             },
           ],
         },
-        sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+        sorts: [{ property: 'Date', direction: 'descending' }],
       };
       if (startCursor) body.start_cursor = startCursor;
 
@@ -259,28 +264,31 @@ export default requireAuth(async function handler(req, res) {
       }
     }
 
-    // Step 6: Clean up old projects not in current Notion results
-    // Remove projects with idle/non-active status that weren't returned by Notion
+    // Step 6: Clean up projects not in current Notion results
+    //  a) Inactive (idle/completed/failed) projects not returned by Notion
+    //  b) Projects whose project_date is older than the age cutoff — regardless
+    //     of status. Enforces the "max N days old" rule on already-stored rows
+    //     that predate this filter.
     let cleaned = 0;
     try {
-      const currentNotionIds = new Set(allPages.map(p => p.id));
       const syncedNotionIds = new Set(projectRows.map(r => r.notion_page_id));
       const cleanableStatuses = ['idle', 'completed', 'failed'];
+      const cutoffDate = cutoffISO; // YYYY-MM-DD
 
-      // Get all existing projects from DB
+      // Get all existing projects from DB (include project_date for age check)
       const allExisting = await supabaseFetch(
-        'download_projects?select=id,notion_page_id,download_status'
+        'download_projects?select=id,notion_page_id,download_status,project_date'
       );
 
       const idsToDelete = [];
       for (const row of allExisting || []) {
-        // Only clean projects that have a notion_page_id, aren't in current results,
-        // and aren't actively downloading/copying
-        if (
-          row.notion_page_id &&
-          !syncedNotionIds.has(row.notion_page_id) &&
-          cleanableStatuses.includes(row.download_status)
-        ) {
+        if (!row.notion_page_id) continue;
+        if (syncedNotionIds.has(row.notion_page_id)) continue;
+
+        const isInactive = cleanableStatuses.includes(row.download_status);
+        const isTooOld = row.project_date && row.project_date < cutoffDate;
+
+        if (isInactive || isTooOld) {
           idsToDelete.push(row.id);
         }
       }
