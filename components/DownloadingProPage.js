@@ -85,11 +85,17 @@ export default function DownloadingProPage({ drives }) {
 
   const handleAction = async (projectId, action, extra = {}) => {
     try {
-      await fetch('/api/download-projects', {
+      const res = await fetch('/api/download-projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId, action, ...extra }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `${action} failed (HTTP ${res.status})`);
+        return;
+      }
+      setError(null);
       await fetchProjects();
     } catch (err) {
       setError(err.message);

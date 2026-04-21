@@ -96,29 +96,65 @@ export default requireAuth(async function handler(req, res) {
           return res.status(400).json({ error: 'Invalid id' });
         }
 
+        // Check project state before flipping status
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        if (!project.assigned_machine) {
+          return res.status(400).json({
+            error: 'No machine assigned. Pick a download PC in the expanded row before starting.',
+          });
+        }
+        if (!project.target_drive) {
+          return res.status(400).json({
+            error: 'No target drive selected. Choose where the files should land.',
+          });
+        }
+
+        // Flip status and clear queue slot
         const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'downloading',
           queue_position: null,
         });
 
-        // Get the project to find assigned machine
-        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
-        const project = projects && projects[0];
-        if (project && project.assigned_machine) {
+        // For Dropbox / Google Drive shared links, the scanner must first add
+        // the link to the user's cloud account so the desktop app syncs it.
+        // For direct links (wetransfer etc) we skip this and go straight to
+        // start_download.
+        const needsCloudAdd =
+          project.download_link &&
+          (project.link_type === 'dropbox' || project.link_type === 'google_drive');
+
+        if (needsCloudAdd) {
           await supabasePost('download_commands', {
             machine_name: project.assigned_machine,
-            command: 'start_download',
+            command: 'add_to_cloud',
             project_id: pid,
             payload: {
-              cloud_folder_path: project.cloud_folder_path || '',
-              link_type: project.link_type || '',
+              download_link: project.download_link,
+              link_type: project.link_type,
               couple_name: project.couple_name || '',
-              client_name: project.client_name || 'Unknown',
-              target_drive: project.target_drive || '',
             },
             status: 'pending',
           });
         }
+
+        // start_download monitors the cloud folder, pins files offline, and —
+        // when all files are local — auto-chains into copy_to_drive.
+        await supabasePost('download_commands', {
+          machine_name: project.assigned_machine,
+          command: 'start_download',
+          project_id: pid,
+          payload: {
+            cloud_folder_path: project.cloud_folder_path || '',
+            link_type: project.link_type || '',
+            couple_name: project.couple_name || '',
+            client_name: project.client_name || 'Unknown',
+            target_drive: project.target_drive || '',
+          },
+          status: 'pending',
+        });
 
         return res.status(200).json(updated);
       }
