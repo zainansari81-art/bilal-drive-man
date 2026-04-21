@@ -2,8 +2,15 @@ import dynamic from 'next/dynamic';
 
 // Lottie player is client-only — next/dynamic with ssr:false keeps it out
 // of the SSR bundle so it doesn't choke on `document`/`window`.
+// Also point the player at the self-hosted WASM in /public so our CSP
+// (which only allows 'self' + Supabase + Notion for connect-src) doesn't
+// block the jsdelivr/unpkg fallback URLs the player uses by default.
 const DotLottieReact = dynamic(
-  () => import('@lottiefiles/dotlottie-react').then((m) => m.DotLottieReact),
+  () =>
+    import('@lottiefiles/dotlottie-react').then((m) => {
+      m.setWasmUrl('/dotlottie-player.wasm');
+      return m.DotLottieReact;
+    }),
   { ssr: false }
 );
 
