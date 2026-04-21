@@ -16,14 +16,15 @@ const DotLottieReact = dynamic(
 );
 
 /**
- * Magic wizard animation shown when a download is launched.
+ * Magic mascot animation shown when a download is launched.
  *
- * Uses the "Wizard Clapping Dance" Lottie by Irfan on LottieFiles
- * (downloaded to /public/wizard.lottie so we're not hotlinking their CDN).
+ * Uses the "Red Cat With A Witch's Hat" Lottie by Alexander Rozhkov on
+ * LottieFiles (downloaded to /public/cat.lottie so we're not hotlinking
+ * their CDN). Real vector Lottie at 60fps.
  *
  * Sequence (~4.8s total):
- *   0.0 – 4.2s  Lottie wizard plays (loops for the full duration)
- *   2.4 – 3.4s  burst of sparkles + shockwave ring above the wizard
+ *   0.0 – 4.2s  Lottie mascot plays (loops for the full duration)
+ *   2.4 – 3.4s  burst of sparkles + shockwave ring above the mascot
  *   2.8 – 4.3s  project card materialises and flies into the download arrow
  *   4.3 – 4.8s  scene fades
  *
@@ -86,7 +87,7 @@ export default function DownloadMagicAnimation({ projectName, onDone }) {
         {/* The Lottie wizard */}
         <div className="magic-anim-lottie">
           <DotLottieReact
-            src="/wizard.lottie"
+            src="/cat.lottie"
             autoplay
             loop
             speed={1}
