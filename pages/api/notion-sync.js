@@ -208,20 +208,25 @@ export default requireAuth(async function handler(req, res) {
       const sizeGb = getTextValue(page, 'Size in Gbs');
       const hardDrive = getTextValue(page, 'Hard Drive');
 
+      // CRITICAL: every row in the bulk upsert MUST have the exact same set
+      // of keys — PostgREST rejects the whole batch with PGRST102
+      // ("All object keys must match") if key sets differ between rows.
+      // Always include every nullable column, use null where we don't have a
+      // value. Don't add columns conditionally.
       const projectData = {
         notion_page_id: page.id,
         couple_name: sanitizeString(projectName),
         // client_name column is NOT NULL — fall back to 'Unknown' for display
         client_name: sanitizeString(clientName),
-        // download_link column is nullable; leave null if missing so the
-        // "Download Link" field in the UI reads as blank instead of junk
+        // download_link column is nullable; null = "blank" in the UI
         download_link: downloadLink ? sanitizeString(downloadLink, 2048) : null,
         link_type: detectLinkType(downloadLink),
+        project_date: projectDate || null,
+        size_gb: sizeGb ? sanitizeString(sizeGb) : null,
+        target_drive: hardDrive ? sanitizeString(hardDrive) : null,
+        error_message: null,
+        download_status: null,
       };
-
-      if (projectDate) projectData.project_date = projectDate;
-      if (sizeGb) projectData.size_gb = sanitizeString(sizeGb);
-      if (hardDrive) projectData.target_drive = sanitizeString(hardDrive);
 
       if (incompleteError) {
         skippedIncomplete++;
@@ -229,10 +234,17 @@ export default requireAuth(async function handler(req, res) {
         projectData.download_status = 'failed';
       } else {
         // Notion wins — whatever the user set in Notion is the truth.
-        projectData.error_message = null;
         const notionStatus = mapNotionStatus(progress);
         if (notionStatus) {
           projectData.download_status = notionStatus;
+        } else if (existingProject?.status) {
+          // Notion status didn't map to any known value — keep the existing
+          // Supabase status rather than nulling it out (download_status is
+          // likely NOT NULL; nulling would 400 the upsert anyway).
+          projectData.download_status = existingProject.status;
+        } else {
+          // Brand-new project with no recognized Notion status → default idle
+          projectData.download_status = 'idle';
         }
       }
 
