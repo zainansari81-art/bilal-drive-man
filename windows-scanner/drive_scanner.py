@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.40.0'
+VERSION = '3.41.0'
 
 import os
 import sys
@@ -77,6 +77,9 @@ DEFAULT_CONFIG = {
     'dropbox_app_key': '',
     'dropbox_app_secret': '',
     'gdrive_token': '',
+    'gdrive_refresh_token': '',
+    'gdrive_client_id': '',
+    'gdrive_client_secret': '',
 }
 
 
@@ -509,6 +512,72 @@ def get_dropbox_token(config):
     return refresh_dropbox_token(config)
 
 
+def refresh_gdrive_token(config):
+    """Refresh Google Drive access token using stored refresh token."""
+    refresh_token = config.get('gdrive_refresh_token', '')
+    client_id = config.get('gdrive_client_id', '')
+    client_secret = config.get('gdrive_client_secret', '')
+
+    if not refresh_token or not client_id or not client_secret:
+        logging.warning(
+            "Cannot refresh GDrive token: missing gdrive_refresh_token / "
+            "gdrive_client_id / gdrive_client_secret in scanner config"
+        )
+        return None
+
+    body = urllib.parse.urlencode({
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_token,
+        'client_id': client_id,
+        'client_secret': client_secret,
+    }).encode('utf-8')
+
+    req = urllib.request.Request('https://oauth2.googleapis.com/token', data=body, method='POST')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+            new_token = data.get('access_token', '')
+            if new_token:
+                config['gdrive_token'] = new_token
+                save_config(config)
+                logging.info("Refreshed Google Drive access token")
+                return new_token
+    except Exception as e:
+        logging.error(f"Failed to refresh Google Drive token: {e}")
+    return None
+
+
+def call_with_token_retry(config, link_type, fn):
+    """
+    Run `fn(access_token)` with the current token; if it raises a 401/expired
+    error, refresh the appropriate token and retry exactly once.
+    """
+    if link_type == 'dropbox':
+        token = get_dropbox_token(config)
+        refresher = refresh_dropbox_token
+    elif link_type == 'google_drive':
+        token = config.get('gdrive_token', '') or refresh_gdrive_token(config)
+        refresher = refresh_gdrive_token
+    else:
+        return fn(None)
+
+    if not token:
+        raise Exception(f"No {link_type} token configured in scanner settings")
+
+    try:
+        return fn(token)
+    except Exception as e:
+        msg = str(e)
+        if '401' in msg or 'expired' in msg.lower() or 'invalid_token' in msg.lower() or 'unauthorized' in msg.lower():
+            new_token = refresher(config)
+            if new_token:
+                logging.info(f"Retrying {link_type} call after token refresh")
+                return fn(new_token)
+        raise
+
+
 def add_dropbox_shared_folder(access_token, shared_link):
     """Add a Dropbox shared folder/link to the user's account."""
     import re
@@ -865,39 +934,37 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
         })
         return
 
-    # Get cloud tokens from config (auto-refresh if needed)
-    dropbox_token = get_dropbox_token(config) if link_type == 'dropbox' else None
-    gdrive_token = config.get('gdrive_token', '') if link_type == 'google_drive' else None
+    # Flip to the 'pinning' sub-phase so the UI can show it.
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': 'downloading',
+        'phase': 'pinning',
+    })
 
     try:
         folder_name = None
-        if link_type == 'dropbox' and dropbox_token:
-            try:
-                folder_name = add_dropbox_shared_folder(dropbox_token, download_link)
-            except Exception as e:
-                # Token might be expired — try refreshing
-                if '401' in str(e) or 'expired' in str(e).lower():
-                    new_token = refresh_dropbox_token(config)
-                    if new_token:
-                        folder_name = add_dropbox_shared_folder(new_token, download_link)
-                    else:
-                        raise
-                else:
-                    raise
-        elif link_type == 'google_drive' and gdrive_token:
-            folder_name = add_gdrive_shared_folder(gdrive_token, download_link)
+        if link_type == 'dropbox':
+            folder_name = call_with_token_retry(
+                config, 'dropbox',
+                lambda tok: add_dropbox_shared_folder(tok, download_link),
+            )
+        elif link_type == 'google_drive':
+            folder_name = call_with_token_retry(
+                config, 'google_drive',
+                lambda tok: add_gdrive_shared_folder(tok, download_link),
+            )
         else:
-            token_missing = 'dropbox_token' if link_type == 'dropbox' else 'gdrive_token'
             api_patch(config, 'download-commands', {
                 'id': cmd_id, 'status': 'failed',
-                'error_message': f'No {token_missing} configured in scanner settings',
+                'error_message': f'Unsupported link_type: {link_type}',
             })
             return
 
-        # Report success — update project cloud status
+        # Report success
         api_request(config, 'download-progress', {
             'project_id': project_id,
             'status': 'downloading',
+            'phase': 'pinning',
         })
 
         api_patch(config, 'download-commands', {
@@ -947,6 +1014,7 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
         'project_id': project_id,
         'status': 'copying',
         'progress_bytes': 0,
+        'phase': 'copying',
     })
 
     total_copied = 0
@@ -963,6 +1031,7 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
                 'project_id': project_id,
                 'status': 'copying',
                 'progress_bytes': total_copied,
+                'phase': 'copying',
             })
             time.sleep(0.01)
     else:
@@ -972,6 +1041,7 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
         'project_id': project_id,
         'status': 'completed',
         'progress_bytes': total_copied,
+        'phase': '',
     })
 
     api_patch(config, 'download-commands', {
@@ -1014,16 +1084,25 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
 
     logging.info(f"Monitoring cloud folder: {cloud_folder}")
 
-    # Report the found folder path back
+    # Report the found folder path back — phase is 'pinning' until we've
+    # queued the files for offline, then flips to 'syncing'.
     api_request(config, 'download-progress', {
         'project_id': project_id,
         'status': 'downloading',
+        'phase': 'pinning',
     })
 
     # Auto-pin all files for offline (forces cloud app to download them)
     logging.info(f"Pinning files for offline in: {cloud_folder}")
     total_pinned, pinned_count = pin_folder_offline(cloud_folder)
     logging.info(f"Pinned {pinned_count}/{total_pinned} files for offline download")
+
+    # Flip phase to 'syncing' — cloud app is now pulling bytes.
+    api_request(config, 'download-progress', {
+        'project_id': project_id,
+        'status': 'downloading',
+        'phase': 'syncing',
+    })
 
     # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
     max_checks = 2880  # 24 hours at 30-second intervals
@@ -1036,6 +1115,7 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
                 'project_id': project_id,
                 'status': 'downloading',
                 'progress_bytes': total_size,
+                'phase': 'syncing',
             })
 
         logging.info(f"Cloud check #{check_num + 1}: {offline_files}/{total_files} files offline in {cloud_folder}")
@@ -1238,7 +1318,56 @@ class DriveMonitor:
     def start(self):
         self.running = True
         threading.Thread(target=self._loop, daemon=True).start()
+        threading.Thread(target=self._resume_interrupted_downloads, daemon=True).start()
         self.status("Drive monitor started")
+
+    def _resume_interrupted_downloads(self):
+        """
+        On scanner boot, find any project assigned to THIS machine that was
+        mid-flight (downloading or copying) and re-enqueue a start_download
+        command. The scanner crash or a Windows reboot would have killed the
+        in-memory worker thread — the DB row is the only record left.
+        """
+        try:
+            # Small delay so the heartbeat has time to land first.
+            time.sleep(5)
+            machine = get_machine_name()
+            from urllib.parse import quote
+            data = api_get(self.config, f'scanner-resume-check?machine={quote(machine)}')
+            if not data:
+                return
+            rows = data.get('projects') or []
+            pending_project_ids = set(data.get('pending_project_ids') or [])
+            if not rows:
+                return
+
+            resumed = 0
+            for row in rows:
+                pid = row.get('id')
+                if not pid or pid in pending_project_ids:
+                    continue
+                logging.info(
+                    f"Resuming interrupted download: {row.get('couple_name')} "
+                    f"(status={row.get('download_status')})"
+                )
+                api_request(self.config, 'download-commands', {
+                    'machine_name': machine,
+                    'command': 'start_download',
+                    'project_id': pid,
+                    'payload': {
+                        'cloud_folder_path': row.get('cloud_folder_path') or '',
+                        'link_type': row.get('link_type') or '',
+                        'couple_name': row.get('couple_name') or '',
+                        'client_name': row.get('client_name') or 'Unknown',
+                        'target_drive': row.get('target_drive') or '',
+                    },
+                    'status': 'pending',
+                })
+                resumed += 1
+            if resumed:
+                logging.info(f"Resume-on-restart: re-queued {resumed} interrupted download(s)")
+        except Exception as e:
+            logging.error(f"Resume-on-restart failed: {e}")
 
     def stop(self):
         self.running = False

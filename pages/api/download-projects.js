@@ -96,39 +96,85 @@ export default requireAuth(async function handler(req, res) {
           return res.status(400).json({ error: 'Invalid id' });
         }
 
-        // Check project state before flipping status
+        // Inline overrides from the Download wizard (when user picks machine/
+        // drive at click time). target_drive is optional — if blank, the
+        // scanner downloads to the PC's cloud folder and stops there so the
+        // user can decide later where to copy.
+        const overrideMachine = req.body.assigned_machine
+          ? sanitizeString(req.body.assigned_machine)
+          : null;
+        const overrideDrive =
+          typeof req.body.target_drive === 'string'
+            ? sanitizeString(req.body.target_drive)
+            : null;
+
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
-        if (!project.assigned_machine) {
+        const machineToUse = overrideMachine || project.assigned_machine;
+        if (!machineToUse) {
           return res.status(400).json({
-            error: 'No machine assigned. Pick a download PC in the expanded row before starting.',
-          });
-        }
-        if (!project.target_drive) {
-          return res.status(400).json({
-            error: 'No target drive selected. Choose where the files should land.',
+            error: 'MACHINE_REQUIRED',
+            message: 'Pick which PC should handle this download.',
           });
         }
 
-        // Flip status and clear queue slot
-        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+        // target_drive defaults to whatever's saved. Wizard can pass '' to
+        // mean "skip drive copy, just sync to this PC".
+        const driveToUse =
+          overrideDrive !== null ? overrideDrive : project.target_drive || '';
+
+        // Persist overrides + flip status + clear queue slot
+        const updatePayload = {
           download_status: 'downloading',
           queue_position: null,
-        });
+          assigned_machine: machineToUse,
+        };
+        if (overrideDrive !== null) updatePayload.target_drive = driveToUse;
+
+        const updated = await supabasePatch(
+          `download_projects?id=eq.${pid}`,
+          updatePayload
+        );
 
         // For Dropbox / Google Drive shared links, the scanner must first add
         // the link to the user's cloud account so the desktop app syncs it.
         // For direct links (wetransfer etc) we skip this and go straight to
         // start_download.
-        const needsCloudAdd =
+        let needsCloudAdd =
           project.download_link &&
           (project.link_type === 'dropbox' || project.link_type === 'google_drive');
 
+        // Duplicate-link dedupe: if another project sharing this download_link
+        // is already active on the same machine, the cloud mount is either
+        // already done or in flight — skip add_to_cloud to avoid duplicate
+        // mount attempts (which can fail and fail loudly).
+        if (needsCloudAdd) {
+          try {
+            const linkParam = encodeURIComponent(project.download_link);
+            const dupes = await supabaseFetch(
+              `download_projects?download_link=eq.${linkParam}&id=neq.${pid}` +
+                `&assigned_machine=eq.${encodeURIComponent(machineToUse)}`
+            );
+            const hasActiveDupe = (dupes || []).some((d) =>
+              ['downloading', 'copying'].includes(d.download_status)
+            );
+            if (hasActiveDupe) {
+              needsCloudAdd = false;
+              console.log(
+                `download_now ${pid}: skipping add_to_cloud — link already syncing on ${machineToUse}`
+              );
+            }
+          } catch (e) {
+            // If dedupe lookup fails, fall back to the safe default (send it).
+            console.error('Duplicate-link dedupe lookup failed:', e.message);
+          }
+        }
+
         if (needsCloudAdd) {
           await supabasePost('download_commands', {
-            machine_name: project.assigned_machine,
+            machine_name: machineToUse,
             command: 'add_to_cloud',
             project_id: pid,
             payload: {
@@ -141,9 +187,12 @@ export default requireAuth(async function handler(req, res) {
         }
 
         // start_download monitors the cloud folder, pins files offline, and —
-        // when all files are local — auto-chains into copy_to_drive.
+        // when all files are local — auto-chains into copy_to_drive IF a
+        // target_drive is set. If driveToUse is empty the scanner stops after
+        // the sync, leaving the data in the PC's cloud folder so the user can
+        // run "Copy to Drive" later.
         await supabasePost('download_commands', {
-          machine_name: project.assigned_machine,
+          machine_name: machineToUse,
           command: 'start_download',
           project_id: pid,
           payload: {
@@ -151,7 +200,7 @@ export default requireAuth(async function handler(req, res) {
             link_type: project.link_type || '',
             couple_name: project.couple_name || '',
             client_name: project.client_name || 'Unknown',
-            target_drive: project.target_drive || '',
+            target_drive: driveToUse,
           },
           status: 'pending',
         });

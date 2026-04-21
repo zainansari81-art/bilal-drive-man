@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { formatSize } from '../lib/format';
+import DownloadWizardModal from './DownloadWizardModal';
+import DownloadMagicAnimation from './DownloadMagicAnimation';
 
 export default function DownloadingProPage({ drives }) {
   const [projects, setProjects] = useState([]);
@@ -10,6 +12,10 @@ export default function DownloadingProPage({ drives }) {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [viewMode, setViewMode] = useState('list');
+  // Project being configured in the Download wizard. Null = wizard closed.
+  const [wizardProject, setWizardProject] = useState(null);
+  // Project name for the magic animation. Null = no animation playing.
+  const [magicProjectName, setMagicProjectName] = useState(null);
 
   const connectedDrives = drives.filter(d => d.connected);
 
@@ -92,6 +98,15 @@ export default function DownloadingProPage({ drives }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        // API asked us to prompt for machine — open the wizard.
+        if (data.error === 'MACHINE_REQUIRED') {
+          const project = projects.find((p) => p.id === projectId);
+          if (project) {
+            setWizardProject(project);
+            setError(null);
+            return;
+          }
+        }
         setError(data.error || `${action} failed (HTTP ${res.status})`);
         return;
       }
@@ -100,6 +115,28 @@ export default function DownloadingProPage({ drives }) {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  // Entry point for the Download button. Opens the wizard if the project
+  // lacks an assigned machine OR a target drive; otherwise plays the magic
+  // animation and fires download_now directly.
+  const handleDownloadClick = (project) => {
+    if (!project.assigned_machine || !project.target_drive) {
+      setWizardProject(project);
+      return;
+    }
+    setMagicProjectName(project.couple_name || 'Project');
+    handleAction(project.id, 'download_now');
+  };
+
+  const handleWizardSubmit = async ({ assigned_machine, target_drive }) => {
+    if (!wizardProject) return;
+    const pid = wizardProject.id;
+    const name = wizardProject.couple_name || 'Project';
+    setWizardProject(null);
+    // Kick off the magic animation and fire the download in parallel.
+    setMagicProjectName(name);
+    await handleAction(pid, 'download_now', { assigned_machine, target_drive });
   };
 
   // Stats
@@ -234,6 +271,7 @@ export default function DownloadingProPage({ drives }) {
                   connectedDrives={connectedDrives}
                   machines={machines}
                   onAction={handleAction}
+                  onDownloadClick={handleDownloadClick}
                 />
               </div>
             ))}
@@ -247,12 +285,30 @@ export default function DownloadingProPage({ drives }) {
                   project={project}
                   connectedDrives={connectedDrives}
                   onAction={handleAction}
+                  onDownloadClick={handleDownloadClick}
                 />
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {wizardProject && (
+        <DownloadWizardModal
+          project={wizardProject}
+          machines={machines}
+          drives={drives}
+          onClose={() => setWizardProject(null)}
+          onSubmit={handleWizardSubmit}
+        />
+      )}
+
+      {magicProjectName && (
+        <DownloadMagicAnimation
+          projectName={magicProjectName}
+          onDone={() => setMagicProjectName(null)}
+        />
+      )}
     </div>
   );
 }
@@ -272,7 +328,7 @@ function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
 }
 
 /* ===== LIST VIEW ROW ===== */
-function ProjectRow({ project, connectedDrives, machines, onAction }) {
+function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadClick }) {
   const [expanded, setExpanded] = useState(false);
   const projectId = project.id;
   const downloadStatus = project.download_status || 'idle';
@@ -337,7 +393,7 @@ function ProjectRow({ project, connectedDrives, machines, onAction }) {
             onClick={(e) => e.stopPropagation()}
           />
         </span>
-        <span className="dp-list-col dp-col-status">
+        <span className="dp-list-col dp-col-status" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 0 }}>
           <select
             className="dp-list-select-badge"
             value={downloadStatus}
@@ -349,6 +405,15 @@ function ProjectRow({ project, connectedDrives, machines, onAction }) {
               <option key={key} value={key}>{cfg.label}</option>
             ))}
           </select>
+          {project.download_phase && (
+            <span className="dp-row-phase">
+              {{
+                pinning: '\u{1F4CC} Pinning',
+                syncing: '\u{1F4E5} Syncing',
+                copying: '\u{1F4BE} Copying',
+              }[project.download_phase] || project.download_phase}
+            </span>
+          )}
         </span>
         <span className="dp-list-col dp-col-queue" onClick={(e) => e.stopPropagation()}>
           {downloadStatus === 'idle' || downloadStatus === 'queued' ? (
@@ -377,7 +442,7 @@ function ProjectRow({ project, connectedDrives, machines, onAction }) {
         </span>
         <span className="dp-list-col dp-col-actions" onClick={(e) => e.stopPropagation()}>
           {downloadStatus === 'idle' && (
-            <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Download</button>
+            <button className="dp-list-action-btn primary" onClick={() => onDownloadClick(project)}>Download</button>
           )}
           {downloadStatus === 'downloading' && (
             <>
@@ -395,7 +460,7 @@ function ProjectRow({ project, connectedDrives, machines, onAction }) {
             <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
           )}
           {downloadStatus === 'failed' && (
-            <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'download_now')}>Restart</button>
+            <button className="dp-list-action-btn primary" onClick={() => onDownloadClick(project)}>Restart</button>
           )}
         </span>
       </div>
@@ -526,7 +591,7 @@ function EditableText({ value, placeholder, bold, onSave }) {
 }
 
 /* ===== GRID VIEW CARD ===== */
-function ProjectCard({ project, connectedDrives, onAction }) {
+function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
   const projectName = project.couple_name || 'Unknown Project';
   const clientName = project.client_name || 'Unknown Client';
   const downloadStatus = project.download_status || 'idle';
@@ -619,7 +684,7 @@ function ProjectCard({ project, connectedDrives, onAction }) {
       <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {downloadStatus === 'idle' && (
           <>
-            <ActionBtn label="Download" primary onClick={() => onAction(projectId, 'download_now')} />
+            <ActionBtn label="Download" primary onClick={() => onDownloadClick(project)} />
             <ActionBtn label="Queue" onClick={() => onAction(projectId, 'queue')} />
           </>
         )}

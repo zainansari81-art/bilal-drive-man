@@ -8,7 +8,7 @@ export default requireApiKey(async function handler(req, res) {
   }
 
   try {
-    const { project_id, progress_bytes, status, error_message } = req.body;
+    const { project_id, progress_bytes, status, error_message, phase } = req.body;
     if (!project_id) {
       return res.status(400).json({ error: 'Missing required field: project_id' });
     }
@@ -23,10 +23,19 @@ export default requireApiKey(async function handler(req, res) {
     if (error_message) {
       updateBody.error_message = sanitizeString(error_message, 1024);
     }
+    // Sub-phase within downloading/copying. Scanner sends 'pinning' | 'syncing'
+    // | 'copying' | '' (to clear). Anything else is silently dropped.
+    if (phase !== undefined) {
+      const allowedPhases = ['pinning', 'syncing', 'copying', ''];
+      if (allowedPhases.includes(phase)) {
+        updateBody.download_phase = phase === '' ? null : phase;
+      }
+    }
 
-    // If completed, set completed_at timestamp
+    // If completed, set completed_at timestamp and clear phase
     if (status === 'completed') {
       updateBody.completed_at = new Date().toISOString();
+      updateBody.download_phase = null;
     }
 
     const updated = await supabasePatch(`download_projects?id=eq.${project_id}`, updateBody);
