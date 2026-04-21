@@ -2174,13 +2174,22 @@ details[open] > div {
    ============================================================ */
 .magic-anim-wrap {
   position: relative;
-  width: 440px;
-  height: 480px;
+  width: 520px;
+  height: 660px;
   display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: none;
   animation: magicWrapFade 4.8s ease forwards;
+}
+
+/* Scale the whole wrap down on smaller screens so the full body stays
+   in-frame. Keeps all transform math intact. */
+@media (max-width: 600px) {
+  .magic-anim-wrap { transform-origin: center; zoom: 0.75; }
+}
+@media (max-width: 420px) {
+  .magic-anim-wrap { zoom: 0.58; }
 }
 
 @keyframes magicWrapFade {
@@ -2190,51 +2199,52 @@ details[open] > div {
   100% { opacity: 0; transform: scale(0.96); }
 }
 
-/* ---------- The wizard SVG ---------- */
+/* ---------- The wizard SVG (full-body side view) ---------- */
 .magic-anim-wizard-svg {
   position: absolute;
   left: 50%;
-  top: 52%;
-  width: 240px;
-  height: 372px;
-  transform: translate(-50%, -50%) translateY(40px) scale(0.7);
+  top: 50%;
+  width: 280px;
+  height: 600px;
+  transform: translate(-50%, -50%) translateY(60px) scale(0.7);
   opacity: 0;
-  filter: drop-shadow(0 22px 50px rgba(40, 10, 80, 0.55));
+  filter: drop-shadow(0 30px 55px rgba(15, 8, 30, 0.6));
   animation:
     magicWizardRise 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) 0s forwards,
     magicWizardSway 2.2s ease-in-out 0.7s 1;
 }
 
 @keyframes magicWizardRise {
-  0%   { transform: translate(-50%, -50%) translateY(80px) scale(0.6); opacity: 0; }
-  55%  { transform: translate(-50%, -50%) translateY(-12px) scale(1.04); opacity: 1; }
-  80%  { transform: translate(-50%, -50%) translateY(3px) scale(0.98); }
+  0%   { transform: translate(-50%, -50%) translateY(110px) scale(0.55); opacity: 0; }
+  55%  { transform: translate(-50%, -50%) translateY(-14px) scale(1.03); opacity: 1; }
+  80%  { transform: translate(-50%, -50%) translateY(4px) scale(0.99); }
   100% { transform: translate(-50%, -50%) translateY(0) scale(1); opacity: 1; }
 }
 
 @keyframes magicWizardSway {
   0%, 100% { transform: translate(-50%, -50%) rotate(0); }
-  20% { transform: translate(-50%, -50%) rotate(-2.5deg); }
-  50% { transform: translate(-50%, -50%) rotate(1.8deg); }
-  80% { transform: translate(-50%, -50%) rotate(-1.2deg); }
+  20% { transform: translate(-50%, -50%) rotate(-2deg); }
+  50% { transform: translate(-50%, -50%) rotate(1.5deg); }
+  80% { transform: translate(-50%, -50%) rotate(-0.8deg); }
 }
 
-/* ---------- The staff ---------- */
-/* Positioned over the wizard's right hand (viewer's left). The pivot
-   is the hand — transform-origin bottom. Waves through a figure-8 by
-   composing rotation + slight translate over 3 cycles. */
+/* ---------- The staff overlay ----------
+   Staff SVG is 60x420, with orb at y=22 and grip at y=250 (≈ 59.5%).
+   We want the grip point to align with the wizard's hand, which is
+   at wrap-center + (+98, +45). transform-origin at (50%, 59.5%) pins
+   the grip so all rotations pivot at the hand. */
 .magic-anim-staff {
   position: absolute;
   left: 50%;
-  top: 52%;
-  width: 56px;
-  height: 280px;
-  transform-origin: 50% 88%;
-  transform: translate(calc(-50% - 58px), calc(-50% - 10px)) rotate(-18deg);
+  top: 50%;
+  width: 60px;
+  height: 420px;
+  transform-origin: 50% 59.5%;
+  transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(-6deg);
   opacity: 0;
   z-index: 3;
   pointer-events: none;
-  filter: drop-shadow(0 0 8px rgba(167, 139, 250, 0.5));
+  filter: drop-shadow(0 0 10px rgba(167, 139, 250, 0.55));
   animation:
     magicStaffAppear 0.4s ease 0.4s forwards,
     magicStaffWave 2.2s cubic-bezier(0.45, 0, 0.55, 1) 0.7s 1 forwards,
@@ -2246,21 +2256,21 @@ details[open] > div {
   to   { opacity: 1; }
 }
 
-/* Figure-8 casting motion: sweep left, back, right, forward, left, up. */
+/* Pure rotation around the grip — the orb sweeps through a wide arc. */
 @keyframes magicStaffWave {
-  0%   { transform: translate(calc(-50% - 58px), calc(-50% - 10px)) rotate(-18deg); }
-  18%  { transform: translate(calc(-50% - 90px), calc(-50% - 20px)) rotate(-55deg); }
-  35%  { transform: translate(calc(-50% - 20px), calc(-50% - 10px)) rotate(20deg); }
-  52%  { transform: translate(calc(-50% - 80px), calc(-50% - 30px)) rotate(-45deg); }
-  70%  { transform: translate(calc(-50% - 30px), calc(-50% - 40px)) rotate(15deg); }
-  85%  { transform: translate(calc(-50% - 70px), calc(-50% - 60px)) rotate(-30deg); }
-  100% { transform: translate(calc(-50% - 50px), calc(-50% - 80px)) rotate(0deg); }
+  0%   { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(-6deg); }
+  18%  { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(-42deg); }
+  35%  { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(28deg); }
+  52%  { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(-34deg); }
+  70%  { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(22deg); }
+  85%  { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(-24deg); }
+  100% { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(0deg); }
 }
 
-/* Final lift — staff raises high as the orb charges. */
+/* Final lift — staff raises as the orb charges. */
 @keyframes magicStaffLift {
-  0%   { transform: translate(calc(-50% - 50px), calc(-50% - 80px)) rotate(0deg); }
-  100% { transform: translate(calc(-50% - 30px), calc(-50% - 100px)) rotate(8deg); }
+  0%   { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(0deg); }
+  100% { transform: translate(calc(-50% + 98px), calc(-59.5% + 45px)) rotate(10deg); }
 }
 
 /* The orb — pulses during wave, charges massively before burst. */
@@ -2311,7 +2321,7 @@ details[open] > div {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  transform: translate(calc(-50% - 30px), calc(-50% - 150px)) scale(0.2);
+  transform: translate(calc(-50% + 98px), calc(-50% - 183px)) scale(0.2);
   border: 3px solid rgba(224, 200, 255, 0.9);
   box-shadow: 0 0 30px rgba(167, 139, 250, 0.8),
               inset 0 0 20px rgba(255, 255, 255, 0.6);
@@ -2321,9 +2331,9 @@ details[open] > div {
 }
 
 @keyframes magicShockwave {
-  0%   { opacity: 0; transform: translate(calc(-50% - 30px), calc(-50% - 150px)) scale(0.2); }
+  0%   { opacity: 0; transform: translate(calc(-50% + 98px), calc(-50% - 183px)) scale(0.2); }
   15%  { opacity: 1; }
-  100% { opacity: 0; transform: translate(calc(-50% - 30px), calc(-50% - 150px)) scale(9); border-width: 1px; }
+  100% { opacity: 0; transform: translate(calc(-50% + 98px), calc(-50% - 183px)) scale(9); border-width: 1px; }
 }
 
 /* ---------- Sparkles burst outward from the staff tip ---------- */
@@ -2336,7 +2346,7 @@ details[open] > div {
   opacity: 0;
   pointer-events: none;
   /* Start offset matches the staff tip (approx -30px left, -150px up). */
-  transform: translate(calc(-50% - 30px), calc(-50% - 150px)) scale(0.2);
+  transform: translate(calc(-50% + 98px), calc(-50% - 183px)) scale(0.2);
   animation: magicSparkleBurst 1.3s ease-out forwards;
   filter: drop-shadow(0 0 8px rgba(224, 200, 255, 0.95));
 }
@@ -2344,13 +2354,13 @@ details[open] > div {
 @keyframes magicSparkleBurst {
   0%   {
     opacity: 0;
-    transform: translate(calc(-50% - 30px), calc(-50% - 150px)) scale(0.2) rotate(0deg);
+    transform: translate(calc(-50% + 98px), calc(-50% - 183px)) scale(0.2) rotate(0deg);
   }
   15%  { opacity: 1; }
   100% {
     opacity: 0;
     transform:
-      translate(calc(-50% - 30px + var(--sx, 0px)), calc(-50% - 150px + var(--sy, 0px)))
+      translate(calc(-50% + 98px + var(--sx, 0px)), calc(-50% - 183px + var(--sy, 0px)))
       scale(var(--ss, 1.2))
       rotate(var(--sr, 360deg));
   }
