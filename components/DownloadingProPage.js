@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { formatSize } from '../lib/format';
 import DownloadWizardModal from './DownloadWizardModal';
 import DownloadMagicAnimation from './DownloadMagicAnimation';
+import LoadingAnimation from './LoadingAnimation';
 
 export default function DownloadingProPage({ drives }) {
   const [projects, setProjects] = useState([]);
@@ -169,11 +170,7 @@ export default function DownloadingProPage({ drives }) {
   });
 
   if (loading) {
-    return (
-      <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
-        <p style={{ fontSize: 18 }}>Loading projects...</p>
-      </div>
-    );
+    return <LoadingAnimation label="Loading projects..." size="lg" padding={60} />;
   }
 
   return (

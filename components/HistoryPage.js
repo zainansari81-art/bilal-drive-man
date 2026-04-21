@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import LoadingAnimation from './LoadingAnimation';
 
 const eventLabels = {
   connected: 'Drive Connected',
@@ -43,7 +44,7 @@ export default function HistoryPage() {
   }, []);
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8ca1' }}>Loading history...</div>;
+    return <LoadingAnimation label="Loading history..." size="md" padding={40} />;
   }
 
   if (activities.length === 0) {
