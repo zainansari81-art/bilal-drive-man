@@ -1,4 +1,5 @@
 import { requireAuth } from '../../lib/auth';
+import { Readable } from 'stream';
 
 /**
  * AI chat proxy — keeps the Anthropic API key server-side and relays
@@ -241,28 +242,36 @@ export default requireAuth(async function handler(req, res) {
       });
     }
 
-    // Stream the SSE events straight through to the browser. The client
-    // parses content_block_delta → text_delta events and appends to the
-    // visible bubble in real time.
-    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering
-    if (typeof res.flushHeaders === 'function') res.flushHeaders();
-
-    const reader = upstream.body.getReader();
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        res.write(value);
-        if (typeof res.flush === 'function') res.flush();
-      }
-    } catch (streamErr) {
-      console.error('AI chat stream error:', streamErr);
-    } finally {
-      res.end();
+    // Stream the SSE events straight through to the browser. Using Node's
+    // Readable.fromWeb + pipe is more reliable on Vercel than manually
+    // calling res.write() in a loop — Node handles backpressure and flushes
+    // chunks eagerly instead of batching.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    // Disable Nagle's algorithm on the socket so small SSE frames go out
+    // immediately instead of waiting to coalesce.
+    if (res.socket && typeof res.socket.setNoDelay === 'function') {
+      res.socket.setNoDelay(true);
     }
+
+    const nodeStream = Readable.fromWeb(upstream.body);
+    nodeStream.on('error', (streamErr) => {
+      console.error('AI chat upstream stream error:', streamErr);
+      try { res.end(); } catch {}
+    });
+    nodeStream.pipe(res);
+
+    // Wait until the pipe completes before returning from the handler so
+    // Vercel doesn't kill the function early.
+    await new Promise((resolve) => {
+      nodeStream.on('end', resolve);
+      nodeStream.on('close', resolve);
+      res.on('close', resolve);
+    });
     return;
   } catch (err) {
     console.error('AI chat handler error:', err);
