@@ -12,6 +12,7 @@ import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
 import DevicesPage from '../components/DevicesPage';
 import DownloadingProPage from '../components/DownloadingProPage';
+import AiChat from '../components/AiChat';
 import { getSessionFromRequest } from '../lib/auth';
 import { getDrivesWithClients, formatDrivesForFrontend, getHistory } from '../lib/supabase';
 
@@ -252,6 +253,9 @@ export default function Home({ username, initialDrives, initialActivities }) {
             </div>
           </div>
         </main>
+
+        {/* Floating AI assistant — available on every portal page. */}
+        <AiChat context={{ drives, activities }} />
       </div>
     </>
   );
