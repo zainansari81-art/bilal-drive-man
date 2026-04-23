@@ -20,7 +20,9 @@ import { requireAuth } from '../../lib/auth';
  */
 
 const MODEL = 'claude-sonnet-4-5';
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+// Route through the gngn.my proxy (Anthropic-compatible). The key in
+// ANTHROPIC_API_KEY is a gngn.my key (sk_live_...), not an Anthropic key.
+const ANTHROPIC_API = 'https://api.gngn.my/v1/messages';
 const MAX_TOKENS = 1024;
 
 const PORTAL_GUIDE = `
