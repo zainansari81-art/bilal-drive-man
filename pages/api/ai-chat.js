@@ -136,14 +136,27 @@ export default requireAuth(async function handler(req, res) {
 
     // Sanitize / cap: only keep role + string content, drop empties, and
     // limit total to protect against abuse. Anthropic needs alternating
-    // user/assistant starting with user.
-    const cleaned = [];
+    // user/assistant starting with user, so drop any leading assistant
+    // messages (the UI seeds a greeting that's display-only) and collapse
+    // consecutive same-role messages by keeping the latest.
+    const raw = [];
     for (const m of messages.slice(-20)) {
       if (!m || typeof m !== 'object') continue;
       const role = m.role === 'assistant' ? 'assistant' : 'user';
       const content = typeof m.content === 'string' ? m.content.slice(0, 4000) : '';
       if (!content) continue;
-      cleaned.push({ role, content });
+      raw.push({ role, content });
+    }
+    // Drop leading assistant messages (UI greeting, etc.)
+    while (raw.length && raw[0].role !== 'user') raw.shift();
+    // Collapse consecutive same-role messages by keeping the latest one
+    const cleaned = [];
+    for (const m of raw) {
+      if (cleaned.length && cleaned[cleaned.length - 1].role === m.role) {
+        cleaned[cleaned.length - 1] = m;
+      } else {
+        cleaned.push(m);
+      }
     }
     if (cleaned.length === 0 || cleaned[0].role !== 'user') {
       return res.status(400).json({ error: 'conversation must start with a user message' });
