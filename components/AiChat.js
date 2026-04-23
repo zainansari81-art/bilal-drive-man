@@ -117,7 +117,7 @@ export default function AiChat({ context }) {
               <span className="ai-chat-avatar">{'\u2728'}</span>
               <div>
                 <div className="ai-chat-name">Drive-Man Assistant</div>
-                <div className="ai-chat-sub">Powered by Claude Opus</div>
+                <div className="ai-chat-sub">Powered by Claude Sonnet</div>
               </div>
             </div>
             <button

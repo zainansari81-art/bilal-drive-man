@@ -19,7 +19,7 @@ import { requireAuth } from '../../lib/auth';
  *   ANTHROPIC_API_KEY — required. Set on Vercel.
  */
 
-const MODEL = 'claude-opus-4-5';
+const MODEL = 'claude-sonnet-4-5';
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MAX_TOKENS = 1024;
 
