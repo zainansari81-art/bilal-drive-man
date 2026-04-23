@@ -162,7 +162,24 @@ export default requireAuth(async function handler(req, res) {
       return res.status(400).json({ error: 'conversation must start with a user message' });
     }
 
-    const system = PORTAL_GUIDE + buildContextBlock(context, new Date());
+    // Build the system prompt as a cacheable block. Anthropic charges 1.25x
+    // input on the first write, then 0.1x on every read within the 5-min TTL.
+    // Since the guide is static and the portal context only changes when the
+    // user scans drives, most turns in a chat session will hit a warm cache
+    // and pay ~10% of normal input cost on the prefix.
+    //
+    // Minimum cacheable prefix is 1024 tokens. PORTAL_GUIDE + a realistic
+    // drives snapshot is comfortably above that; if a request ever falls
+    // below the threshold, Anthropic just ignores the cache_control — no
+    // error. So it's safe to set unconditionally.
+    const systemText = PORTAL_GUIDE + buildContextBlock(context, new Date());
+    const system = [
+      {
+        type: 'text',
+        text: systemText,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
 
     const body = {
       model: MODEL,
