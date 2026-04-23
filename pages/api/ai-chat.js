@@ -190,21 +190,44 @@ export default requireAuth(async function handler(req, res) {
       messages: cleaned,
     };
 
-    const upstream = await fetch(ANTHROPIC_API, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify(body),
-    });
-
-    const data = await upstream.json();
-    if (!upstream.ok) {
-      console.error('Anthropic API error:', data);
+    let upstream;
+    try {
+      upstream = await fetch(ANTHROPIC_API, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (netErr) {
+      console.error('AI chat network error:', netErr);
       return res.status(502).json({
-        error: data?.error?.message || 'Upstream AI error',
+        error: `Network error reaching AI: ${netErr.message || netErr}`,
+      });
+    }
+
+    // Read raw body so we can surface HTML/plain-text error pages from the
+    // proxy instead of choking on JSON.parse.
+    const rawBody = await upstream.text();
+    let data = null;
+    try {
+      data = rawBody ? JSON.parse(rawBody) : null;
+    } catch (parseErr) {
+      console.error('AI chat non-JSON upstream body:', rawBody.slice(0, 500));
+      return res.status(502).json({
+        error: `Upstream returned non-JSON (status ${upstream.status}): ${rawBody.slice(0, 200)}`,
+      });
+    }
+
+    if (!upstream.ok) {
+      console.error('Anthropic API error:', upstream.status, data);
+      return res.status(502).json({
+        error:
+          data?.error?.message ||
+          data?.message ||
+          `Upstream AI error (status ${upstream.status})`,
       });
     }
 
@@ -218,6 +241,8 @@ export default requireAuth(async function handler(req, res) {
     return res.status(200).json({ reply, stop_reason: data.stop_reason });
   } catch (err) {
     console.error('AI chat handler error:', err);
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({
+      error: `Internal server error: ${err?.message || err}`,
+    });
   }
 });
