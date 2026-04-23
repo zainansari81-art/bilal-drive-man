@@ -45,7 +45,8 @@ export default function AiChat({ context }) {
     if (!text || sending) return;
 
     const nextMessages = [...messages, { role: 'user', content: text }];
-    setMessages(nextMessages);
+    // Append an empty assistant bubble that we'll stream into.
+    setMessages([...nextMessages, { role: 'assistant', content: '' }]);
     setInput('');
     setSending(true);
     setError(null);
@@ -59,24 +60,78 @@ export default function AiChat({ context }) {
           context: context || null,
         }),
       });
-      const data = await res.json();
+
+      // Error path — backend returned JSON, not a stream.
       if (!res.ok) {
-        throw new Error(data.error || 'AI request failed');
+        let errMsg = 'AI request failed';
+        try {
+          const data = await res.json();
+          errMsg = data.error || errMsg;
+        } catch {}
+        throw new Error(errMsg);
       }
-      setMessages((cur) => [
-        ...cur,
-        { role: 'assistant', content: data.reply || '(empty reply)' },
-      ]);
+
+      // Stream path — parse SSE text_delta events and append to the last bubble.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by double newlines.
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+
+        for (const evt of events) {
+          // Each event is one or more "data: ..." lines.
+          for (const line of evt.split('\n')) {
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(payload);
+              if (
+                parsed.type === 'content_block_delta' &&
+                parsed.delta?.type === 'text_delta' &&
+                parsed.delta.text
+              ) {
+                const chunk = parsed.delta.text;
+                setMessages((cur) => {
+                  const copy = [...cur];
+                  const last = copy[copy.length - 1];
+                  if (last && last.role === 'assistant') {
+                    copy[copy.length - 1] = {
+                      ...last,
+                      content: (last.content || '') + chunk,
+                    };
+                  }
+                  return copy;
+                });
+              } else if (parsed.type === 'error') {
+                throw new Error(parsed.error?.message || 'stream error');
+              }
+            } catch (parseErr) {
+              // Non-JSON data lines — ignore silently (pings, etc.)
+            }
+          }
+        }
+      }
     } catch (err) {
       setError(err.message);
-      setMessages((cur) => [
-        ...cur,
-        {
-          role: 'assistant',
-          content:
-            'Sorry \u2014 I hit an error reaching the AI. Please try again in a moment.',
-        },
-      ]);
+      setMessages((cur) => {
+        const copy = [...cur];
+        const last = copy[copy.length - 1];
+        const fallback = 'Sorry \u2014 I hit an error reaching the AI. Please try again in a moment.';
+        if (last && last.role === 'assistant' && !last.content) {
+          copy[copy.length - 1] = { ...last, content: fallback };
+        } else {
+          copy.push({ role: 'assistant', content: fallback });
+        }
+        return copy;
+      });
     } finally {
       setSending(false);
     }
@@ -131,27 +186,37 @@ export default function AiChat({ context }) {
           </div>
 
           <div className="ai-chat-messages" ref={scrollRef}>
-            {messages.map((m, i) => (
-              <div key={i} className={`ai-chat-msg ai-chat-msg-${m.role}`}>
-                <div className="ai-chat-bubble">
-                  {m.content.split('\n').map((line, j) => (
-                    <span key={j}>
-                      {line}
-                      {j < m.content.split('\n').length - 1 && <br />}
-                    </span>
-                  ))}
+            {messages.map((m, i) => {
+              // Skip the trailing empty assistant bubble — the typing
+              // indicator below stands in for it until first token arrives.
+              const isLast = i === messages.length - 1;
+              if (isLast && m.role === 'assistant' && !m.content && sending) {
+                return null;
+              }
+              return (
+                <div key={i} className={`ai-chat-msg ai-chat-msg-${m.role}`}>
+                  <div className="ai-chat-bubble">
+                    {m.content.split('\n').map((line, j) => (
+                      <span key={j}>
+                        {line}
+                        {j < m.content.split('\n').length - 1 && <br />}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {sending && (
-              <div className="ai-chat-msg ai-chat-msg-assistant">
-                <div className="ai-chat-bubble ai-chat-typing">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+              );
+            })}
+            {sending &&
+              messages[messages.length - 1]?.role === 'assistant' &&
+              !messages[messages.length - 1]?.content && (
+                <div className="ai-chat-msg ai-chat-msg-assistant ai-chat-msg-pending">
+                  <div className="ai-chat-bubble ai-chat-typing">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
           </div>
 
           {messages.length <= 1 && !sending && (

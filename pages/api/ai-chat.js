@@ -188,6 +188,7 @@ export default requireAuth(async function handler(req, res) {
       max_tokens: MAX_TOKENS,
       system,
       messages: cleaned,
+      stream: true,
     };
 
     // Retry on 429 (rate limit) with exponential backoff. gngn.my appears
@@ -224,37 +225,45 @@ export default requireAuth(async function handler(req, res) {
       await new Promise((r) => setTimeout(r, backoffMs));
     }
 
-    // Read raw body so we can surface HTML/plain-text error pages from the
-    // proxy instead of choking on JSON.parse.
-    const rawBody = await upstream.text();
-    let data = null;
-    try {
-      data = rawBody ? JSON.parse(rawBody) : null;
-    } catch (parseErr) {
-      console.error('AI chat non-JSON upstream body:', rawBody.slice(0, 500));
-      return res.status(502).json({
-        error: `Upstream returned non-JSON (status ${upstream.status}): ${rawBody.slice(0, 200)}`,
-      });
-    }
-
+    // If upstream didn't return 200, read the whole body as text so we can
+    // surface the actual error (JSON or HTML) to the client.
     if (!upstream.ok) {
-      console.error('Anthropic API error:', upstream.status, data);
+      const errBody = await upstream.text();
+      let parsed = null;
+      try { parsed = errBody ? JSON.parse(errBody) : null; } catch {}
+      console.error('Anthropic API error:', upstream.status, errBody.slice(0, 500));
       return res.status(502).json({
         error:
-          data?.error?.message ||
-          data?.message ||
+          parsed?.error?.message ||
+          parsed?.message ||
+          errBody.slice(0, 200) ||
           `Upstream AI error (status ${upstream.status})`,
       });
     }
 
-    // Extract the assistant reply from the content blocks.
-    const reply = (data.content || [])
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim();
+    // Stream the SSE events straight through to the browser. The client
+    // parses content_block_delta → text_delta events and appends to the
+    // visible bubble in real time.
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-    return res.status(200).json({ reply, stop_reason: data.stop_reason });
+    const reader = upstream.body.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        res.write(value);
+        if (typeof res.flush === 'function') res.flush();
+      }
+    } catch (streamErr) {
+      console.error('AI chat stream error:', streamErr);
+    } finally {
+      res.end();
+    }
+    return;
   } catch (err) {
     console.error('AI chat handler error:', err);
     return res.status(500).json({
