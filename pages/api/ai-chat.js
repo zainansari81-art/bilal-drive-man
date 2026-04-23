@@ -190,22 +190,38 @@ export default requireAuth(async function handler(req, res) {
       messages: cleaned,
     };
 
+    // Retry on 429 (rate limit) with exponential backoff. gngn.my appears
+    // to rate-limit by source IP, and Vercel's pooled serverless IPs can
+    // get throttled even when the user's own quota is fine. Three tries,
+    // 1s → 2s → 4s backoff, respecting retry-after when present.
     let upstream;
-    try {
-      upstream = await fetch(ANTHROPIC_API, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify(body),
-      });
-    } catch (netErr) {
-      console.error('AI chat network error:', netErr);
-      return res.status(502).json({
-        error: `Network error reaching AI: ${netErr.message || netErr}`,
-      });
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        upstream = await fetch(ANTHROPIC_API, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (netErr) {
+        console.error('AI chat network error:', netErr);
+        return res.status(502).json({
+          error: `Network error reaching AI: ${netErr.message || netErr}`,
+        });
+      }
+
+      if (upstream.status !== 429 || attempt === maxAttempts) break;
+
+      const retryAfter = parseInt(upstream.headers.get('retry-after') || '0', 10);
+      const backoffMs = retryAfter > 0 && retryAfter <= 10
+        ? retryAfter * 1000
+        : Math.min(1000 * 2 ** (attempt - 1), 4000);
+      console.warn(`AI chat 429 on attempt ${attempt}, waiting ${backoffMs}ms`);
+      await new Promise((r) => setTimeout(r, backoffMs));
     }
 
     // Read raw body so we can surface HTML/plain-text error pages from the
