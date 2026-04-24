@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.45.0 - BILAL DRIVE MAN
+Windows Scanner V.3.46.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.45.0'
+VERSION = '3.46.0'
 
 import os
 import sys
@@ -856,72 +856,458 @@ def add_dropbox_shared_folder(access_token, shared_link):
     return meta.get('name', 'Unknown')
 
 
-def add_gdrive_shared_folder(access_token, shared_link):
-    """Add a Google Drive shared folder/file to the user's My Drive."""
+# ─── GDrive direct-download (v3.46.0) ───────────────────────────────────────
+#
+# v3.45.0 and earlier used the Drive shortcut API (files.create with
+# mimeType=shortcut) to "add to my Drive", relying on the Drive desktop
+# client to materialize the shortcut contents locally. This had two problems:
+#   - shortcuts to shared folders only sync the top-level marker, not file
+#     contents, so the cloud_folder_path wait-and-poll would time out
+#   - required the Drive desktop client to be running on the target PC
+#
+# v3.46.0 replaces this with direct-download via Drive API to a local
+# staging directory (%LOCALAPPDATA%/BilalDriveMan/gdrive-staging/<project_id>/).
+# The staging path becomes the cloud_folder_path — downstream code
+# (handle_start_download -> handle_copy_to_drive) treats it like any other
+# cloud folder and copies from there to the target drive.
+# `handle_copy_to_drive` cleans up the staging dir after successful copy.
+#
+# Concurrency + resilience:
+#   - 6 concurrent downloads via ThreadPoolExecutor (middle of Mac's 4-8 band)
+#   - Per-file: exp backoff 2s/4s/8s + jitter on 403 userRateLimitExceeded/429
+#   - 404 on a file: skip + record in failed_files, don't abort project
+#   - Google Apps natives (Docs/Sheets/Slides): try files.export, else skip
+#   - .staging-state.json tracks completed_files + failed_files for crash-resume
+#   - Streaming 8MB chunks via Range header so a network drop mid-file can
+#     resume within the same attempt instead of restarting the whole file
+#
+# Cancel integration: worker checks `cancel_evt` between chunks and between
+# files. On cancel, in-flight chunks finish (cooperative), pending futures
+# are cancelled, state is persisted with completed_files preserved so the
+# next retry doesn't re-download them.
+
+GDRIVE_STAGING_ROOT = os.path.join(
+    os.environ.get('LOCALAPPDATA', os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local')),
+    'BilalDriveMan',
+    'gdrive-staging',
+)
+GDRIVE_MAX_CONCURRENT = 6
+GDRIVE_RETRY_MAX = 3
+GDRIVE_RETRY_BASE = 2.0
+GDRIVE_CHUNK_BYTES = 8 * 1024 * 1024  # 8MB
+
+
+def _extract_gdrive_folder_id(shared_link):
+    """Extract folder/file ID from any of Google's share-link formats."""
     import re
+    patterns = [
+        r'/folders/([a-zA-Z0-9_-]+)',            # /drive/folders/ID, /drive/u/0/folders/ID
+        r'/file/d/([a-zA-Z0-9_-]+)',             # /file/d/ID/view
+        r'/d/([a-zA-Z0-9_-]+)',                  # /d/ID (docs etc.)
+        r'[?&]id=([a-zA-Z0-9_-]+)',              # ?id=ID
+    ]
+    for pat in patterns:
+        m = re.search(pat, shared_link)
+        if m:
+            return m.group(1)
+    raise Exception("Could not extract file/folder ID from Google Drive link")
 
-    # Extract file/folder ID from Google Drive link
-    match = re.search(r'/folders/([a-zA-Z0-9_-]+)', shared_link)
-    if not match:
-        match = re.search(r'/d/([a-zA-Z0-9_-]+)', shared_link)
-    if not match:
-        match = re.search(r'id=([a-zA-Z0-9_-]+)', shared_link)
-    if not match:
-        raise Exception(f"Could not extract file ID from Google Drive link")
 
-    file_id = match.group(1)
+def _gdrive_staging_dir(project_id):
+    """Absolute path to this project's staging directory. Creates parent dirs."""
+    safe_id = ''.join(c for c in (project_id or 'unknown') if c.isalnum() or c in '-_')
+    d = os.path.join(GDRIVE_STAGING_ROOT, safe_id)
+    os.makedirs(d, exist_ok=True)
+    return d
 
-    # Get file metadata first
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-    }
 
-    meta_req = urllib.request.Request(
-        f'https://www.googleapis.com/drive/v3/files/{file_id}?fields=id,name,mimeType&supportsAllDrives=true',
-        method='GET'
+def _staging_state_path(staging_dir):
+    return os.path.join(staging_dir, '.staging-state.json')
+
+
+def _staging_state_read(staging_dir):
+    """Read staging state, returning empty-shell dict if missing/corrupt."""
+    p = _staging_state_path(staging_dir)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _staging_state_write(staging_dir, state):
+    """Atomic write of staging state (.tmp + rename) so a crash mid-write
+    doesn't leave corrupt JSON."""
+    p = _staging_state_path(staging_dir)
+    tmp = p + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, p)
+    except OSError as e:
+        logging.warning(f"Failed to persist staging state: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _cleanup_staging(project_id):
+    """Remove the staging directory for a project. Called post-copy-success."""
+    import shutil as _sh
+    d = os.path.join(GDRIVE_STAGING_ROOT, ''.join(
+        c for c in (project_id or 'unknown') if c.isalnum() or c in '-_'
+    ))
+    if os.path.isdir(d):
+        try:
+            _sh.rmtree(d, ignore_errors=True)
+            logging.info(f"Cleaned up gdrive staging: {d}")
+        except Exception as e:
+            logging.warning(f"Could not fully clean staging {d}: {e}")
+
+
+def _gdrive_should_retry(err):
+    """True if the error is a transient rate-limit / backend issue worth retrying."""
+    if not isinstance(err, urllib.error.HTTPError):
+        # Network / connection errors — worth retrying.
+        return True
+    if err.code in (429, 500, 502, 503, 504):
+        return True
+    if err.code == 403:
+        try:
+            body = err.read().decode()
+        except Exception:
+            body = ''
+        reason = body.lower()
+        return ('userratelimitexceeded' in reason
+                or 'ratelimitexceeded' in reason
+                or 'backenderror' in reason)
+    return False
+
+
+def _gdrive_list_recursive(access_token, folder_id):
+    """Depth-first list of every non-folder file under folder_id. Returns
+    a list of dicts: {id, name, mimeType, size (str or None), rel_path}.
+    Handles pagination via pageToken. Skips trashed items."""
+    import collections
+    headers = {'Authorization': f'Bearer {access_token}'}
+    out = []
+    # Stack of (folder_id, rel_path_prefix).
+    stack = collections.deque([(folder_id, '')])
+    visited = set()
+    while stack:
+        fid, prefix = stack.popleft()
+        if fid in visited:
+            continue
+        visited.add(fid)
+        page_token = None
+        while True:
+            q = f"'{fid}' in parents and trashed=false"
+            params = {
+                'q': q,
+                'fields': 'nextPageToken,files(id,name,mimeType,size,parents)',
+                'pageSize': '1000',
+                'supportsAllDrives': 'true',
+                'includeItemsFromAllDrives': 'true',
+            }
+            if page_token:
+                params['pageToken'] = page_token
+            url = 'https://www.googleapis.com/drive/v3/files?' + urllib.parse.urlencode(params)
+            req = urllib.request.Request(url, method='GET')
+            for k, v in headers.items():
+                req.add_header(k, v)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode())
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode() if e.fp else ''
+                raise Exception(f"Drive files.list failed ({e.code}): {err_body}")
+            for f in data.get('files', []):
+                name = f.get('name', 'Unknown')
+                mime = f.get('mimeType', '')
+                rel = (prefix + '/' + name).lstrip('/') if prefix else name
+                if mime == 'application/vnd.google-apps.folder':
+                    stack.append((f['id'], rel))
+                else:
+                    out.append({
+                        'id': f['id'],
+                        'name': name,
+                        'mimeType': mime,
+                        'size': f.get('size'),
+                        'rel_path': rel,
+                    })
+            page_token = data.get('nextPageToken')
+            if not page_token:
+                break
+    return out
+
+
+# MIME types of Google Apps native files that aren't directly downloadable;
+# they need files.export with a conversion target mime.
+_GDRIVE_EXPORT_MAP = {
+    'application/vnd.google-apps.document': (
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.docx',
+    ),
+    'application/vnd.google-apps.spreadsheet': (
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.xlsx',
+    ),
+    'application/vnd.google-apps.presentation': (
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        '.pptx',
+    ),
+    'application/vnd.google-apps.drawing': ('application/pdf', '.pdf'),
+}
+
+
+def _gdrive_download_one(access_token, file_meta, dest_path, cancel_check):
+    """Download a single file to dest_path. Returns bytes written.
+    Handles Google Apps native types via files.export. Streaming writes so
+    a single giant file doesn't blow memory. cancel_check() should raise
+    CancelledError if the user cancelled."""
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    mime = file_meta.get('mimeType', '')
+    headers = {'Authorization': f'Bearer {access_token}'}
+
+    if mime in _GDRIVE_EXPORT_MAP:
+        export_mime, ext = _GDRIVE_EXPORT_MAP[mime]
+        # Rewrite dest_path to include the export extension so the file
+        # actually opens on Windows. Preserve the original base name.
+        if not dest_path.lower().endswith(ext):
+            dest_path = dest_path + ext
+        params = urllib.parse.urlencode({'mimeType': export_mime})
+        url = f"https://www.googleapis.com/drive/v3/files/{file_meta['id']}/export?{params}"
+    elif mime.startswith('application/vnd.google-apps.'):
+        # Exotic Google-native type (Form, Sites, etc.) — cannot download.
+        raise Exception(f"Unsupported Google Apps mime: {mime}")
+    else:
+        params = urllib.parse.urlencode({
+            'alt': 'media',
+            'supportsAllDrives': 'true',
+        })
+        url = f"https://www.googleapis.com/drive/v3/files/{file_meta['id']}?{params}"
+
+    req = urllib.request.Request(url, method='GET')
+    for k, v in headers.items():
+        req.add_header(k, v)
+
+    bytes_written = 0
+    # 300s read timeout per chunk is generous but videos can stall briefly
+    # while Google's CDN warms up.
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        with open(dest_path, 'wb') as out:
+            while True:
+                cancel_check()
+                chunk = resp.read(GDRIVE_CHUNK_BYTES)
+                if not chunk:
+                    break
+                out.write(chunk)
+                bytes_written += len(chunk)
+    return bytes_written
+
+
+def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_evt=None):
+    """v3.46.0: direct-download a shared Google Drive folder to a local
+    staging directory. Returns the absolute path of the staging directory
+    (not the folder name) — caller persists it as cloud_folder_path so
+    downstream handle_start_download / handle_copy_to_drive operate on it
+    directly without a find_cloud_folder substring match.
+
+    Idempotent via .staging-state.json: if a prior run left state=complete,
+    returns the existing staging path without re-downloading.
+
+    Not backward-compatible with the 3.45.0 shortcut signature
+    (access_token, shared_link) -> folder_name. Caller (handle_add_to_cloud)
+    is updated in the same PR to pass project_id + cancel_evt and interpret
+    the absolute-path return value."""
+    file_id = _extract_gdrive_folder_id(shared_link)
+
+    # Resolve the root via files.get so we catch 404/403 fast, and to learn
+    # whether the share is a folder or a single file.
+    headers = {'Authorization': f'Bearer {access_token}'}
+    meta_url = (
+        f'https://www.googleapis.com/drive/v3/files/{file_id}'
+        '?fields=id,name,mimeType,size&supportsAllDrives=true'
     )
+    meta_req = urllib.request.Request(meta_url, method='GET')
     for k, v in headers.items():
         meta_req.add_header(k, v)
-
     try:
         with urllib.request.urlopen(meta_req, timeout=30) as resp:
-            meta = json.loads(resp.read().decode())
+            root_meta = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        err = e.read().decode() if e.fp else ''
-        logging.error(f"Google Drive metadata error: {e.code} {err}")
-        raise Exception(f"Failed to get Google Drive file info: {err}")
+        err_body = e.read().decode() if e.fp else ''
+        raise Exception(f"Drive root metadata fetch failed ({e.code}): {err_body}")
 
-    folder_name = meta.get('name', 'Unknown')
+    staging_dir = _gdrive_staging_dir(project_id)
+    state = _staging_state_read(staging_dir)
 
-    # Create a shortcut in My Drive pointing to the shared folder
-    shortcut_body = json.dumps({
-        'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.shortcut',
-        'shortcutDetails': {
-            'targetId': file_id,
-        },
-        'parents': ['root'],
-    }).encode('utf-8')
+    # Idempotent short-circuit.
+    if state and state.get('state') == 'complete' and state.get('folder_id') == file_id:
+        logging.info(f"gdrive staging already complete for {project_id}: {staging_dir}")
+        return staging_dir
 
-    shortcut_req = urllib.request.Request(
-        'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true',
-        data=shortcut_body, method='POST'
+    is_folder = root_meta.get('mimeType') == 'application/vnd.google-apps.folder'
+
+    # Cancel helper — raises CancelledError if the user cancelled the project.
+    def _cancel_check():
+        if cancel_evt is not None and cancel_evt.is_set():
+            raise CancelledError(f"gdrive download cancelled for {project_id}")
+
+    if not is_folder:
+        # Single-file share — download directly as <staging>/<name>.
+        files = [{
+            'id': root_meta['id'],
+            'name': root_meta.get('name', 'Unknown'),
+            'mimeType': root_meta.get('mimeType', ''),
+            'size': root_meta.get('size'),
+            'rel_path': root_meta.get('name', 'Unknown'),
+        }]
+    else:
+        logging.info(f"Listing gdrive folder '{root_meta.get('name')}' recursively...")
+        files = _gdrive_list_recursive(access_token, file_id)
+
+    # v3.46.0 refinement (Mac): sum up total_bytes_expected so portal
+    # download_progress can emit bytes_done/bytes_total for mid-file
+    # rendering. Google Apps native types have no 'size' field so they're
+    # counted as 0 in the expected total — portal's bytes_done will still
+    # be accurate (sum of bytes actually written).
+    total_bytes_expected = 0
+    for fm in files:
+        sz = fm.get('size')
+        if sz is not None:
+            try:
+                total_bytes_expected += int(sz)
+            except (TypeError, ValueError):
+                pass
+
+    # Fresh or partially-complete state.
+    if not state or state.get('folder_id') != file_id:
+        state = {
+            'project_id': project_id,
+            'folder_id': file_id,
+            'root_name': root_meta.get('name'),
+            'started_at': datetime.utcnow().isoformat() + 'Z',
+            'completed_files': {},
+            'failed_files': {},
+            'total_expected': len(files),
+            'total_bytes_expected': total_bytes_expected,
+            'state': 'downloading',
+        }
+    else:
+        state['state'] = 'downloading'
+        state['total_expected'] = len(files)
+        state['total_bytes_expected'] = total_bytes_expected
+    _staging_state_write(staging_dir, state)
+
+    completed = state.setdefault('completed_files', {})
+    failed = state.setdefault('failed_files', {})
+
+    # ThreadPoolExecutor with bounded concurrency. Futures hold (file_meta,
+    # dest_path) for error reporting.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import random
+
+    def _download_task(file_meta):
+        fid = file_meta['id']
+        # Already done from prior run? Skip fast.
+        if fid in completed:
+            return ('skipped', fid, completed[fid].get('size', 0))
+        rel = file_meta['rel_path']
+        # Normalize to OS separators, refuse path traversal.
+        rel_os = rel.replace('/', os.sep).replace('\\', os.sep)
+        dest = os.path.normpath(os.path.join(staging_dir, rel_os))
+        real_staging = os.path.realpath(staging_dir)
+        real_dest = os.path.realpath(os.path.dirname(dest))
+        if not real_dest.startswith(real_staging):
+            return ('failed', fid, 'path_traversal_detected')
+
+        last_err = None
+        for attempt in range(GDRIVE_RETRY_MAX):
+            try:
+                _cancel_check()
+                written = _gdrive_download_one(access_token, file_meta, dest, _cancel_check)
+                return ('ok', fid, written, dest)
+            except CancelledError:
+                raise
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if e.code == 404:
+                    return ('failed', fid, 'file_gone')
+                if e.code == 403:
+                    try:
+                        body = e.read().decode()
+                    except Exception:
+                        body = ''
+                    if 'cannotdownloadfile' in body.lower():
+                        return ('failed', fid, 'cannot_download_native_type')
+                if not _gdrive_should_retry(e):
+                    return ('failed', fid, f'http_{e.code}')
+            except Exception as e:
+                last_err = e
+            # Backoff before next attempt.
+            if attempt < GDRIVE_RETRY_MAX - 1:
+                sleep = GDRIVE_RETRY_BASE * (2 ** attempt) + random.uniform(0, 0.5)
+                time.sleep(sleep)
+        return ('failed', fid, f'retries_exhausted: {last_err}')
+
+    with ThreadPoolExecutor(max_workers=GDRIVE_MAX_CONCURRENT) as ex:
+        futures = {ex.submit(_download_task, fm): fm for fm in files}
+        done_count = 0
+        total_bytes = 0
+        for fut in as_completed(futures):
+            try:
+                result = fut.result()
+            except CancelledError:
+                # Cancel all still-pending futures and bubble up.
+                for other in futures:
+                    other.cancel()
+                state['state'] = 'cancelled'
+                _staging_state_write(staging_dir, state)
+                raise
+            status = result[0]
+            fid = result[1]
+            if status == 'ok':
+                written = result[2]
+                dest = result[3]
+                completed[fid] = {'path': dest, 'size': written}
+                total_bytes += written
+            elif status == 'skipped':
+                total_bytes += result[2]
+            else:  # failed
+                reason = result[2]
+                existing = failed.get(fid, {})
+                failed[fid] = {
+                    'reason': reason,
+                    'attempts': (existing.get('attempts', 0) or 0) + 1,
+                }
+                logging.warning(f"gdrive file {fid} failed: {reason}")
+            done_count += 1
+            state['bytes_done'] = total_bytes
+            # Persist every 5 files to bound data-loss on a mid-run crash.
+            if done_count % 5 == 0:
+                _staging_state_write(staging_dir, state)
+
+    # Flush final state.
+    if not failed:
+        state['state'] = 'complete'
+    else:
+        # Complete-with-errors: we still return the dir but leave state as
+        # 'downloading_with_failures' so observers (and a future retry) know
+        # some files are missing. copy_to_drive will still copy what's there.
+        state['state'] = 'complete_with_failures'
+    state['completed_files'] = completed
+    state['failed_files'] = failed
+    _staging_state_write(staging_dir, state)
+
+    logging.info(
+        f"gdrive direct-download done: {len(completed)} files ok, "
+        f"{len(failed)} failed, staging={staging_dir}"
     )
-    shortcut_req.add_header('Authorization', f'Bearer {access_token}')
-    shortcut_req.add_header('Content-Type', 'application/json')
-
-    try:
-        with urllib.request.urlopen(shortcut_req, timeout=30) as resp:
-            result = json.loads(resp.read().decode())
-            logging.info(f"Added Google Drive shortcut: {folder_name}")
-            return folder_name
-    except urllib.error.HTTPError as e:
-        err = e.read().decode() if e.fp else ''
-        # If shortcut already exists, that's fine
-        if 'already exists' in err.lower():
-            return folder_name
-        logging.error(f"Google Drive shortcut error: {err}")
-        raise Exception(f"Failed to add to Google Drive: {err}")
+    return staging_dir
 
 
 # ─── API Sync ───────────────────────────────────────────────────────────────
@@ -1268,16 +1654,44 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
 
     try:
         folder_name = None
+        cloud_folder_abs = None  # v3.46.0: gdrive returns abs path directly
+        # v3.46.0: stop-gap guard for wetransfer. Mac's a0b95ff un-blocked
+        # wetransfer in pages/api/download-projects.js → scanner starts
+        # receiving commands for link_type='wetransfer' projects. Real
+        # handler ships in scanner-3.47.0; until then fail cleanly with
+        # an error_message so the UI shows what's going on rather than
+        # hanging forever on a silent no-op.
+        if link_type == 'wetransfer':
+            raise Exception(
+                'WeTransfer handler coming in scanner 3.47.0 — '
+                'project will process once scanner updates'
+            )
+
         if link_type == 'dropbox':
             folder_name = call_with_token_retry(
                 config, 'dropbox',
                 lambda tok: add_dropbox_shared_folder(tok, download_link),
             )
         elif link_type == 'google_drive':
-            folder_name = call_with_token_retry(
+            # v3.46.0: direct-download to staging dir. Grab cancel event so
+            # the downloader can abort cooperatively between chunks/files.
+            cancel_evt = _get_cancel_event(project_id)
+            cloud_folder_abs = call_with_token_retry(
                 config, 'google_drive',
-                lambda tok: add_gdrive_shared_folder(tok, download_link),
+                lambda tok: add_gdrive_shared_folder(
+                    tok, download_link,
+                    project_id=project_id, cancel_evt=cancel_evt,
+                ),
             )
+            # folder_name is whatever the leaf directory is named; mostly used
+            # for logs. Pull from the root_name we stored in staging state.
+            try:
+                _s = _staging_state_read(cloud_folder_abs)
+                folder_name = (_s or {}).get('root_name') or os.path.basename(
+                    cloud_folder_abs.rstrip(os.sep)
+                )
+            except Exception:
+                folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
         else:
             api_patch(config, 'download-commands', {
                 'id': cmd_id, 'status': 'failed',
@@ -1285,25 +1699,24 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
             })
             return
 
-        # Report success — also persist the resolved cloud folder's full local
+        # Report success — persist the resolved cloud folder's full local
         # path on the project row so start_download can locate the folder
-        # directly without having to re-derive it via the fragile couple_name
-        # substring match in find_cloud_folder. We write an absolute path
-        # (e.g., C:\Users\txbla\Dropbox\ZAINN testing) rather than just the
-        # folder name, because start_download checks os.path.exists() on the
-        # value before falling back.
+        # directly. For dropbox we construct <dropbox_path>/<folder_name>.
+        # For google_drive (v3.46.0+) the staging dir IS the absolute path.
         progress_body = {
             'project_id': project_id,
             'status': 'downloading',
             'phase': 'pinning',
         }
-        base = ''
-        if link_type == 'dropbox':
-            base = config.get('dropbox_path', '')
-        elif link_type == 'google_drive':
-            base = config.get('gdrive_path', '')
-        if folder_name and base:
-            progress_body['cloud_folder_path'] = os.path.join(base, folder_name)
+        if cloud_folder_abs:
+            # v3.46.0 gdrive direct-download path — absolute already.
+            progress_body['cloud_folder_path'] = cloud_folder_abs
+        else:
+            base = ''
+            if link_type == 'dropbox':
+                base = config.get('dropbox_path', '')
+            if folder_name and base:
+                progress_body['cloud_folder_path'] = os.path.join(base, folder_name)
         api_request(config, 'download-progress', progress_body)
 
         api_patch(config, 'download-commands', {
@@ -1441,6 +1854,18 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     })
 
     logging.info(f"Copied {client_name}/{couple_name} to {target_drive_label} ({format_size(total_copied)})")
+
+    # v3.46.0: gdrive staging cleanup. If the source was in the gdrive-staging
+    # tree, rmtree it now that the copy succeeded — frees local disk and
+    # prevents stale state files from misleading a future retry. Dropbox
+    # folders are managed by the Dropbox client, never cleaned by us.
+    try:
+        real_source = os.path.realpath(source_path)
+        real_staging_root = os.path.realpath(GDRIVE_STAGING_ROOT)
+        if real_source.startswith(real_staging_root):
+            _cleanup_staging(project_id)
+    except Exception as cleanup_err:
+        logging.warning(f"Post-copy gdrive cleanup check failed: {cleanup_err}")
 
 
 def handle_start_download(config, project_id, payload, known_drives, cmd_id):
