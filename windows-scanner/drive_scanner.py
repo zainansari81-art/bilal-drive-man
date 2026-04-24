@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.43.0 - BILAL DRIVE MAN
+Windows Scanner V.3.44.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.43.0'
+VERSION = '3.44.0'
 
 import os
 import sys
@@ -1295,28 +1295,87 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
     2. Monitor until all files are offline (user marks them for offline in desktop app)
     3. Once ready, auto-copy to the target external drive
     """
-    cloud_folder = payload.get('cloud_folder_path', '')
+    cloud_folder = (payload.get('cloud_folder_path') or '').strip()
     link_type = payload.get('link_type', '')
     couple_name = payload.get('couple_name', '')
     client_name = payload.get('client_name', 'Unknown')
     target_drive_label = payload.get('target_drive', '')
 
-    # Try to find the cloud folder if not explicitly provided
-    if not cloud_folder or not os.path.exists(cloud_folder):
+    # v3.44.0 — two code paths here:
+    #   (A) Resolved path is set in the payload (upstream add_to_cloud persisted
+    #       it via the cloud_folder_path write path shipped in v3.43.0). This is
+    #       the truth. If it's not on disk yet, wait up to 90s for Dropbox's
+    #       desktop client to materialize it — the "Added to my Dropbox" click
+    #       lands cloud-side in seconds but the local-tree propagation has a
+    #       10-60s typical lag. Do NOT fall through to find_cloud_folder here —
+    #       if the resolved path is correct in Supabase, a couple_name
+    #       substring match can only ever produce a worse answer.
+    #   (B) No resolved path (legacy commands enqueued before v3.43.0). Fall
+    #       through to the historical find_cloud_folder(couple_name) behavior
+    #       so older queue entries don't regress.
+    if cloud_folder:
+        if not os.path.isdir(cloud_folder):
+            # Report phase so the UI doesn't show "progress stuck at 0" during
+            # the wait.
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'downloading',
+                'phase': 'pinning',
+            })
+            wait_seconds = 90
+            poll_interval = 2
+            logging.info(
+                f"Waiting up to {wait_seconds}s for Dropbox to materialize "
+                f"'{cloud_folder}' locally..."
+            )
+            start = time.time()
+            deadline = start + wait_seconds
+            while time.time() < deadline:
+                if os.path.isdir(cloud_folder):
+                    break
+                time.sleep(poll_interval)
+            if os.path.isdir(cloud_folder):
+                elapsed = time.time() - start
+                logging.info(
+                    f"Cloud folder materialized after {elapsed:.1f}s: "
+                    f"{cloud_folder}"
+                )
+            else:
+                err = (
+                    f"Resolved cloud folder '{cloud_folder}' not yet synced "
+                    f"locally by Dropbox desktop after {wait_seconds}s. "
+                    f"Verify Dropbox desktop client is running and has pulled "
+                    f"the folder. Folder confirmed in cloud. If the folder "
+                    f"was added via the wizard's popup, Dropbox may need "
+                    f"manual intervention (tray icon \u2192 force sync, or "
+                    f"Dropbox website \u2192 right-click folder \u2192 'Make "
+                    f"available offline')."
+                )
+                logging.error(err)
+                api_request(config, 'download-progress', {
+                    'project_id': project_id,
+                    'status': 'failed',
+                    'error_message': err,
+                })
+                api_patch(config, 'download-commands', {
+                    'id': cmd_id, 'status': 'failed',
+                    'error_message': err[:500],
+                })
+                return
+    else:
+        # Legacy path — pre-v3.43.0 commands have no resolved cloud_folder_path.
         cloud_folder = find_cloud_folder(config, link_type, couple_name)
-
-    if not cloud_folder:
-        # Report that we couldn't find the folder
-        api_request(config, 'download-progress', {
-            'project_id': project_id,
-            'status': 'failed',
-            'error_message': f'Cloud folder not found for "{couple_name}". Configure cloud paths in scanner settings.',
-        })
-        api_patch(config, 'download-commands', {
-            'id': cmd_id, 'status': 'failed',
-            'error_message': 'Cloud folder not found',
-        })
-        return
+        if not cloud_folder:
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'failed',
+                'error_message': f'Cloud folder not found for "{couple_name}". Configure cloud paths in scanner settings.',
+            })
+            api_patch(config, 'download-commands', {
+                'id': cmd_id, 'status': 'failed',
+                'error_message': 'Cloud folder not found',
+            })
+            return
 
     logging.info(f"Monitoring cloud folder: {cloud_folder}")
 
