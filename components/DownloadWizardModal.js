@@ -103,6 +103,50 @@ export default function DownloadWizardModal({
     }
   }, [project]);
 
+  // Manual recheck message (e.g. user clicked "Added to Dropbox Done" but
+  // the folder isn't visible yet from Dropbox's API). Cleared on next poll.
+  const [manualCheckMessage, setManualCheckMessage] = useState(null);
+  // Used to show a brief "checking..." state while a manual recheck is
+  // in flight, so the button click feels responsive.
+  const [manualChecking, setManualChecking] = useState(false);
+
+  // Single-shot share-status fetch. Used by both the auto-poll and the
+  // user's "Added to Dropbox Done" button. Returns the parsed response so
+  // callers can branch on whether the folder is detected yet.
+  const fetchShareStatus = async () => {
+    if (!project?.id) return null;
+    try {
+      const res = await fetch(
+        `/api/dropbox-share-status?project_id=${encodeURIComponent(project.id)}&_=${Date.now()}`
+      );
+      if (!res.ok) {
+        setJoinStatus('error');
+        setJoinErrorText(`Couldn't check Dropbox status (HTTP ${res.status})`);
+        return null;
+      }
+      const data = await res.json();
+      if (data.link_type === 'other') {
+        setJoinStatus('skip');
+        return data;
+      }
+      setJoinFolderName(data.folder_name);
+      if (data.joined) {
+        setJoinStatus('joined');
+        try { popupRef?.close(); } catch (_) { /* may be cross-origin */ }
+      } else if (data.error) {
+        setJoinStatus('error');
+        setJoinErrorText(data.error);
+      } else {
+        setJoinStatus('needed');
+      }
+      return data;
+    } catch (err) {
+      setJoinStatus('error');
+      setJoinErrorText(err.message || 'Network error');
+      return null;
+    }
+  };
+
   // Cloud-join check + auto-poll. Runs on mount for the project's id, then
   // polls every 3s while the user is in the 'needed' state. Stops as soon as
   // we see joined=true (folder appears in Rafay's Dropbox after the user
@@ -110,68 +154,36 @@ export default function DownloadWizardModal({
   useEffect(() => {
     if (!project?.id) return;
     let cancelled = false;
-    let popupCheckTimer = null;
 
-    const fetchOnce = async () => {
-      try {
-        const res = await fetch(
-          `/api/dropbox-share-status?project_id=${encodeURIComponent(project.id)}`
-        );
-        if (!res.ok) {
-          // 4xx/5xx — surface as 'error' but don't block the wizard.
-          setJoinStatus('error');
-          setJoinErrorText(`Couldn't check Dropbox status (HTTP ${res.status})`);
-          return;
-        }
-        const data = await res.json();
-        if (cancelled) return;
-        if (data.link_type === 'other') {
-          setJoinStatus('skip');
-          return;
-        }
-        setJoinFolderName(data.folder_name);
-        if (data.joined) {
-          setJoinStatus('joined');
-          // Auto-close popup if it's still alive.
-          try { popupRef?.close(); } catch (_) { /* may be cross-origin */ }
-        } else if (data.error) {
-          setJoinStatus('error');
-          setJoinErrorText(data.error);
-        } else {
-          setJoinStatus('needed');
-        }
-      } catch (err) {
-        if (cancelled) return;
-        setJoinStatus('error');
-        setJoinErrorText(err.message || 'Network error');
-      }
-    };
-
-    fetchOnce();
-    // Only poll while waiting on the user. Stop once joined / error / skip.
+    fetchShareStatus();
     const interval = setInterval(() => {
       if (cancelled) return;
-      // Stale-state read: read joinStatus from a closure won't work cleanly,
-      // so just always poll — the fetchOnce above no-ops on terminal states
-      // visually. This keeps the check cheap and the logic simple.
-      fetchOnce();
+      fetchShareStatus();
     }, 3000);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
-      if (popupCheckTimer) clearInterval(popupCheckTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Stop polling once we've reached a terminal state. We do this with a
-  // separate effect so the polling effect above can stay stable on project.id.
-  useEffect(() => {
-    // No-op: state-driven render handles the terminal-state UI; the polling
-    // interval keeps running but its setState calls are idempotent (joined
-    // stays joined). Cheap relative to what's already happening server-side.
-  }, [joinStatus]);
+  // Manual "Added to Dropbox Done" handler. Forces a fresh check; if the
+  // folder still isn't detected, surface a friendly nudge so the user knows
+  // to wait a beat (Dropbox's web action sometimes takes a few seconds to
+  // propagate to the API).
+  const handleConfirmAdded = async () => {
+    setManualChecking(true);
+    setManualCheckMessage(null);
+    const data = await fetchShareStatus();
+    setManualChecking(false);
+    if (data && data.joined) return; // wizard auto-advances via inJoinPhase flip
+    if (data && !data.joined) {
+      setManualCheckMessage(
+        "Folder not detected yet. Give it a few seconds (Dropbox can be slow), then click again."
+      );
+    }
+  };
 
   const handleOpenDropbox = () => {
     if (!project?.download_link) return;
@@ -323,6 +335,37 @@ export default function DownloadWizardModal({
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, padding: '10px 12px', borderRadius: 8, background: '#fff7e0', border: '1px solid #f1d57a' }}>
                       <span style={{ fontSize: 13, color: '#5a4500' }}>
                         Waiting for you to click <strong>"Add to my Dropbox"</strong>...
+                      </span>
+                    </div>
+                  )}
+                  {/* Manual confirm button — for users who'd rather click
+                      to advance than wait for the 3s auto-poll, or when
+                      Dropbox's API is slow to reflect the add. Forces an
+                      immediate share-status recheck. */}
+                  <button
+                    type="button"
+                    onClick={handleConfirmAdded}
+                    disabled={manualChecking}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid #c8e600',
+                      background: manualChecking ? '#f0f5cd' : '#c8e600',
+                      color: '#1a1a2e',
+                      cursor: manualChecking ? 'wait' : 'pointer',
+                      fontFamily: 'inherit',
+                      fontWeight: 700,
+                      fontSize: 14,
+                      transition: 'all 0.12s',
+                      marginTop: 4,
+                    }}
+                  >
+                    {manualChecking ? 'Checking...' : '\u2705 Added to Dropbox \u2014 Done'}
+                  </button>
+                  {manualCheckMessage && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, background: '#eef3ff', border: '1px solid #b9c8ed' }}>
+                      <span style={{ fontSize: 12, color: '#1f3a78' }}>
+                        {manualCheckMessage}
                       </span>
                     </div>
                   )}
