@@ -1039,11 +1039,17 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     if not source_path or not os.path.exists(source_path):
         raise Exception(f"Source path not found: {source_path}")
 
-    # Find target drive
+    # Find target drive.
+    # Note: drive['letter'] is stored WITH the trailing colon (e.g. "D:") in
+    # get_external_drives, so constructing f"{drive['letter']}:\\" yields
+    # "D::\\" which Windows rejects with WinError 123. Strip any trailing
+    # colon before adding the path separator so we produce "D:\\" regardless
+    # of how the letter was captured.
     target_path = None
     for label, drive in known_drives.items():
         if label == target_drive_label:
-            target_path = f"{drive['letter']}:\\"
+            letter = drive['letter'].rstrip(':')
+            target_path = f"{letter}:\\"
             break
 
     if not target_path:
