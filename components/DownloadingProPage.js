@@ -7,6 +7,11 @@ import LoadingAnimation from './LoadingAnimation';
 export default function DownloadingProPage({ drives }) {
   const [projects, setProjects] = useState([]);
   const [machines, setMachines] = useState([]);
+  // Gap 1 — list of cloud_accounts rows, fed to the Download wizard as an
+  // optional "pick which account receives this download" picker. Null/empty
+  // on this machine means the wizard hides the picker and the backend falls
+  // back to the PC's default cloud path (today's behavior).
+  const [cloudAccounts, setCloudAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
@@ -28,6 +33,19 @@ export default function DownloadingProPage({ drives }) {
         setMachines(data || []);
       }
     } catch (err) { /* silent */ }
+  }, []);
+
+  const fetchCloudAccounts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/cloud-accounts');
+      if (res.ok) {
+        const data = await res.json();
+        // Accept either { accounts: [...] } or a bare array for
+        // compatibility with the existing /api/cloud-accounts shape.
+        const rows = Array.isArray(data) ? data : data.accounts || [];
+        setCloudAccounts(rows.filter(a => a.is_active !== false));
+      }
+    } catch (err) { /* silent — picker stays hidden if this fails */ }
   }, []);
 
   const fetchProjects = useCallback(async () => {
@@ -62,14 +80,21 @@ export default function DownloadingProPage({ drives }) {
   useEffect(() => {
     fetchProjects();
     fetchMachines();
+    fetchCloudAccounts();
     // Sync from Notion on first load
     autoSync();
     // Refresh project list every 10s, sync from Notion every 5min, machines every 30s
     const refreshInterval = setInterval(fetchProjects, 10000);
     const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
     const machineInterval = setInterval(fetchMachines, 30000);
-    return () => { clearInterval(refreshInterval); clearInterval(syncInterval); clearInterval(machineInterval); };
-  }, [fetchProjects, autoSync, fetchMachines]);
+    const cloudInterval = setInterval(fetchCloudAccounts, 60 * 1000);
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(syncInterval);
+      clearInterval(machineInterval);
+      clearInterval(cloudInterval);
+    };
+  }, [fetchProjects, autoSync, fetchMachines, fetchCloudAccounts]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -130,14 +155,18 @@ export default function DownloadingProPage({ drives }) {
     handleAction(project.id, 'download_now');
   };
 
-  const handleWizardSubmit = async ({ assigned_machine, target_drive }) => {
+  const handleWizardSubmit = async ({ assigned_machine, target_drive, cloud_account_id }) => {
     if (!wizardProject) return;
     const pid = wizardProject.id;
     const name = wizardProject.couple_name || 'Project';
     setWizardProject(null);
     // Kick off the magic animation and fire the download in parallel.
     setMagicProjectName(name);
-    await handleAction(pid, 'download_now', { assigned_machine, target_drive });
+    // cloud_account_id is optional; null/undefined means "use PC's default
+    // cloud path" (today's behavior).
+    const payload = { assigned_machine, target_drive };
+    if (cloud_account_id) payload.cloud_account_id = cloud_account_id;
+    await handleAction(pid, 'download_now', payload);
   };
 
   // Stats
@@ -295,6 +324,7 @@ export default function DownloadingProPage({ drives }) {
           project={wizardProject}
           machines={machines}
           drives={drives}
+          cloudAccounts={cloudAccounts}
           onClose={() => setWizardProject(null)}
           onSubmit={handleWizardSubmit}
         />
@@ -449,7 +479,17 @@ function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadCl
           )}
           {downloadStatus === 'paused' && (
             <>
-              <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'resume')}>Resume</button>
+              {/* Gap 3 — document that already-synced files are skipped on resume.
+                  No partial byte checkpointing: Dropbox/GDrive desktop clients
+                  resume at the filesystem level, so the UI counter resetting
+                  to zero is cosmetic, not actual work lost. */}
+              <button
+                className="dp-list-action-btn primary"
+                onClick={() => onAction(projectId, 'resume')}
+                title="Resuming — already-synced files will skip."
+              >
+                Resume
+              </button>
               <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
             </>
           )}

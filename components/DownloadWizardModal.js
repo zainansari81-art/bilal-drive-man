@@ -9,13 +9,36 @@ import { formatSize } from '../lib/format';
  * Step 2: Target drive (optional — Skip = sync to the PC's cloud folder only,
  *         user can copy to a drive later).
  */
-export default function DownloadWizardModal({ project, machines, drives, onClose, onSubmit }) {
+export default function DownloadWizardModal({
+  project,
+  machines,
+  drives,
+  cloudAccounts,
+  onClose,
+  onSubmit,
+}) {
   const [step, setStep] = useState(1);
   const [machine, setMachine] = useState(project?.assigned_machine || '');
   const [drive, setDrive] = useState(project?.target_drive || '');
+  // Gap 1 — optional cloud account selection. null = "use PC's default cloud
+  // path" (today's behavior). A UUID = route to a specific cloud_accounts row.
+  // Starts from whatever the project already had so re-opening the wizard for
+  // a project with a prior pick doesn't silently drop it.
+  const [cloudAccountId, setCloudAccountId] = useState(
+    project?.cloud_account_id || null
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const connectedDrives = (drives || []).filter((d) => d.connected);
+
+  // Only show cloud accounts matching this project's link_type — routing a
+  // dropbox project to a Google Drive account is nonsensical.
+  const relevantCloudAccounts = (cloudAccounts || []).filter((a) => {
+    if (!a || a.is_active === false) return false;
+    if (!project?.link_type) return false;
+    return a.account_type === project.link_type;
+  });
+  const showCloudPicker = relevantCloudAccounts.length > 0;
 
   // Parse the "Size in Gbs" Notion string into bytes for disk-space checks.
   // Accepts "50", "50 GB", "50GB", "500 MB", "1.2 TB". Returns null on junk.
@@ -78,6 +101,7 @@ export default function DownloadWizardModal({ project, machines, drives, onClose
       await onSubmit({
         assigned_machine: machine,
         target_drive: skipDrive ? '' : drive,
+        cloud_account_id: cloudAccountId,
       });
     } finally {
       setSubmitting(false);
@@ -244,6 +268,84 @@ export default function DownloadWizardModal({ project, machines, drives, onClose
                 </div>
               )}
             </div>
+
+            {/* Gap 1 — optional cloud account picker. Only rendered when the
+                studio has seeded accounts matching this project's link_type.
+                When hidden (or when "Auto" is picked) the backend passes null
+                for cloud_account_id and the scanner falls back to the PC's
+                single configured cloud path — i.e. today's behavior. */}
+            {showCloudPicker && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#1a1a2e', marginBottom: 6 }}>
+                  Cloud account {'\u00b7'} <span style={{ fontWeight: 400, color: '#8c8ca1' }}>optional</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setCloudAccountId(null)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: `1px solid ${cloudAccountId === null ? '#c8e600' : '#e5e7eb'}`,
+                      background: cloudAccountId === null ? '#f7fce0' : '#fff',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      textAlign: 'left',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>
+                        Auto {'('}PC default{')'}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 2 }}>
+                        Use whichever cloud folder this PC is configured for
+                      </div>
+                    </div>
+                    {cloudAccountId === null && (
+                      <span style={{ color: '#1a1a2e', fontWeight: 700 }}>{'\u2713'}</span>
+                    )}
+                  </button>
+                  {relevantCloudAccounts.map((a) => {
+                    const selected = cloudAccountId === a.id;
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setCloudAccountId(a.id)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          border: `1px solid ${selected ? '#c8e600' : '#e5e7eb'}`,
+                          background: selected ? '#f7fce0' : '#fff',
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
+                          textAlign: 'left',
+                          transition: 'all 0.12s',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#1a1a2e' }}>
+                            {a.account_name || a.email || 'Unnamed account'}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 2 }}>
+                            {a.account_type === 'dropbox' ? 'Dropbox' : 'Google Drive'}
+                            {a.email ? ` \u00b7 ${a.email}` : ''}
+                          </div>
+                        </div>
+                        {selected && <span style={{ color: '#1a1a2e', fontWeight: 700 }}>{'\u2713'}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="delete-modal-actions" style={{ justifyContent: 'space-between' }}>
               <button

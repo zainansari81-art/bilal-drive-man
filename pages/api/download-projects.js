@@ -16,7 +16,24 @@ function detectLinkType(url) {
   if (!url) return 'unknown';
   if (url.includes('dropbox.com')) return 'dropbox';
   if (url.includes('drive.google.com')) return 'google_drive';
+  if (url.includes('we.tl') || url.includes('wetransfer.com')) return 'wetransfer';
   return 'unknown';
+}
+
+// Gap 2 — WeTransfer links are detected + shown in the UI but not yet
+// supported end-to-end (no scanner handler). Any action that would enqueue
+// scanner commands for a wetransfer project must block at this boundary so
+// we don't strand commands or mark the project with an inaccurate status.
+const WETRANSFER_NOT_IMPLEMENTED = {
+  error: 'WETRANSFER_NOT_IMPLEMENTED',
+  message: 'WeTransfer downloads not yet implemented',
+};
+function isWetransferProject(project) {
+  if (!project) return false;
+  if (project.link_type === 'wetransfer') return true;
+  // Defensive fallback in case an older row was saved before the sync-side
+  // detector was consistent — detect straight off the link.
+  return detectLinkType(project.download_link) === 'wetransfer';
 }
 
 export default requireAuth(async function handler(req, res) {
@@ -124,9 +141,30 @@ export default requireAuth(async function handler(req, res) {
             ? sanitizeString(req.body.target_drive)
             : null;
 
+        // Gap 1 — optional cloud account override from the wizard. Null/empty
+        // means "use the PC's default cloud path" (today's behavior). A UUID
+        // means "route this download to a specific cloud_accounts row".
+        // The scanner-side lookup is additive and ships later; until then,
+        // scanner ignores the payload field and the ID is just persisted.
+        let overrideCloudAccountId = null;
+        if (typeof req.body.cloud_account_id === 'string') {
+          const raw = req.body.cloud_account_id.trim();
+          if (raw === '') {
+            overrideCloudAccountId = null;
+          } else if (/^[a-f0-9-]{36}$/i.test(raw)) {
+            overrideCloudAccountId = raw;
+          } else {
+            return res.status(400).json({ error: 'Invalid cloud_account_id' });
+          }
+        }
+
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
         if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        if (isWetransferProject(project)) {
+          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
+        }
 
         const machineToUse = overrideMachine || project.assigned_machine;
         if (!machineToUse) {
@@ -141,6 +179,13 @@ export default requireAuth(async function handler(req, res) {
         const driveToUse =
           overrideDrive !== null ? overrideDrive : project.target_drive || '';
 
+        // The ID that will travel with scanner commands below. If the caller
+        // didn't pass one, fall back to whatever the project already had.
+        const cloudAccountIdToUse =
+          overrideCloudAccountId !== null
+            ? overrideCloudAccountId
+            : project.cloud_account_id || null;
+
         // Persist overrides + flip status + clear queue slot
         const updatePayload = {
           download_status: 'downloading',
@@ -148,6 +193,9 @@ export default requireAuth(async function handler(req, res) {
           assigned_machine: machineToUse,
         };
         if (overrideDrive !== null) updatePayload.target_drive = driveToUse;
+        if (overrideCloudAccountId !== null) {
+          updatePayload.cloud_account_id = overrideCloudAccountId;
+        }
 
         const updated = await supabasePatch(
           `download_projects?id=eq.${pid}`,
@@ -201,6 +249,7 @@ export default requireAuth(async function handler(req, res) {
               download_link: project.download_link,
               link_type: project.link_type,
               couple_name: project.couple_name || '',
+              cloud_account_id: cloudAccountIdToUse,
             },
             status: 'pending',
           });
@@ -221,6 +270,7 @@ export default requireAuth(async function handler(req, res) {
             couple_name: project.couple_name || '',
             client_name: project.client_name || 'Unknown',
             target_drive: driveToUse,
+            cloud_account_id: cloudAccountIdToUse,
           },
           status: 'pending',
         });
@@ -262,6 +312,11 @@ export default requireAuth(async function handler(req, res) {
 
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
+
+        if (isWetransferProject(project)) {
+          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
+        }
+
         if (project && project.assigned_machine) {
           await supabasePost('download_commands', {
             machine_name: project.assigned_machine,
@@ -273,6 +328,7 @@ export default requireAuth(async function handler(req, res) {
               couple_name: project.couple_name || '',
               client_name: project.client_name || 'Unknown',
               target_drive: project.target_drive || '',
+              cloud_account_id: project.cloud_account_id || null,
             },
             status: 'pending',
           });
@@ -411,6 +467,10 @@ export default requireAuth(async function handler(req, res) {
         if (!project) return res.status(404).json({ error: 'Project not found' });
         if (!project.assigned_machine) return res.status(400).json({ error: 'No machine assigned' });
 
+        if (isWetransferProject(project)) {
+          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
+        }
+
         // Update status to downloading
         await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'downloading',
@@ -428,6 +488,7 @@ export default requireAuth(async function handler(req, res) {
               download_link: project.download_link,
               link_type: project.link_type,
               couple_name: project.couple_name || '',
+              cloud_account_id: project.cloud_account_id || null,
             },
             status: 'pending',
           });
@@ -444,6 +505,7 @@ export default requireAuth(async function handler(req, res) {
             couple_name: project.couple_name || '',
             client_name: project.client_name || 'Unknown',
             target_drive: project.target_drive || '',
+            cloud_account_id: project.cloud_account_id || null,
           },
           status: 'pending',
         });
