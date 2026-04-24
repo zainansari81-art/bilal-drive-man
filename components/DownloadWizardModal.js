@@ -110,18 +110,30 @@ export default function DownloadWizardModal({
   // in flight, so the button click feels responsive.
   const [manualChecking, setManualChecking] = useState(false);
 
-  // Single-shot share-status fetch. Used by both the auto-poll and the
-  // user's "Added to Dropbox Done" button. Returns the parsed response so
-  // callers can branch on whether the folder is detected yet.
+  // Single-shot share-status fetch. Routes to the right backend endpoint
+  // based on project.link_type. Used by both the auto-poll and the user's
+  // "Added to Dropbox Done" button. Returns the parsed response so callers
+  // can branch on whether the folder is detected yet.
+  //
+  // Dropbox: API can't auto-add to user's Dropbox, so wizard shows a popup
+  //   for the user to click "Add to my Dropbox" manually. Polls until the
+  //   API detects the folder in user's tree.
+  // Google Drive: scanner uses direct-download via Drive API (no Drive
+  //   desktop client involvement). joined=true means our app's OAuth token
+  //   can READ the share — proceed straight to PC/drive picker. joined=false
+  //   means access is denied (link permissions), which is an error state,
+  //   not a "click to add" state.
   const fetchShareStatus = async () => {
     if (!project?.id) return null;
+    const isGDrive = project?.link_type === 'google_drive';
+    const endpoint = isGDrive ? 'gdrive-share-status' : 'dropbox-share-status';
     try {
       const res = await fetch(
-        `/api/dropbox-share-status?project_id=${encodeURIComponent(project.id)}&_=${Date.now()}`
+        `/api/${endpoint}?project_id=${encodeURIComponent(project.id)}&_=${Date.now()}`
       );
       if (!res.ok) {
         setJoinStatus('error');
-        setJoinErrorText(`Couldn't check Dropbox status (HTTP ${res.status})`);
+        setJoinErrorText(`Couldn't check share status (HTTP ${res.status})`);
         return null;
       }
       const data = await res.json();
@@ -129,10 +141,22 @@ export default function DownloadWizardModal({
         setJoinStatus('skip');
         return data;
       }
-      setJoinFolderName(data.folder_name);
+      // Backend response shapes:
+      //   Dropbox: { joined, folder_name, ... }
+      //   Google Drive: { joined, name (file/folder name), mime_type, ... }
+      setJoinFolderName(data.folder_name || data.name || null);
       if (data.joined) {
         setJoinStatus('joined');
         try { popupRef?.close(); } catch (_) { /* may be cross-origin */ }
+      } else if (isGDrive) {
+        // Google Drive: joined=false means access denied. There's no manual
+        // "Add to Drive" action that fixes this — the share itself needs to
+        // grant access. Surface as an error with a clear message.
+        setJoinStatus('error');
+        setJoinErrorText(
+          data.error ||
+            "We can't access this Drive item. Make sure the share link is set to 'Anyone with the link can view'."
+        );
       } else if (data.error) {
         setJoinStatus('error');
         setJoinErrorText(data.error);
