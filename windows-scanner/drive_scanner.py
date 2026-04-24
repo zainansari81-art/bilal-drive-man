@@ -350,16 +350,61 @@ def is_file_offline(filepath):
 
 
 def pin_file_offline(filepath):
-    """Pin a cloud file for offline access (forces download from cloud)."""
+    """Pin a cloud file for offline access (forces download from cloud).
+
+    Two-step fallback strategy:
+    1. SetFileAttributesW with FILE_ATTRIBUTE_PINNED — works on legacy
+       Dropbox Smart Sync placeholders and on OneDrive's older sync model.
+    2. If that didn't clear RECALL_ON_DATA_ACCESS after a short wait, force
+       hydration by opening the file and reading a single byte. This
+       triggers the Windows Cloud Files Provider RECALL flow used by
+       modern Dropbox + OneDrive + iCloud placeholders, where the PINNED
+       attribute is silently ignored by the provider. The read blocks
+       until the file is fully materialized locally.
+
+    A proper fix is CfSetPinState from cfapi.h — deferred; the 1-byte-read
+    workaround is sufficient for wedding-photo workloads and doesn't add
+    a cfapi DLL dependency.
+
+    Returns True if pin attempt completed (attribute-set OR read triggered
+    without error), False on hard failure.
+    """
     try:
-        # Get current attributes
+        # Step 1: try the attribute-set path first. Cheap, no I/O if it works.
         attrs = ctypes.windll.kernel32.GetFileAttributesW(filepath)
         if attrs == -1:
             return False
-        # Set PINNED attribute (forces offline), remove UNPINNED if set
         new_attrs = (attrs | FILE_ATTRIBUTE_PINNED) & ~FILE_ATTRIBUTE_UNPINNED
-        result = ctypes.windll.kernel32.SetFileAttributesW(filepath, new_attrs)
-        return bool(result)
+        ctypes.windll.kernel32.SetFileAttributesW(filepath, new_attrs)
+
+        # Only do the expensive read-to-trigger fallback on regular files —
+        # directories don't hydrate, and attempting to OpenRead them raises.
+        if os.path.isdir(filepath):
+            return True
+
+        # Step 2: check whether the attribute-set actually dropped the RECALL
+        # bit. On Cloud Files Provider items it won't, and we need to force
+        # hydration ourselves.
+        attrs_after = ctypes.windll.kernel32.GetFileAttributesW(filepath)
+        if attrs_after != -1 and not (attrs_after & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS):
+            return True  # Already offline-material — nothing else to do.
+
+        # The read is blocking for the duration of the cloud fetch, which for
+        # a multi-GB file can be many minutes. That's the whole point — we
+        # want the scanner's subsequent check_folder_offline_status poll to
+        # actually see files hydrated instead of spinning forever against a
+        # placeholder tree. Use a short read; Dropbox/OneDrive/iCloud all
+        # hydrate the full file on any read, not just the range read.
+        try:
+            with open(filepath, 'rb') as f:
+                f.read(1)
+            logging.info(f"Hydrated via 1-byte read: {filepath}")
+        except (OSError, PermissionError) as read_err:
+            logging.warning(
+                f"Hydration read failed for {filepath}: {read_err}"
+            )
+            return False
+        return True
     except Exception as e:
         logging.error(f"Failed to pin file {filepath}: {e}")
         return False
