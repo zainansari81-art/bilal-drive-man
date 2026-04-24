@@ -20,19 +20,15 @@ function detectLinkType(url) {
   return 'unknown';
 }
 
-// Gap 2 — WeTransfer links are detected + shown in the UI but not yet
-// supported end-to-end (no scanner handler). Any action that would enqueue
-// scanner commands for a wetransfer project must block at this boundary so
-// we don't strand commands or mark the project with an inaccurate status.
-const WETRANSFER_NOT_IMPLEMENTED = {
-  error: 'WETRANSFER_NOT_IMPLEMENTED',
-  message: 'WeTransfer downloads not yet implemented',
-};
+// WeTransfer projects are now supported via the same direct-download pattern
+// as Google Drive 3.46.0 (per-file download to staging, then copy_to_drive).
+// The scanner's add_to_cloud handler resolves the we.tl/wetransfer.com share
+// into a list of files and downloads them one-by-one (no zip — zip fails
+// mid-transfer for big sets). isWetransferProject is kept for any place we
+// need to dispatch on link_type.
 function isWetransferProject(project) {
   if (!project) return false;
   if (project.link_type === 'wetransfer') return true;
-  // Defensive fallback in case an older row was saved before the sync-side
-  // detector was consistent — detect straight off the link.
   return detectLinkType(project.download_link) === 'wetransfer';
 }
 
@@ -162,10 +158,6 @@ export default requireAuth(async function handler(req, res) {
         const project = projects && projects[0];
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
-        if (isWetransferProject(project)) {
-          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
-        }
-
         const machineToUse = overrideMachine || project.assigned_machine;
         if (!machineToUse) {
           return res.status(400).json({
@@ -206,13 +198,16 @@ export default requireAuth(async function handler(req, res) {
         // revert us back to "Not Downloaded".
         syncNotionStatus(project.notion_page_id, 'downloading');
 
-        // For Dropbox / Google Drive shared links, the scanner must first add
-        // the link to the user's cloud account so the desktop app syncs it.
-        // For direct links (wetransfer etc) we skip this and go straight to
-        // start_download.
+        // For Dropbox / Google Drive / WeTransfer, the scanner's add_to_cloud
+        // step does the share resolution + (for Dropbox) cloud mount. For
+        // GDrive/WeTransfer it lists files and stages them locally (no cloud
+        // sync involved). All three need the add_to_cloud command before
+        // start_download can run.
         let needsCloudAdd =
           project.download_link &&
-          (project.link_type === 'dropbox' || project.link_type === 'google_drive');
+          (project.link_type === 'dropbox' ||
+            project.link_type === 'google_drive' ||
+            project.link_type === 'wetransfer');
 
         // Duplicate-link dedupe: if another project sharing this download_link
         // is already active on the same machine, the cloud mount is either
@@ -312,10 +307,6 @@ export default requireAuth(async function handler(req, res) {
 
         const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
         const project = projects && projects[0];
-
-        if (isWetransferProject(project)) {
-          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
-        }
 
         if (project && project.assigned_machine) {
           await supabasePost('download_commands', {
@@ -467,10 +458,6 @@ export default requireAuth(async function handler(req, res) {
         if (!project) return res.status(404).json({ error: 'Project not found' });
         if (!project.assigned_machine) return res.status(400).json({ error: 'No machine assigned' });
 
-        if (isWetransferProject(project)) {
-          return res.status(400).json(WETRANSFER_NOT_IMPLEMENTED);
-        }
-
         // Update status to downloading
         await supabasePatch(`download_projects?id=eq.${pid}`, {
           download_status: 'downloading',
@@ -479,7 +466,12 @@ export default requireAuth(async function handler(req, res) {
         syncNotionStatus(project.notion_page_id, 'downloading');
 
         // Step 1: Send add_to_cloud command (adds shared link to user's cloud account)
-        if (project.download_link && (project.link_type === 'dropbox' || project.link_type === 'google_drive')) {
+        if (
+          project.download_link &&
+          (project.link_type === 'dropbox' ||
+            project.link_type === 'google_drive' ||
+            project.link_type === 'wetransfer')
+        ) {
           await supabasePost('download_commands', {
             machine_name: project.assigned_machine,
             command: 'add_to_cloud',
