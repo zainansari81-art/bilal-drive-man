@@ -1288,10 +1288,18 @@ body {
 /* Page transition - fade + slide up */
 @keyframes pageIn {
   from { opacity: 0; transform: translateY(24px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 1; transform: none; }
 }
 
 .page-transition {
+  /* CRITICAL: keyframe `to` MUST be `transform: none`, NOT
+     `transform: translateY(0) scale(1)`. Even an identity transform
+     creates a containing block for descendants, which breaks
+     `position: fixed` on modal overlays (DownloadWizardModal,
+     DownloadMagicAnimation, etc.) — they end up positioned relative to
+     this element's full scroll height instead of the viewport and
+     render off-screen. `forwards` is fine here because the final state
+     has no transform, so no containing block. */
   animation: pageIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
