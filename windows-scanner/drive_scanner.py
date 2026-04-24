@@ -984,18 +984,42 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
             })
             return
 
-        # Report success
-        api_request(config, 'download-progress', {
+        # Report success — also persist the resolved cloud folder's full local
+        # path on the project row so start_download can locate the folder
+        # directly without having to re-derive it via the fragile couple_name
+        # substring match in find_cloud_folder. We write an absolute path
+        # (e.g., C:\Users\txbla\Dropbox\ZAINN testing) rather than just the
+        # folder name, because start_download checks os.path.exists() on the
+        # value before falling back.
+        progress_body = {
             'project_id': project_id,
             'status': 'downloading',
             'phase': 'pinning',
-        })
+        }
+        base = ''
+        if link_type == 'dropbox':
+            base = config.get('dropbox_path', '')
+        elif link_type == 'google_drive':
+            base = config.get('gdrive_path', '')
+        if folder_name and base:
+            progress_body['cloud_folder_path'] = os.path.join(base, folder_name)
+        api_request(config, 'download-progress', progress_body)
 
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'completed',
         })
 
-        logging.info(f"Added to cloud: {folder_name or couple_name} ({link_type})")
+        if progress_body.get('cloud_folder_path'):
+            logging.info(
+                f"Added to cloud and persisted cloud_folder_path: "
+                f"'{progress_body['cloud_folder_path']}' ({link_type})"
+            )
+        else:
+            logging.info(
+                f"Added to cloud: {couple_name} ({link_type}) — "
+                f"no cloud_folder_path persisted "
+                f"(folder_name={folder_name!r}, base_configured={bool(base)})"
+            )
 
     except Exception as e:
         logging.error(f"Add to cloud failed: {e}")

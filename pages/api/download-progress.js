@@ -9,7 +9,7 @@ export default requireApiKey(async function handler(req, res) {
   }
 
   try {
-    const { project_id, progress_bytes, status, error_message, phase } = req.body;
+    const { project_id, progress_bytes, status, error_message, phase, cloud_folder_path } = req.body;
     if (!project_id) {
       return res.status(400).json({ error: 'Missing required field: project_id' });
     }
@@ -23,6 +23,13 @@ export default requireApiKey(async function handler(req, res) {
     }
     if (error_message) {
       updateBody.error_message = sanitizeString(error_message, 1024);
+    }
+    // Scanner records the resolved cloud folder name here right after
+    // add_to_cloud succeeds. start_download then reads cloud_folder_path from
+    // the project row rather than having to re-derive it via the fragile
+    // couple_name substring match in find_cloud_folder.
+    if (typeof cloud_folder_path === 'string' && cloud_folder_path.length > 0) {
+      updateBody.cloud_folder_path = sanitizeString(cloud_folder_path, 500);
     }
     // Sub-phase within downloading/copying. Scanner sends 'pinning' | 'syncing'
     // | 'copying' | '' (to clear). Anything else is silently dropped.
@@ -56,6 +63,34 @@ export default requireApiKey(async function handler(req, res) {
     }
 
     const updated = await supabasePatch(`download_projects?id=eq.${project_id}`, updateBody);
+
+    // Race-guard: when scanner tells us the resolved cloud_folder_path in the
+    // same call that completes add_to_cloud, the start_download command that
+    // was enqueued alongside already has a stale (empty) cloud_folder_path in
+    // its payload JSON. Backfill it on any still-pending or acked
+    // start_download for this project so the scanner reads the correct path
+    // when it picks the command up.
+    if (updateBody.cloud_folder_path) {
+      try {
+        const pending = await supabaseFetch(
+          `download_commands?project_id=eq.${project_id}` +
+            `&command=eq.start_download` +
+            `&status=in.(pending,acked)` +
+            `&select=id,payload`
+        );
+        for (const cmd of pending || []) {
+          const mergedPayload = { ...(cmd.payload || {}), cloud_folder_path: updateBody.cloud_folder_path };
+          try {
+            await supabasePatch(`download_commands?id=eq.${cmd.id}`, { payload: mergedPayload });
+          } catch (patchErr) {
+            console.error(`Failed to backfill cloud_folder_path on command ${cmd.id}:`, patchErr.message);
+          }
+        }
+      } catch (fetchErr) {
+        // Non-fatal — scanner can still fall back to find_cloud_folder on couple_name.
+        console.error('Backfill of start_download payloads failed:', fetchErr.message);
+      }
+    }
 
     // Push scanner-reported status up to Notion — but only when the status
     // actually changed. The scanner hits this endpoint every 30s during sync
