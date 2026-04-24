@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.41.0'
+VERSION = '3.42.0'
 
 import os
 import sys
@@ -606,33 +606,57 @@ def add_dropbox_shared_folder(access_token, shared_link):
         logging.error(f"Dropbox metadata error: {e.code} {err}")
         raise Exception(f"Failed to get Dropbox link info: {err}")
 
-    # If it's a shared folder, mount it
+    # If it's a shared folder, mount it.
+    # Graceful-degradation (v3.42.0): scl-era shared links can point to folders
+    # the calling account already owns — those come back from
+    # get_shared_link_metadata without a `shared_folder_id` field, because
+    # nothing needs to be "mounted" (the folder is already in the user's
+    # namespace). In that case we treat add_to_cloud as a no-op success and let
+    # downstream start_download locate the folder via find_cloud_folder. We do
+    # NOT fall back to meta['id'] — that's a file-item id, not a
+    # shared_folder_id, and Dropbox correctly rejects it with invalid_id.
     if meta.get('.tag') == 'folder':
-        shared_folder_id = meta.get('shared_folder_id') or meta.get('id', '').replace('id:', '')
+        shared_folder_id = meta.get('shared_folder_id')
+        folder_name_hint = meta.get('name', 'Unknown')
 
-        if shared_folder_id:
-            mount_body = json.dumps({'shared_folder_id': shared_folder_id}).encode('utf-8')
-            mount_req = urllib.request.Request(
-                'https://api.dropboxapi.com/2/sharing/mount_folder',
-                data=mount_body, method='POST'
+        if not shared_folder_id:
+            logging.info(
+                f"Dropbox share '{folder_name_hint}' is already in the user's "
+                f"namespace (no shared_folder_id in metadata); skipping mount."
             )
-            for k, v in headers.items():
-                mount_req.add_header(k, v)
+            return folder_name_hint
 
-            try:
-                with urllib.request.urlopen(mount_req, timeout=30) as resp:
-                    result = json.loads(resp.read().decode())
-                    folder_name = result.get('name', meta.get('name', 'Unknown'))
-                    logging.info(f"Mounted Dropbox folder: {folder_name}")
-                    return folder_name
-            except urllib.error.HTTPError as e:
-                err = e.read().decode() if e.fp else ''
-                # already_mounted is OK
-                if 'already_mounted' in err:
-                    logging.info(f"Dropbox folder already mounted: {meta.get('name', '')}")
-                    return meta.get('name', 'Unknown')
-                logging.error(f"Dropbox mount error: {err}")
-                raise Exception(f"Failed to mount Dropbox folder: {err}")
+        mount_body = json.dumps({'shared_folder_id': shared_folder_id}).encode('utf-8')
+        mount_req = urllib.request.Request(
+            'https://api.dropboxapi.com/2/sharing/mount_folder',
+            data=mount_body, method='POST'
+        )
+        for k, v in headers.items():
+            mount_req.add_header(k, v)
+
+        try:
+            with urllib.request.urlopen(mount_req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                folder_name = result.get('name', folder_name_hint)
+                logging.info(f"Mounted Dropbox folder: {folder_name}")
+                return folder_name
+        except urllib.error.HTTPError as e:
+            err = e.read().decode() if e.fp else ''
+            # These error tags all mean "folder's already there / nothing to do";
+            # treat as soft success so start_download can proceed.
+            if (
+                'already_mounted' in err
+                or 'invalid_id' in err
+                or 'access_error' in err
+            ):
+                logging.warning(
+                    f"Dropbox mount_folder soft-failed for '{folder_name_hint}' "
+                    f"({err.strip()[:200]}); treating as already in namespace."
+                )
+                return folder_name_hint
+            # Anything else (auth, network, rate limits, etc) is real — surface it.
+            logging.error(f"Dropbox mount error: {err}")
+            raise Exception(f"Failed to mount Dropbox folder: {err}")
 
     # If it's a file, save it to the account
     save_body = json.dumps({
