@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.44.0 - BILAL DRIVE MAN
+Windows Scanner V.3.45.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.44.0'
+VERSION = '3.45.0'
 
 import os
 import sys
@@ -1059,6 +1059,65 @@ def format_size(size_bytes):
 
 import shutil
 
+# ─── Handler registry (v3.45.0) ─────────────────────────────────────────────
+#
+# v3.45.0 gap-fix #1 (dedupe concurrent handlers) + gap-fix #9 (cooperative
+# cancellation). Keyed on (project_id, command) per Mac-Claude's note: two
+# different commands for the same project (e.g. add_to_cloud + start_download
+# enqueued back-to-back) are *legitimate* concurrency. Only same-(project,
+# command) pairs are the racing case observed in the 2026-04-25 E2E (two
+# start_download threads racing on copy_to_drive, WinError 32 on file lock).
+#
+# Cancel events are keyed on project_id only (cancel applies to every handler
+# touching that project). The event is lazily created on first handler register
+# and cleared once no handler for that project is active.
+_HANDLER_LOCK = threading.Lock()
+_ACTIVE_HANDLERS = set()        # {(project_id, command)} currently running
+_CANCEL_EVENTS = {}             # {project_id: threading.Event}
+
+
+def _register_handler(project_id, command):
+    """Atomically claim a (project_id, command) slot.
+
+    Returns (True, cancel_event) if this is the first handler for the pair —
+    caller MUST call _unregister_handler when finished.
+    Returns (False, None) if another thread is already handling the same pair.
+    """
+    with _HANDLER_LOCK:
+        key = (project_id, command)
+        if key in _ACTIVE_HANDLERS:
+            return False, None
+        _ACTIVE_HANDLERS.add(key)
+        evt = _CANCEL_EVENTS.get(project_id)
+        if evt is None:
+            evt = threading.Event()
+            _CANCEL_EVENTS[project_id] = evt
+        return True, evt
+
+
+def _unregister_handler(project_id, command):
+    with _HANDLER_LOCK:
+        _ACTIVE_HANDLERS.discard((project_id, command))
+        # Reclaim the cancel event once no handler for this project is left.
+        still_active = any(k[0] == project_id for k in _ACTIVE_HANDLERS)
+        if not still_active:
+            _CANCEL_EVENTS.pop(project_id, None)
+
+
+def _signal_cancel(project_id):
+    """Set the cancel event for a project (if any handler is running)."""
+    with _HANDLER_LOCK:
+        evt = _CANCEL_EVENTS.get(project_id)
+    if evt is not None:
+        evt.set()
+
+
+def _get_cancel_event(project_id):
+    """Fetch the current cancel event for a project, or None if not tracked."""
+    with _HANDLER_LOCK:
+        return _CANCEL_EVENTS.get(project_id)
+
+
 def poll_download_commands(config, known_drives):
     """Check for pending download commands from the dashboard."""
     machine = get_machine_name()
@@ -1080,18 +1139,36 @@ def poll_download_commands(config, known_drives):
         })
 
         try:
+            # v3.45.0 gap-fix #1: dedupe concurrent handlers keyed by
+            # (project_id, command). Background-thread commands (copy_to_drive,
+            # start_download) use _register_handler; foreground commands don't
+            # need it because the poll loop is single-threaded.
+            if command in ('copy_to_drive', 'start_download') and project_id:
+                claimed, _evt = _register_handler(project_id, command)
+                if not claimed:
+                    logging.warning(
+                        f"Skipping duplicate {command} for project {project_id} — "
+                        f"another thread is already running it. Acking cmd {cmd_id}."
+                    )
+                    api_patch(config, 'download-commands', {
+                        'id': cmd_id, 'status': 'completed',
+                        'error_message': 'Duplicate handler — superseded by in-flight thread',
+                    })
+                    continue
+                # _safe_run_command is responsible for _unregister_handler in finally.
+
             if command == 'copy_to_drive':
                 # Run in background thread to avoid blocking main loop
                 threading.Thread(
                     target=_safe_run_command,
-                    args=(handle_copy_to_drive, config, project_id, payload, known_drives, cmd_id),
+                    args=(handle_copy_to_drive, config, project_id, payload, known_drives, cmd_id, command),
                     daemon=True
                 ).start()
             elif command == 'start_download':
                 # Run in background thread — this monitors cloud folder for hours
                 threading.Thread(
                     target=_safe_run_command,
-                    args=(handle_start_download, config, project_id, payload, known_drives, cmd_id),
+                    args=(handle_start_download, config, project_id, payload, known_drives, cmd_id, command),
                     daemon=True
                 ).start()
             elif command == 'delete_data':
@@ -1101,6 +1178,12 @@ def poll_download_commands(config, known_drives):
             elif command == 'check_cloud_status':
                 handle_check_cloud_status(config, project_id, payload, cmd_id)
             elif command == 'cancel_download':
+                # v3.45.0 gap-fix #9: signal any in-flight handler for this
+                # project to stop at its next cancel-check boundary. The handler
+                # itself will patch the project/command rows on exit.
+                if project_id:
+                    _signal_cancel(project_id)
+                    logging.info(f"Cancel signal raised for project {project_id}")
                 api_patch(config, 'download-commands', {
                     'id': cmd_id, 'status': 'completed'
                 })
@@ -1116,15 +1199,51 @@ def poll_download_commands(config, known_drives):
             })
 
 
-def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id):
-    """Wrapper to run command handlers in background threads with error handling."""
+class CancelledError(Exception):
+    """Raised by a handler when it observes that the user cancelled the project.
+    Caught in _safe_run_command → patches the command row as completed+cancelled
+    rather than failed (so the portal can distinguish user-abort from crash)."""
+    pass
+
+
+def _check_cancelled(project_id):
+    """Raise CancelledError if the cancel event for this project is set.
+    Handlers call this at natural boundaries (between files, between poll ticks)
+    so user-initiated cancel_download takes effect without needing thread kill."""
+    evt = _get_cancel_event(project_id)
+    if evt is not None and evt.is_set():
+        raise CancelledError(f"Project {project_id} cancelled by user")
+
+
+def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id, command=None):
+    """Wrapper to run command handlers in background threads with error handling.
+
+    v3.45.0: unregisters the (project_id, command) dedupe slot in finally so
+    a future retry of the same command isn't blocked by a crashed predecessor.
+    The `command` arg is optional for backward compatibility with any caller
+    that didn't pass it (those paths won't have registered either).
+    """
     try:
         handler(config, project_id, payload, known_drives, cmd_id)
+    except CancelledError as ce:
+        logging.info(f"Handler cancelled for project {project_id}: {ce}")
+        api_patch(config, 'download-commands', {
+            'id': cmd_id, 'status': 'completed',
+            'error_message': 'Cancelled by user',
+        })
+        api_request(config, 'download-progress', {
+            'project_id': project_id,
+            'status': 'cancelled',
+            'phase': '',
+        })
     except Exception as e:
         logging.error(f"Background command failed: {e}")
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'failed', 'error_message': str(e)[:500]
         })
+    finally:
+        if command and project_id:
+            _unregister_handler(project_id, command)
 
 
 def handle_add_to_cloud(config, project_id, payload, cmd_id):
@@ -1244,6 +1363,13 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     if not real_dest.startswith(os.path.realpath(target_path)):
         raise Exception("Path traversal detected — refusing to copy outside drive")
 
+    # v3.45.0 gap-fix #4/#5: cleanup-on-failure semantics. If this handler
+    # crashes mid-copy (OSError from drive unplug, disk full, file-lock race),
+    # delete the partial dest dir we created so the retry starts from a clean
+    # slate rather than mixing stale+new files under `dirs_exist_ok=True`.
+    # We only delete what *this handler* could have created — if `dest` already
+    # existed on entry (e.g. legitimate prior completed copy), we leave it.
+    dest_existed_on_entry = os.path.isdir(dest)
     os.makedirs(dest, exist_ok=True)
 
     api_request(config, 'download-progress', {
@@ -1254,24 +1380,54 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     })
 
     total_copied = 0
-    if os.path.isdir(source_path):
-        for item in os.listdir(source_path):
-            src = os.path.join(source_path, item)
-            dst = os.path.join(dest, item)
-            if os.path.isdir(src):
-                shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, dst)
-            total_copied += os.path.getsize(src) if os.path.isfile(src) else 0
-            api_request(config, 'download-progress', {
-                'project_id': project_id,
-                'status': 'copying',
-                'progress_bytes': total_copied,
-                'phase': 'copying',
-            })
-            time.sleep(0.01)
-    else:
-        shutil.copy2(source_path, dest)
+    try:
+        if os.path.isdir(source_path):
+            for item in os.listdir(source_path):
+                # v3.45.0 gap-fix #9: cooperative cancellation at file boundaries.
+                # User-initiated cancel_download sets the project's cancel event;
+                # we observe it between files. Mid-file cancel is overkill for
+                # typical 5-file / 3GB payloads — file-boundary is fine.
+                _check_cancelled(project_id)
+
+                src = os.path.join(source_path, item)
+                dst = os.path.join(dest, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+                total_copied += os.path.getsize(src) if os.path.isfile(src) else 0
+                api_request(config, 'download-progress', {
+                    'project_id': project_id,
+                    'status': 'copying',
+                    'progress_bytes': total_copied,
+                    'phase': 'copying',
+                })
+                time.sleep(0.01)
+        else:
+            shutil.copy2(source_path, dest)
+    except CancelledError:
+        # User asked to stop. Remove the partial dest we created so the drive
+        # doesn't keep orphan files. Re-raise so _safe_run_command marks the
+        # command as cancelled (not failed).
+        if not dest_existed_on_entry:
+            try:
+                shutil.rmtree(dest, ignore_errors=True)
+                logging.info(f"Removed partial copy dir after cancel: {dest}")
+            except Exception as cleanup_err:
+                logging.error(f"Partial-dir cleanup after cancel failed: {cleanup_err}")
+        raise
+    except OSError as copy_err:
+        # Drive unplugged, disk full, file-lock race, permission issue, etc.
+        # Delete the partial dest so a retry starts from a clean slate.
+        if not dest_existed_on_entry:
+            try:
+                shutil.rmtree(dest, ignore_errors=True)
+                logging.info(f"Removed partial copy dir after OSError: {dest}")
+            except Exception as cleanup_err:
+                logging.error(f"Partial-dir cleanup failed: {cleanup_err}")
+        # Re-raise so _safe_run_command marks the command as failed with
+        # a meaningful error_message. Category tagging is deferred to PR2 #10.
+        raise Exception(f"Copy failed ({type(copy_err).__name__}): {copy_err}")
 
     api_request(config, 'download-progress', {
         'project_id': project_id,
@@ -1331,6 +1487,10 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
             start = time.time()
             deadline = start + wait_seconds
             while time.time() < deadline:
+                # v3.45.0 gap-fix #9: honor user cancel even during the
+                # pre-materialization wait. CancelledError unwinds to
+                # _safe_run_command which tags the command 'cancelled'.
+                _check_cancelled(project_id)
                 if os.path.isdir(cloud_folder):
                     break
                 time.sleep(poll_interval)
@@ -1402,6 +1562,11 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
     # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
     max_checks = 2880  # 24 hours at 30-second intervals
     for check_num in range(max_checks):
+        # v3.45.0 gap-fix #9: cancel check at each 30s tick. This is the long
+        # wait — most of the download's wall-clock lives here — so cancel
+        # responsiveness matters.
+        _check_cancelled(project_id)
+
         is_ready, total_files, offline_files, total_size = check_folder_offline_status(cloud_folder)
 
         # Report progress
@@ -1612,9 +1777,43 @@ class DriveMonitor:
 
     def start(self):
         self.running = True
+        # v3.45.0 gap-fix #2: reset stale-acked commands BEFORE the resume-check
+        # thread fires. Scanner restarts (manual or crash) leave commands in
+        # the 'acked' limbo state, which poll_download_commands never re-picks
+        # (it only fetches status=pending). Reset them first so the resume
+        # flow and the normal poll both see a clean queue.
+        threading.Thread(target=self._reset_stale_acked_commands, daemon=True).start()
         threading.Thread(target=self._loop, daemon=True).start()
         threading.Thread(target=self._resume_interrupted_downloads, daemon=True).start()
         self.status("Drive monitor started")
+
+    def _reset_stale_acked_commands(self):
+        """v3.45.0 gap-fix #2: on boot, flip this machine's orphaned-acked
+        commands (acked >= 60s ago) back to pending so the current boot's poll
+        loop picks them up. Server-side (Vercel clock) computes the cutoff so
+        we don't have to trust the scanner's clock."""
+        try:
+            # Tiny delay so the heartbeat has time to land first (helps the
+            # backend correlate the reset to a live scanner instance).
+            time.sleep(3)
+            machine = get_machine_name()
+            result = api_request(self.config, 'scanner-reset-stale-acked', {
+                'machine_name': machine,
+                'threshold_seconds': 60,
+            })
+            if not result:
+                # api_request logs the error; stay silent here to avoid dupe.
+                return
+            reset = result.get('reset', 0)
+            if reset:
+                ids = result.get('ids') or []
+                logging.info(
+                    f"Boot recovery: reset {reset} stale acked commands back "
+                    f"to pending ({', '.join(str(i) for i in ids[:5])}"
+                    f"{'...' if len(ids) > 5 else ''})"
+                )
+        except Exception as e:
+            logging.error(f"reset-stale-acked on boot failed: {e}")
 
     def _resume_interrupted_downloads(self):
         """
