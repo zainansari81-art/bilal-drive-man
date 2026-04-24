@@ -1,0 +1,3 @@
+# Windows scanner build artifacts — binary, don't diff or merge
+windows-scanner/dist/*.exe binary
+windows-scanner/dist/*.exe.sha256 text eol=lf

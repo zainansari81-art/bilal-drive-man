@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.36.0 - BILAL DRIVE MAN
+Windows Scanner V.3.43.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.42.0'
+VERSION = '3.43.0'
 
 import os
 import sys
@@ -12,40 +12,177 @@ import time
 import json
 import string
 import ctypes
+import hashlib
 import logging
 import subprocess
 import threading
 import urllib.request
 import urllib.error
 import urllib.parse
+import re as _re
 from datetime import datetime
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
+#
+# v3.43.0: the old auto-update path (overwrite __file__, os.execv) didn't work
+# for the PyInstaller --onefile build — __file__ inside a frozen bundle points
+# to a throwaway extraction dir, not the deployed .exe, so writes didn't
+# persist and "updates" just re-ran the same baked-in code.
+#
+# New flow (batch-shim):
+#   1. On startup, fetch the raw drive_scanner.py from GitHub main to peek at
+#      the VERSION string. If it matches ours, no update needed.
+#   2. If it's different, fetch the expected SHA256 of the new .exe from
+#      `<dist>/BilalDriveMan-Scanner.exe.sha256` (a sibling text file in the
+#      same repo path).
+#   3. Download the new .exe as `BilalDriveMan-Scanner.exe.new` next to the
+#      running .exe. Verify its SHA256 matches step-2's expected value.
+#   4. If verified, write an `update.bat` that: waits for our PID to exit,
+#      renames .new → .exe, relaunches the .exe, deletes itself. Then kick
+#      the .bat and exit.
+#   5. If SHA mismatch OR download fails, log and keep running current
+#      version — safer to run an outdated .exe than to brick a PC with a
+#      corrupt binary.
+#   6. Best-effort cleanup on startup: if a `.exe.new` is left over from an
+#      unclean shutdown, delete it before deciding whether to re-download.
+#
+# Frozen-exe path resolution: sys.executable inside a PyInstaller onefile is
+# the installed .exe path, not the extracted-temp .py. That's what we use.
 
 GITHUB_RAW_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/windows-scanner/drive_scanner.py'
+GITHUB_EXE_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/windows-scanner/dist/BilalDriveMan-Scanner.exe'
+GITHUB_EXE_SHA_URL = 'https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/windows-scanner/dist/BilalDriveMan-Scanner.exe.sha256'
 
-def auto_update():
-    """Check GitHub for newer version and replace self if updated."""
+
+def _get_installed_exe_path():
+    """Return the path of the currently running installed .exe.
+
+    For a PyInstaller onefile build, sys.executable points to the installed
+    .exe. For bare `python drive_scanner.py` runs (dev mode), sys.executable
+    is the python interpreter — auto-update is a no-op in that case and
+    returns None.
+    """
+    # getattr(sys, 'frozen') is set by PyInstaller; check it before trusting
+    # sys.executable as the scanner binary.
+    if not getattr(sys, 'frozen', False):
+        return None
+    exe_path = os.path.abspath(sys.executable)
+    if exe_path.lower().endswith('.exe'):
+        return exe_path
+    return None
+
+
+def _remote_version():
+    """Peek at VERSION in the GitHub raw drive_scanner.py."""
     try:
-        script_path = os.path.abspath(__file__)
-        with open(script_path, 'r') as f:
-            current = f.read()
-
         req = urllib.request.Request(GITHUB_RAW_URL)
         req.add_header('Cache-Control', 'no-cache')
         with urllib.request.urlopen(req, timeout=15) as resp:
-            latest = resp.read().decode('utf-8')
-
-        if latest.strip() != current.strip() and len(latest) > 100:
-            with open(script_path, 'w') as f:
-                f.write(latest)
-            print("[AUTO-UPDATE] Updated to latest version. Restarting...")
-            logging.info("Auto-updated from GitHub. Restarting...")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        else:
-            logging.info("Auto-update check: already up to date")
+            source = resp.read().decode('utf-8')
+        m = _re.search(r"^VERSION\s*=\s*'([^']+)'", source, _re.MULTILINE)
+        return m.group(1) if m else None
     except Exception as e:
-        logging.error(f"Auto-update check failed (will retry next start): {e}")
+        logging.warning(f"Auto-update: couldn't read remote VERSION: {e}")
+        return None
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def auto_update():
+    """Self-replace via batch shim if a newer scanner .exe is on GitHub."""
+    exe_path = _get_installed_exe_path()
+    if not exe_path:
+        # Dev/unfrozen run — skip.
+        return
+
+    new_path = exe_path + '.new'
+
+    # Best-effort cleanup from any prior unclean shutdown.
+    if os.path.exists(new_path):
+        try:
+            os.remove(new_path)
+        except OSError:
+            pass
+
+    remote_ver = _remote_version()
+    if not remote_ver:
+        return  # Couldn't reach GitHub; just run what we have.
+    if remote_ver == VERSION:
+        return  # Up to date.
+
+    try:
+        # Fetch expected SHA of the remote exe first — if we can't get it,
+        # don't risk replacing the binary.
+        sha_req = urllib.request.Request(GITHUB_EXE_SHA_URL)
+        sha_req.add_header('Cache-Control', 'no-cache')
+        with urllib.request.urlopen(sha_req, timeout=15) as resp:
+            expected_sha = resp.read().decode('utf-8').strip().lower().split()[0]
+        if not _re.fullmatch(r'[a-f0-9]{64}', expected_sha):
+            logging.warning(f"Auto-update: bad SHA sidecar content, aborting update")
+            return
+
+        # Fetch the .exe.
+        logging.info(f"Auto-update: remote v{remote_ver} differs from local v{VERSION}, downloading .exe")
+        exe_req = urllib.request.Request(GITHUB_EXE_URL)
+        exe_req.add_header('Cache-Control', 'no-cache')
+        with urllib.request.urlopen(exe_req, timeout=300) as resp:
+            with open(new_path, 'wb') as out:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+        # Verify.
+        got_sha = _sha256_file(new_path)
+        if got_sha != expected_sha:
+            logging.error(
+                f"Auto-update: SHA256 mismatch (expected {expected_sha}, "
+                f"got {got_sha}), aborting replace to avoid bricking the PC"
+            )
+            try:
+                os.remove(new_path)
+            except OSError:
+                pass
+            return
+
+        # Write the shim bat. `timeout /t 3 /nobreak` gives us time to exit.
+        exe_dir = os.path.dirname(exe_path)
+        bat_path = os.path.join(exe_dir, 'BilalDriveMan-Scanner-update.bat')
+        with open(bat_path, 'w') as b:
+            b.write(
+                '@echo off\r\n'
+                'timeout /t 3 /nobreak > nul\r\n'
+                f'move /Y "{new_path}" "{exe_path}" > nul 2>&1\r\n'
+                f'start "" "{exe_path}"\r\n'
+                '(goto) 2>nul & del "%~f0"\r\n'
+            )
+
+        logging.info(f"Auto-update: launching shim, exiting to let it replace exe")
+        # DETACHED_PROCESS so the bat survives our exit. creationflags=0x00000008.
+        subprocess.Popen(
+            ['cmd.exe', '/c', bat_path],
+            creationflags=0x00000008 | 0x00000200,  # DETACHED | NEW_PROCESS_GROUP
+            close_fds=True,
+            cwd=exe_dir,
+        )
+        sys.exit(0)
+
+    except Exception as e:
+        logging.error(f"Auto-update failed (continuing on current version): {e}")
+        # If we left a partial .new around, clean it up best-effort.
+        if os.path.exists(new_path):
+            try:
+                os.remove(new_path)
+            except OSError:
+                pass
+
 
 auto_update()
 
