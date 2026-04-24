@@ -1287,19 +1287,22 @@ body {
 
 /* Page transition - fade + slide up */
 @keyframes pageIn {
-  from { opacity: 0; transform: translateY(24px) scale(0.98); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .page-transition {
-  /* CRITICAL: keyframe `to` MUST be `transform: none`, NOT
-     `transform: translateY(0) scale(1)`. Even an identity transform
-     creates a containing block for descendants, which breaks
+  /* CRITICAL: this rule MUST NOT introduce a `transform` (or filter /
+     perspective / backdrop-filter / will-change:transform). Any of
+     those create a containing block for descendants and break
      `position: fixed` on modal overlays (DownloadWizardModal,
-     DownloadMagicAnimation, etc.) — they end up positioned relative to
-     this element's full scroll height instead of the viewport and
-     render off-screen. `forwards` is fine here because the final state
-     has no transform, so no containing block. */
+     DownloadMagicAnimation, etc.) — the overlay then positions
+     relative to this element's full scroll height instead of the
+     viewport and renders off-screen. The page-entry effect is
+     therefore opacity-only. The animation was previously
+     `translateY(24px) scale(0.98) -> translateY(0) scale(1)`; even the
+     end state is a non-`none` transform, which creates the bug both
+     mid-animation and at rest. Keep this opacity-only. */
   animation: pageIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
