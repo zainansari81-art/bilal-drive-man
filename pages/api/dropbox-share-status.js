@@ -125,14 +125,80 @@ export default requireAuth(async function handler(req, res) {
     const meta = await metaResp.json();
     const isFolder = meta['.tag'] === 'folder';
     const sharedFolderId = meta.shared_folder_id || null;
+    const folderName = meta.name || null;
+
+    // Files: scanner uses save_url separately — wizard doesn't gate them.
+    if (!isFolder) {
+      return res.status(200).json({
+        joined: true,
+        shared_folder_id: null,
+        folder_name: folderName,
+        link_type: 'dropbox',
+        error: null,
+      });
+    }
+
+    // Folder logic — TWO ways a share can be "in" the user's Dropbox:
+    //
+    //  (a) Cross-account mountable share — `shared_folder_id` is present in
+    //      the link metadata; Rafay just needs to call mount_folder. Scanner
+    //      already does this.
+    //
+    //  (b) "Add to my Dropbox" via web UI on an scl share — Dropbox copies
+    //      the folder into Rafay's root namespace. The link metadata stays
+    //      identical (no `shared_folder_id`), so we have to check
+    //      `files/get_metadata` against `/<folder_name>` to detect the
+    //      saved copy.
+    //
+    // We treat either as `joined: true` so the wizard advances.
+
+    if (sharedFolderId) {
+      return res.status(200).json({
+        joined: true,
+        shared_folder_id: sharedFolderId,
+        folder_name: folderName,
+        link_type: 'dropbox',
+        error: null,
+      });
+    }
+
+    if (!folderName) {
+      // Defensive: no name means we can't probe the user's tree.
+      return res.status(200).json({
+        joined: false,
+        shared_folder_id: null,
+        folder_name: null,
+        link_type: 'dropbox',
+        error: null,
+      });
+    }
+
+    // Probe Rafay's Dropbox root for a folder with this exact name.
+    // Dropbox always saves "Add to my Dropbox" content at /<name>.
+    let savedInUserTree = false;
+    try {
+      const metaProbeResp = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: `/${folderName}` }),
+      });
+      if (metaProbeResp.ok) {
+        const probeMeta = await metaProbeResp.json();
+        savedInUserTree = probeMeta['.tag'] === 'folder';
+      }
+      // 409 (path/not_found) is the expected "not joined yet" signal — leave
+      // savedInUserTree=false. Other errors fall through the same way.
+    } catch (probeErr) {
+      console.error('Dropbox get_metadata probe failed:', probeErr.message);
+    }
 
     return res.status(200).json({
-      // For folders: joined when shared_folder_id is present (means mountable).
-      // For files: not applicable here (scanner uses save_url separately) —
-      // treat as joined so wizard doesn't block.
-      joined: isFolder ? Boolean(sharedFolderId) : true,
-      shared_folder_id: sharedFolderId,
-      folder_name: meta.name || null,
+      joined: savedInUserTree,
+      shared_folder_id: null,
+      folder_name: folderName,
       link_type: 'dropbox',
       error: null,
     });
