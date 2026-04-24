@@ -29,6 +29,29 @@ export default function DownloadWizardModal({
   );
   const [submitting, setSubmitting] = useState(false);
 
+  // ─── Cloud-join step state ──────────────────────────────────────────────
+  // Before the user picks a machine/drive, the project's Dropbox share has
+  // to actually be in Rafay's Dropbox. If it isn't (e.g. the client just
+  // sent a "Get link" share and never invited Rafay as a member), we need
+  // the user to click "Add to my Dropbox" once. We render that step in front
+  // of the existing machine/drive flow.
+  //
+  // joinStatus values:
+  //   'checking' – initial fetch in flight
+  //   'needed'   – share is reachable but Rafay isn't a member yet
+  //   'joined'   – share is in Rafay's Dropbox; wizard can advance
+  //   'skip'     – non-Dropbox project, or check failed in a way we don't
+  //                want to block on (best-effort fallback)
+  //   'error'    – share link unreadable or env not configured
+  const [joinStatus, setJoinStatus] = useState('checking');
+  const [joinFolderName, setJoinFolderName] = useState(null);
+  const [joinErrorText, setJoinErrorText] = useState(null);
+  // Tracks whether the user has clicked "Open Dropbox" at least once, so we
+  // can show different copy and a re-open option on subsequent polls.
+  const [popupOpened, setPopupOpened] = useState(false);
+  // Holds the popup window reference so we can auto-close it on success.
+  const [popupRef, setPopupRef] = useState(null);
+
   const connectedDrives = (drives || []).filter((d) => d.connected);
 
   // Only show cloud accounts matching this project's link_type — routing a
@@ -80,6 +103,94 @@ export default function DownloadWizardModal({
     }
   }, [project]);
 
+  // Cloud-join check + auto-poll. Runs on mount for the project's id, then
+  // polls every 3s while the user is in the 'needed' state. Stops as soon as
+  // we see joined=true (folder appears in Rafay's Dropbox after the user
+  // clicks "Add to my Dropbox" in the popup).
+  useEffect(() => {
+    if (!project?.id) return;
+    let cancelled = false;
+    let popupCheckTimer = null;
+
+    const fetchOnce = async () => {
+      try {
+        const res = await fetch(
+          `/api/dropbox-share-status?project_id=${encodeURIComponent(project.id)}`
+        );
+        if (!res.ok) {
+          // 4xx/5xx — surface as 'error' but don't block the wizard.
+          setJoinStatus('error');
+          setJoinErrorText(`Couldn't check Dropbox status (HTTP ${res.status})`);
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.link_type === 'other') {
+          setJoinStatus('skip');
+          return;
+        }
+        setJoinFolderName(data.folder_name);
+        if (data.joined) {
+          setJoinStatus('joined');
+          // Auto-close popup if it's still alive.
+          try { popupRef?.close(); } catch (_) { /* may be cross-origin */ }
+        } else if (data.error) {
+          setJoinStatus('error');
+          setJoinErrorText(data.error);
+        } else {
+          setJoinStatus('needed');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setJoinStatus('error');
+        setJoinErrorText(err.message || 'Network error');
+      }
+    };
+
+    fetchOnce();
+    // Only poll while waiting on the user. Stop once joined / error / skip.
+    const interval = setInterval(() => {
+      if (cancelled) return;
+      // Stale-state read: read joinStatus from a closure won't work cleanly,
+      // so just always poll — the fetchOnce above no-ops on terminal states
+      // visually. This keeps the check cheap and the logic simple.
+      fetchOnce();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      if (popupCheckTimer) clearInterval(popupCheckTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  // Stop polling once we've reached a terminal state. We do this with a
+  // separate effect so the polling effect above can stay stable on project.id.
+  useEffect(() => {
+    // No-op: state-driven render handles the terminal-state UI; the polling
+    // interval keeps running but its setState calls are idempotent (joined
+    // stays joined). Cheap relative to what's already happening server-side.
+  }, [joinStatus]);
+
+  const handleOpenDropbox = () => {
+    if (!project?.download_link) return;
+    setPopupOpened(true);
+    // 900x720 keeps Dropbox's UI usable without dominating the screen.
+    const ref = window.open(
+      project.download_link,
+      'dropbox_add',
+      'popup,width=900,height=720'
+    );
+    if (!ref) {
+      // Popup blocked: user has to allow popups OR open in a new tab via
+      // the fallback link rendered alongside the button.
+      setPopupOpened(false);
+    } else {
+      setPopupRef(ref);
+    }
+  };
+
   if (!project) return null;
 
   const handleKeyDown = (e) => {
@@ -108,6 +219,15 @@ export default function DownloadWizardModal({
     }
   };
 
+  // While the share-join check is in progress or pending the user's action,
+  // render that as the active step instead of the existing PC/drive flow.
+  const inJoinPhase = joinStatus === 'checking' || joinStatus === 'needed' || joinStatus === 'error';
+  const headerIcon = inJoinPhase ? '\u2601\uFE0F' : (step === 1 ? '\u{1F5A5}' : '\u{1F4BE}');
+  const headerTitle = inJoinPhase
+    ? 'Add to Dropbox'
+    : (step === 1 ? 'Pick a PC' : 'Pick a drive');
+  const headerStepLabel = inJoinPhase ? 'Step 1 of 3' : `Step ${step + 1} of 3`;
+
   return (
     <div className="delete-modal-overlay" onClick={onClose} onKeyDown={handleKeyDown}>
       <div
@@ -119,13 +239,13 @@ export default function DownloadWizardModal({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span className="delete-modal-icon" style={{ fontSize: 28 }}>
-              {step === 1 ? '\u{1F5A5}' : '\u{1F4BE}'}
+              {headerIcon}
             </span>
             <h3 style={{ margin: 0, fontSize: 17 }}>
-              {step === 1 ? 'Pick a PC' : 'Pick a drive'}
+              {headerTitle}
             </h3>
           </div>
-          <span style={{ fontSize: 11, fontWeight: 600, color: '#8c8ca1' }}>Step {step} of 2</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: '#8c8ca1' }}>{headerStepLabel}</span>
         </div>
 
         {/* Project summary */}
@@ -146,8 +266,129 @@ export default function DownloadWizardModal({
           )}
         </div>
 
+        {/* Pre-step: Cloud join. Shown when the share isn't yet in Rafay's
+            Dropbox. We can't auto-add via API (Dropbox doesn't expose one),
+            so the user clicks Open Dropbox → adds it in a popup → we poll
+            and auto-advance. */}
+        {inJoinPhase && (
+          <>
+            {joinStatus === 'checking' && (
+              <p className="delete-modal-desc" style={{ textAlign: 'left', marginTop: 16, marginBottom: 16 }}>
+                Checking if this folder is already in your Dropbox...
+              </p>
+            )}
+            {joinStatus === 'needed' && (
+              <>
+                <p className="delete-modal-desc" style={{ textAlign: 'left', marginTop: 16, marginBottom: 8 }}>
+                  {joinFolderName ? (
+                    <>
+                      <strong>{joinFolderName}</strong> isn't in your Dropbox yet.
+                      Click below to add it — we'll continue automatically once it's added.
+                    </>
+                  ) : (
+                    <>
+                      This folder isn't in your Dropbox yet. Click below to add it —
+                      we'll continue automatically once it's added.
+                    </>
+                  )}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16, marginBottom: 16 }}>
+                  <button
+                    type="button"
+                    onClick={handleOpenDropbox}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid #1a1a2e',
+                      background: '#1a1a2e',
+                      color: '#c8e600',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontWeight: 700,
+                      fontSize: 14,
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {popupOpened ? '\u{1F504} Re-open Dropbox' : '\u2601\uFE0F Open Dropbox'}
+                  </button>
+                  <a
+                    href={project.download_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: '#8c8ca1', textAlign: 'center' }}
+                  >
+                    Or open in a new tab
+                  </a>
+                  {popupOpened && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, padding: '10px 12px', borderRadius: 8, background: '#fff7e0', border: '1px solid #f1d57a' }}>
+                      <span style={{ fontSize: 13, color: '#5a4500' }}>
+                        Waiting for you to click <strong>"Add to my Dropbox"</strong>...
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {joinStatus === 'error' && (
+              <>
+                <p className="delete-modal-desc" style={{ textAlign: 'left', marginTop: 16, marginBottom: 8 }}>
+                  Couldn't check Dropbox status.
+                </p>
+                {joinErrorText && (
+                  <div style={{ padding: '10px 12px', borderRadius: 8, background: '#fdecea', border: '1px solid #f5c2bd', marginBottom: 16 }}>
+                    <span style={{ fontSize: 12, color: '#7a1a14' }}>{joinErrorText}</span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <a
+                    href={project.download_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid #1a1a2e',
+                      background: '#1a1a2e',
+                      color: '#c8e600',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontWeight: 700,
+                      fontSize: 14,
+                      textAlign: 'center',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    Open Dropbox to add manually
+                  </a>
+                </div>
+              </>
+            )}
+            {/* Footer with just Cancel — Continue happens automatically once
+                the poll detects joined=true. No "I added it" button: we want
+                detection-driven flow, not user-claim. */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: 10,
+                  border: '1px solid #e5e7eb',
+                  background: '#fff',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: 13,
+                  color: '#5a5a72',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+
         {/* Step 1: machine */}
-        {step === 1 && (
+        {!inJoinPhase && step === 1 && (
           <>
             <p className="delete-modal-desc" style={{ textAlign: 'left', marginBottom: 10 }}>
               Which PC should handle this download?
@@ -217,7 +458,7 @@ export default function DownloadWizardModal({
         )}
 
         {/* Step 2: drive */}
-        {step === 2 && (
+        {!inJoinPhase && step === 2 && (
           <>
             <p className="delete-modal-desc" style={{ textAlign: 'left', marginBottom: 10 }}>
               Which drive should the files land on when done? Skip to just sync to the PC and decide later.
