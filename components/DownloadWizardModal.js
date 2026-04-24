@@ -126,7 +126,12 @@ export default function DownloadWizardModal({
   const fetchShareStatus = async () => {
     if (!project?.id) return null;
     const isGDrive = project?.link_type === 'google_drive';
-    const endpoint = isGDrive ? 'gdrive-share-status' : 'dropbox-share-status';
+    const isWeTransfer = project?.link_type === 'wetransfer';
+    const endpoint = isGDrive
+      ? 'gdrive-share-status'
+      : isWeTransfer
+      ? 'wetransfer-share-status'
+      : 'dropbox-share-status';
     try {
       const res = await fetch(
         `/api/${endpoint}?project_id=${encodeURIComponent(project.id)}&_=${Date.now()}`
@@ -144,7 +149,14 @@ export default function DownloadWizardModal({
       // Backend response shapes:
       //   Dropbox: { joined, folder_name, ... }
       //   Google Drive: { joined, name (file/folder name), mime_type, ... }
-      setJoinFolderName(data.folder_name || data.name || null);
+      //   WeTransfer: { joined, transfer_id, file_count, total_size_bytes, expires_at }
+      setJoinFolderName(
+        data.folder_name ||
+          data.name ||
+          (isWeTransfer && data.file_count
+            ? `${data.file_count} file${data.file_count === 1 ? '' : 's'}`
+            : null)
+      );
       if (data.joined) {
         setJoinStatus('joined');
         try { popupRef?.close(); } catch (_) { /* may be cross-origin */ }
@@ -156,6 +168,15 @@ export default function DownloadWizardModal({
         setJoinErrorText(
           data.error ||
             "We can't access this Drive item. Make sure the share link is set to 'Anyone with the link can view'."
+        );
+      } else if (isWeTransfer) {
+        // WeTransfer: joined=false means the share is unreachable (expired,
+        // deleted, or invalid). No manual "join" exists for WeTransfer —
+        // shares are anonymous and time-limited (~7 days).
+        setJoinStatus('error');
+        setJoinErrorText(
+          data.error ||
+            "This WeTransfer share isn't reachable. It may have expired or been removed."
         );
       } else if (data.error) {
         setJoinStatus('error');
