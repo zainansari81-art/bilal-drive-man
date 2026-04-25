@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.47.0'
+VERSION = '3.47.1'
 
 import os
 import sys
@@ -1934,6 +1934,19 @@ def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id
         handler(config, project_id, payload, known_drives, cmd_id)
     except CancelledError as ce:
         logging.info(f"Handler cancelled for project {project_id}: {ce}")
+        # v3.47.1: clean up staging dirs on cancel so cancel-then-remove
+        # doesn't leave orphaned bytes on disk indefinitely. Best-effort,
+        # both gdrive + wetransfer roots — only one will exist for any
+        # given project, the other is a no-op. Wrapped in try/except so a
+        # cleanup failure can't mask the cancel itself.
+        try:
+            _cleanup_staging(project_id)
+        except Exception as cleanup_err:
+            logging.warning(f"gdrive staging cleanup failed for {project_id}: {cleanup_err}")
+        try:
+            _wetransfer_cleanup_staging(project_id)
+        except Exception as cleanup_err:
+            logging.warning(f"wetransfer staging cleanup failed for {project_id}: {cleanup_err}")
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'completed',
             'error_message': 'Cancelled by user',
