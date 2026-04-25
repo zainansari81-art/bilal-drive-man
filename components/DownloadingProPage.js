@@ -636,7 +636,12 @@ function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
   const targetDrive = project.target_drive || '';
   const sizeGb = project.size_gb || '';
   const projectDate = project.project_date || '';
-  const progress = project.download_progress_bytes || 0;
+  // Scanner writes to `progress_bytes` (per /api/download-progress.js).
+  // `download_progress_bytes` is a legacy column that exists in Supabase but
+  // is no longer updated by any code path — keeping it as fallback only so
+  // historical rows still render. Prefer the live column.
+  const progress =
+    project.progress_bytes || project.download_progress_bytes || 0;
   // Prefer scanner-emitted total_bytes_expected (gdrive/wetransfer staging
   // know the full size up-front via API listing). Fall back to cloud_size_bytes
   // (Dropbox sync — only known after pin completes). If neither is set, the
