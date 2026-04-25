@@ -136,39 +136,63 @@ export default requireAuth(async function handler(req, res) {
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   }
 
+  // Accept EITHER project_id (normal flow) OR url (ad-hoc test mode — used
+  // by curl/devs to validate an arbitrary we.tl link without first creating
+  // a Notion card + Supabase row). project_id wins if both are passed.
   const projectId = (req.query.project_id || '').toString().trim();
-  if (!/^[a-f0-9-]{36}$/i.test(projectId)) {
+  const adhocUrl = (req.query.url || '').toString().trim();
+
+  if (!projectId && !adhocUrl) {
+    return res
+      .status(400)
+      .json({ error: 'Provide either ?project_id=<uuid> or ?url=<wetransfer-link>' });
+  }
+  if (projectId && !/^[a-f0-9-]{36}$/i.test(projectId)) {
     return res.status(400).json({ error: 'Invalid project_id' });
   }
 
   try {
-    const projects = await supabaseFetch(
-      `download_projects?id=eq.${projectId}&select=download_link,link_type`
-    );
-    const project = projects && projects[0];
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
+    let downloadLink = '';
+    if (projectId) {
+      const projects = await supabaseFetch(
+        `download_projects?id=eq.${projectId}&select=download_link,link_type`
+      );
+      const project = projects && projects[0];
+      if (!project) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+
+      if (project.link_type !== 'wetransfer' || !project.download_link) {
+        return res.status(200).json({
+          joined: true,
+          transfer_id: null,
+          security_hash: null,
+          file_count: null,
+          total_size_bytes: null,
+          expires_at: null,
+          link_type: 'other',
+          error: null,
+        });
+      }
+      downloadLink = project.download_link;
+    } else {
+      // Ad-hoc test mode — caller passed ?url= directly. Length cap to
+      // avoid log spam from malicious input.
+      if (adhocUrl.length > 2048) {
+        return res.status(400).json({ error: 'url too long' });
+      }
+      if (!/^https?:\/\//i.test(adhocUrl)) {
+        return res.status(400).json({ error: 'url must be http(s)' });
+      }
+      downloadLink = adhocUrl;
     }
 
-    if (project.link_type !== 'wetransfer' || !project.download_link) {
-      return res.status(200).json({
-        joined: true,
-        transfer_id: null,
-        security_hash: null,
-        file_count: null,
-        total_size_bytes: null,
-        expires_at: null,
-        link_type: 'other',
-        error: null,
-      });
-    }
-
-    let parsed = extractTransferIds(project.download_link);
-    let resolvedUrl = project.download_link;
+    let parsed = extractTransferIds(downloadLink);
+    let resolvedUrl = downloadLink;
 
     if (parsed && parsed.short) {
       try {
-        resolvedUrl = await resolveShortLink(project.download_link);
+        resolvedUrl = await resolveShortLink(downloadLink);
         parsed = extractTransferIds(resolvedUrl);
       } catch (resolveErr) {
         console.error('WeTransfer short-link resolve failed:', resolveErr.message);
