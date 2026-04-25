@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.46.0 - BILAL DRIVE MAN
+Windows Scanner V.3.46.1 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.46.0'
+VERSION = '3.46.1'
 
 import os
 import sys
@@ -1109,7 +1109,7 @@ def _gdrive_download_one(access_token, file_meta, dest_path, cancel_check):
     return bytes_written
 
 
-def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_evt=None):
+def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_evt=None, config=None):
     """v3.46.0: direct-download a shared Google Drive folder to a local
     staging directory. Returns the absolute path of the staging directory
     (not the folder name) — caller persists it as cloud_folder_path so
@@ -1203,6 +1203,22 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
         state['total_bytes_expected'] = total_bytes_expected
     _staging_state_write(staging_dir, state)
 
+    # v3.46.1: report initial phase + total_bytes_expected so the portal can
+    # render the progress bar before the first file completes. Best-effort —
+    # no config means we're under a caller that didn't pass one (shouldn't
+    # happen in production, but don't blow up listing just for telemetry).
+    if project_id and config is not None:
+        try:
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'downloading',
+                'phase': 'gdrive_staging',
+                'progress_bytes': 0,
+                'total_bytes_expected': total_bytes_expected,
+            })
+        except Exception as e:
+            logging.warning(f"Initial gdrive_staging progress emit failed: {e}")
+
     completed = state.setdefault('completed_files', {})
     failed = state.setdefault('failed_files', {})
 
@@ -1290,6 +1306,21 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
             # Persist every 5 files to bound data-loss on a mid-run crash.
             if done_count % 5 == 0:
                 _staging_state_write(staging_dir, state)
+            # v3.46.1: emit bytes_done progress on every completion so the
+            # portal progress bar updates in near-realtime. Cheap call, the
+            # api_request path is already fire-and-forget.
+            if project_id and config is not None:
+                try:
+                    api_request(config, 'download-progress', {
+                        'project_id': project_id,
+                        'status': 'downloading',
+                        'phase': 'gdrive_staging',
+                        'progress_bytes': total_bytes,
+                        'total_bytes_expected': total_bytes_expected,
+                    })
+                except Exception:
+                    # Telemetry failures are non-fatal to the download.
+                    pass
 
     # Flush final state.
     if not failed:
@@ -1681,6 +1712,7 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
                 lambda tok: add_gdrive_shared_folder(
                     tok, download_link,
                     project_id=project_id, cancel_evt=cancel_evt,
+                    config=config,
                 ),
             )
             # folder_name is whatever the leaf directory is named; mostly used

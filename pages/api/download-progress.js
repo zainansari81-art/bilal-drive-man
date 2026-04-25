@@ -9,7 +9,7 @@ export default requireApiKey(async function handler(req, res) {
   }
 
   try {
-    const { project_id, progress_bytes, status, error_message, phase, cloud_folder_path } = req.body;
+    const { project_id, progress_bytes, status, error_message, phase, cloud_folder_path, total_bytes_expected } = req.body;
     if (!project_id) {
       return res.status(400).json({ error: 'Missing required field: project_id' });
     }
@@ -32,11 +32,23 @@ export default requireApiKey(async function handler(req, res) {
       updateBody.cloud_folder_path = sanitizeString(cloud_folder_path, 500);
     }
     // Sub-phase within downloading/copying. Scanner sends 'pinning' | 'syncing'
-    // | 'copying' | '' (to clear). Anything else is silently dropped.
+    // | 'copying' | 'gdrive_staging' (v3.46.1+: direct-download to local
+    // staging dir before copying) | '' (to clear). Anything else silently dropped.
     if (phase !== undefined) {
-      const allowedPhases = ['pinning', 'syncing', 'copying', ''];
+      const allowedPhases = ['pinning', 'syncing', 'copying', 'gdrive_staging', ''];
       if (allowedPhases.includes(phase)) {
         updateBody.download_phase = phase === '' ? null : phase;
+      }
+    }
+
+    // v3.46.1: scanner reports the total expected size up-front (from listing
+    // the gdrive folder) so the portal can render bytes_done/bytes_total
+    // progress even before any single file completes. Persisted on the
+    // download_projects row so the UI reads both values together.
+    if (total_bytes_expected !== undefined && total_bytes_expected !== null) {
+      const n = Number(total_bytes_expected);
+      if (Number.isFinite(n) && n >= 0) {
+        updateBody.total_bytes_expected = Math.floor(n);
       }
     }
 
