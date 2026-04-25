@@ -315,6 +315,29 @@ def get_drive_usage(drive_letter):
     }
 
 
+# Junk labels that look like drives but aren't real wedding-photo storage.
+# Keep in sync with JUNK_LABEL_SUBSTRINGS in web-app/lib/supabase.js.
+JUNK_LABEL_SUBSTRINGS = (
+    'docker', 'wsl',
+    'virtualbox', 'vbox',
+    'sandbox',
+    'test drive', 'testdrive', 'test_drive',
+    'recovery', 'system reserved', 'efi',
+)
+MIN_REAL_DRIVE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+
+
+def is_junk_drive(label, total_bytes):
+    name = (label or '').lower().strip()
+    if not name:
+        return True
+    if any(s in name for s in JUNK_LABEL_SUBSTRINGS):
+        return True
+    if total_bytes and total_bytes < MIN_REAL_DRIVE_BYTES:
+        return True
+    return False
+
+
 def get_external_drives():
     drives = []
     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
@@ -330,6 +353,12 @@ def get_external_drives():
                     continue
                 try:
                     usage = get_drive_usage(dl)
+                    if is_junk_drive(label, usage.get('total', 0)):
+                        logging.info(
+                            f"Skipping {dl} label='{label}' total={usage.get('total', 0)} — "
+                            f"matches junk-drive filter (Docker/WSL/test/virtual/<1GB)"
+                        )
+                        continue
                     drives.append({
                         'letter': dl,
                         'label': label,
