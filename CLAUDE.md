@@ -39,21 +39,54 @@
 
 ## Windows Scanner Build (PyInstaller .exe)
 
-**Critical: ALWAYS use `--clean` and wipe `build/` + `__pycache__/` before rebuilding.**
-Stale `__pycache__/drive_scanner.cpython-*.pyc` from a previous source version will get
-re-bundled and the resulting .exe will self-report the OLD VERSION string. That breaks
-auto-update (binary downloads new .exe but reports old version → infinite loop).
+**Use `windows-scanner/build.sh` — always.** Manual `pyinstaller` invocations
+broke the deploy twice in one day (3.45.0 hotfix at ~04:30 PKT, 3.47.1 hotfix
+at ~20:00 PKT, both 2026-04-25). The wrapper enforces the discipline that
+shipping a broken binary requires bypassing — not just remembering.
 
 ```
 cd windows-scanner
-rm -rf build/ __pycache__/
-pyinstaller --onefile --windowed --clean --name BilalDriveMan-Scanner drive_scanner.py
-shasum -a 256 dist/BilalDriveMan-Scanner.exe | awk '{print $1}' > dist/BilalDriveMan-Scanner.exe.sha256
+./build.sh        # refuses to run on a dirty tree
 ```
 
-After rebuild, commit BOTH the .exe and the .sha256 sidecar. The auto-update mechanism
-fetches both from GitHub raw URLs and verifies the binary matches the sidecar before
-swapping.
+The script:
+1. Refuses to run if `git status --porcelain` is non-empty (forces commit-then-build,
+   binary always matches a committed source revision)
+2. Nukes `build/`, `__pycache__/`, any `*.spec` files, and stale `dist/*.exe*`
+3. Runs `pyinstaller --onefile --windowed --clean --hidden-import=wetransfer_provider`
+4. Computes SHA256 of the produced .exe and writes the sidecar (LF endings)
+5. Echoes source VERSION + commit + SHA so the human sees what got built
+
+**Override only for development**: `ALLOW_DIRTY=1 ./build.sh` skips the dirty-tree guard.
+Production builds must never use that.
+
+After build, commit BOTH `dist/BilalDriveMan-Scanner.exe` and the `.sha256` sidecar
+**in the same commit as the source change that bumped VERSION**. Auto-update fetches
+both from GitHub raw URLs and verifies the binary matches the sidecar before swapping.
+
+### Auto-update regression test (run after touching build/auto-update code)
+
+We've validated this end-to-end three times today (3.45.0 hotfix, 3.46.0 cycle, 3.47.1
+hotfix). The procedure:
+
+1. Bump `VERSION` in `windows-scanner/drive_scanner.py` on a sandbox branch
+2. Run `./build.sh` and verify the echoed SHA differs from the prior build
+3. Commit + push. Wait for the GitHub raw URL to serve the new file
+4. On a Windows PC running the previous version: observe `scanner.log`
+5. Within 60s of the next auto-update tick, the log should show:
+   ```
+   Auto-update: remote vX.Y.Z differs from local vP.Q.R, downloading .exe
+   Auto-update: launching shim, exiting to let it replace exe
+   Drive monitor started   ← from the relaunched, NEW process
+   ```
+6. After relaunch, the running process should NOT trigger another `Auto-update:
+   remote differs` line on the next tick. If it does — the build was broken
+   (stale pyc), kill all processes, run `./build.sh` again, commit a hotfix.
+
+**Failure signature**: every ~60s the log shows `Auto-update: remote ... differs from
+local <SAME OLD VERSION>` repeatedly. Zombie scanner processes accumulate. This is
+ALWAYS a build-side bug, never a network or auto-update logic bug. The fix is the
+hotfix path documented above (and `build.sh` makes it impossible to recur).
 
 ## Cloud Pipeline (Downloading-Pro feature)
 
