@@ -360,6 +360,35 @@ export default requireAuth(async function handler(req, res) {
           return res.status(400).json({ error: 'Invalid id' });
         }
 
+        // Fetch project before delete so we can stop the scanner mid-flight
+        // and sync Notion. Without this, removing a downloading project orphans
+        // the scanner thread + leaves Notion's status stale (next notion-sync
+        // would re-create the project as not-deleted).
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+
+        if (project?.assigned_machine) {
+          // Best-effort cancel — scanner's handle_cancel_download will signal
+          // its cancel-event, which propagates to staging download loops + the
+          // 90s wait-and-poll tick. Failure here shouldn't block the delete.
+          try {
+            await supabasePost('download_commands', {
+              machine_name: project.assigned_machine,
+              command: 'cancel_download',
+              project_id: pid,
+              status: 'pending',
+            });
+          } catch (e) {
+            console.error('Cancel-on-remove failed:', e.message);
+          }
+        }
+
+        // Notion sync to 'idle' so the next notion-sync doesn't see a stale
+        // 'Downloading' state for a now-deleted row and recreate it.
+        if (project?.notion_page_id) {
+          syncNotionStatus(project.notion_page_id, 'idle');
+        }
+
         await supabaseFetch(`download_projects?id=eq.${pid}`, {
           method: 'DELETE',
         });
