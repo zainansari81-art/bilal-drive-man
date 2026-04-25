@@ -1,10 +1,10 @@
 """
-Windows Scanner V.3.46.1 - BILAL DRIVE MAN
+Windows Scanner V.3.47.0 - BILAL DRIVE MAN
 Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.46.1'
+VERSION = '3.47.0'
 
 import os
 import sys
@@ -1341,6 +1341,267 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
     return staging_dir
 
 
+# ─── WeTransfer direct-download (v3.47.0) ──────────────────────────────────
+#
+# v3.47.0 lifts the WeTransfer primitives Mac-Claude pre-shipped in
+# `wetransfer_provider.py` (commit 4666ae4) and wires them through the same
+# parallel staging pattern as gdrive (v3.46.0). Shares: staging dir layout,
+# `.staging-state.json` atomic write, ThreadPoolExecutor(6), cancel-event
+# honor, download-progress telemetry (gdrive_staging phase + bytes_done /
+# total_bytes_expected from 3.46.1).
+#
+# Removes the `raise Exception('WeTransfer handler coming in scanner 3.47.0')`
+# guard that was added to `handle_add_to_cloud` in 3.46.0 as a stop-gap
+# after Mac's `a0b95ff` un-blocked WeTransfer portal-side.
+#
+# Staging lives in a distinct root from gdrive so the post-copy cleanup
+# hook in `handle_copy_to_drive` knows which tree to rmtree.
+
+import wetransfer_provider as _wt
+
+WETRANSFER_STAGING_ROOT = os.path.join(
+    os.environ.get('LOCALAPPDATA', os.path.join(os.environ.get('USERPROFILE', ''), 'AppData', 'Local')),
+    'BilalDriveMan',
+    'wetransfer-staging',
+)
+WETRANSFER_MAX_CONCURRENT = 6
+
+
+def _wetransfer_staging_dir(project_id):
+    safe_id = ''.join(c for c in (project_id or 'unknown') if c.isalnum() or c in '-_')
+    d = os.path.join(WETRANSFER_STAGING_ROOT, safe_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _wetransfer_cleanup_staging(project_id):
+    """Mirror of _cleanup_staging for the wetransfer root. Called post-copy."""
+    import shutil as _sh
+    safe_id = ''.join(c for c in (project_id or 'unknown') if c.isalnum() or c in '-_')
+    d = os.path.join(WETRANSFER_STAGING_ROOT, safe_id)
+    if os.path.isdir(d):
+        try:
+            _sh.rmtree(d, ignore_errors=True)
+            logging.info(f"Cleaned up wetransfer staging: {d}")
+        except Exception as e:
+            logging.warning(f"Could not fully clean wetransfer staging {d}: {e}")
+
+
+def add_wetransfer_share(download_link, project_id=None, cancel_evt=None, config=None):
+    """v3.47.0: direct-download a WeTransfer share to a local staging dir.
+
+    Returns absolute staging dir path (for cloud_folder_path) — same
+    contract as `add_gdrive_shared_folder`. Idempotent via
+    `.staging-state.json`. Parallel downloads via ThreadPoolExecutor(6).
+    Telemetry: emits `gdrive_staging` phase (reused — the portal treats
+    both gdrive + wetransfer as "downloading to local staging" visually)
+    with progress_bytes + total_bytes_expected on every file completion.
+    """
+    # 1. URL parsing / short-link resolution.
+    transfer_id, security_hash, is_short = _wt.extract_transfer_ids(download_link)
+    if is_short:
+        canonical = _wt.resolve_short_link(download_link)
+        if not canonical:
+            raise Exception('WeTransfer short link could not be resolved (expired or invalid)')
+        transfer_id, security_hash, _ = _wt.extract_transfer_ids(canonical)
+    if not transfer_id or not security_hash:
+        raise Exception(f'Could not extract WeTransfer transfer_id/security_hash from: {download_link}')
+
+    # 2. prepare-download → enumerate items. Strip folder entries (we
+    # reconstruct folder structure from file item names' slashes).
+    try:
+        meta = _wt.prepare_download(transfer_id, security_hash)
+    except urllib.error.HTTPError as e:
+        code = e.code
+        if code in (403, 404, 410):
+            raise Exception(f'WeTransfer share unavailable ({code}) — expired, removed, or security_hash rejected')
+        raise
+    items = [it for it in (meta.get('items') or []) if it.get('content_identifier') != 'folder']
+    if not items:
+        raise Exception('WeTransfer share has no downloadable files (empty or all folders)')
+
+    staging_dir = _wetransfer_staging_dir(project_id)
+    state = _staging_state_read(staging_dir)
+
+    # Idempotent short-circuit: if we already downloaded this same transfer
+    # (transfer_id match), return the cached staging dir.
+    if state and state.get('state') == 'complete' and state.get('transfer_id') == transfer_id:
+        logging.info(f"wetransfer staging already complete for {project_id}: {staging_dir}")
+        return staging_dir
+
+    # Compute totals up front for portal telemetry.
+    total_bytes_expected = 0
+    for it in items:
+        sz = it.get('size')
+        if sz is not None:
+            try:
+                total_bytes_expected += int(sz)
+            except (TypeError, ValueError):
+                pass
+
+    # Fresh / partially-complete state.
+    if not state or state.get('transfer_id') != transfer_id:
+        state = {
+            'project_id': project_id,
+            'provider': 'wetransfer',
+            'transfer_id': transfer_id,
+            'started_at': datetime.utcnow().isoformat() + 'Z',
+            'completed_files': {},
+            'failed_files': {},
+            'total_expected': len(items),
+            'total_bytes_expected': total_bytes_expected,
+            'state': 'downloading',
+        }
+    else:
+        state['state'] = 'downloading'
+        state['total_expected'] = len(items)
+        state['total_bytes_expected'] = total_bytes_expected
+    _staging_state_write(staging_dir, state)
+
+    # Emit initial progress so the portal bar renders before file 1 lands.
+    if project_id and config is not None:
+        try:
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'downloading',
+                'phase': 'gdrive_staging',  # reused phase string; same UX
+                'progress_bytes': 0,
+                'total_bytes_expected': total_bytes_expected,
+            })
+        except Exception as e:
+            logging.warning(f"Initial wetransfer progress emit failed: {e}")
+
+    completed = state.setdefault('completed_files', {})
+    failed = state.setdefault('failed_files', {})
+
+    def _cancel_check():
+        if cancel_evt is not None and cancel_evt.is_set():
+            raise CancelledError(f"wetransfer download cancelled for {project_id}")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _download_task(item):
+        fid = item['id']
+        if fid in completed:
+            return ('skipped', fid, completed[fid].get('size', 0))
+
+        # WeTransfer file names may contain forward slashes encoding folder
+        # structure — preserve them by mapping to OS separators.
+        raw_name = item.get('name') or f'file-{fid}'
+        # Split on '/' so we can sanitize each segment without losing hierarchy.
+        segments = [_wt._sanitize_filename(seg) for seg in raw_name.split('/') if seg]
+        if not segments:
+            segments = ['unnamed_file']
+        rel_os = os.sep.join(segments)
+        dest = os.path.normpath(os.path.join(staging_dir, rel_os))
+
+        # Path-traversal guard.
+        real_staging = os.path.realpath(staging_dir)
+        real_dest = os.path.realpath(os.path.dirname(dest))
+        if not real_dest.startswith(real_staging):
+            return ('failed', fid, 'path_traversal_detected')
+
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        expected_size = item.get('size')
+        try:
+            expected_size = int(expected_size) if expected_size is not None else None
+        except (TypeError, ValueError):
+            expected_size = None
+
+        # Skip if already complete (disk has it with correct size).
+        if expected_size is not None and os.path.exists(dest) and os.path.getsize(dest) == expected_size:
+            return ('ok', fid, expected_size, dest)
+
+        # `stream_download` handles Range-resumable retries + mid-download
+        # direct_link refresh + cancel cooperatively. We feed it a closure
+        # so the 5-min presigned URL can be re-minted without leaving the
+        # function.
+        def _refresh_url(tid=transfer_id, sh=security_hash, id_=fid):
+            return _wt.request_file_download_url(tid, sh, id_)
+
+        try:
+            direct_link = _refresh_url()
+            if not direct_link:
+                return ('failed', fid, 'no_direct_link')
+            _wt.stream_download(
+                direct_link, dest,
+                expected_size=expected_size,
+                cancel_check=_cancel_check,
+                refresh_url_fn=_refresh_url,
+            )
+        except CancelledError:
+            raise
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 404, 410):
+                return ('failed', fid, f'http_{e.code}')
+            return ('failed', fid, f'http_{e.code}')
+        except Exception as e:
+            return ('failed', fid, f'{type(e).__name__}: {e}')
+
+        bytes_written = os.path.getsize(dest) if os.path.exists(dest) else 0
+        return ('ok', fid, bytes_written, dest)
+
+    with ThreadPoolExecutor(max_workers=WETRANSFER_MAX_CONCURRENT) as ex:
+        futures = {ex.submit(_download_task, it): it for it in items}
+        done_count = 0
+        total_bytes = 0
+        for fut in as_completed(futures):
+            try:
+                result = fut.result()
+            except CancelledError:
+                for other in futures:
+                    other.cancel()
+                state['state'] = 'cancelled'
+                _staging_state_write(staging_dir, state)
+                raise
+            status = result[0]
+            fid = result[1]
+            if status == 'ok':
+                written = result[2]
+                dest = result[3]
+                completed[fid] = {'path': dest, 'size': written}
+                total_bytes += written
+            elif status == 'skipped':
+                total_bytes += result[2]
+            else:
+                reason = result[2]
+                existing = failed.get(fid, {})
+                failed[fid] = {
+                    'reason': reason,
+                    'attempts': (existing.get('attempts', 0) or 0) + 1,
+                }
+                logging.warning(f"wetransfer file {fid} failed: {reason}")
+            done_count += 1
+            state['bytes_done'] = total_bytes
+            if done_count % 5 == 0:
+                _staging_state_write(staging_dir, state)
+            if project_id and config is not None:
+                try:
+                    api_request(config, 'download-progress', {
+                        'project_id': project_id,
+                        'status': 'downloading',
+                        'phase': 'gdrive_staging',
+                        'progress_bytes': total_bytes,
+                        'total_bytes_expected': total_bytes_expected,
+                    })
+                except Exception:
+                    pass
+
+    if not failed:
+        state['state'] = 'complete'
+    else:
+        state['state'] = 'complete_with_failures'
+    state['completed_files'] = completed
+    state['failed_files'] = failed
+    _staging_state_write(staging_dir, state)
+
+    logging.info(
+        f"wetransfer direct-download done: {len(completed)} files ok, "
+        f"{len(failed)} failed, staging={staging_dir}"
+    )
+    return staging_dir
+
+
 # ─── API Sync ───────────────────────────────────────────────────────────────
 
 API_KEY = os.environ.get('SCANNER_API_KEY', '')
@@ -1686,19 +1947,26 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
     try:
         folder_name = None
         cloud_folder_abs = None  # v3.46.0: gdrive returns abs path directly
-        # v3.46.0: stop-gap guard for wetransfer. Mac's a0b95ff un-blocked
-        # wetransfer in pages/api/download-projects.js → scanner starts
-        # receiving commands for link_type='wetransfer' projects. Real
-        # handler ships in scanner-3.47.0; until then fail cleanly with
-        # an error_message so the UI shows what's going on rather than
-        # hanging forever on a silent no-op.
         if link_type == 'wetransfer':
-            raise Exception(
-                'WeTransfer handler coming in scanner 3.47.0 — '
-                'project will process once scanner updates'
+            # v3.47.0: real handler. Uses wetransfer_provider (primitives)
+            # + add_wetransfer_share (orchestrator). Returns absolute staging
+            # dir path, same contract as gdrive direct-download.
+            cancel_evt = _get_cancel_event(project_id)
+            cloud_folder_abs = add_wetransfer_share(
+                download_link,
+                project_id=project_id,
+                cancel_evt=cancel_evt,
+                config=config,
             )
+            try:
+                _s = _staging_state_read(cloud_folder_abs)
+                folder_name = (_s or {}).get('transfer_id') or os.path.basename(
+                    cloud_folder_abs.rstrip(os.sep)
+                )
+            except Exception:
+                folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
 
-        if link_type == 'dropbox':
+        elif link_type == 'dropbox':
             folder_name = call_with_token_retry(
                 config, 'dropbox',
                 lambda tok: add_dropbox_shared_folder(tok, download_link),
@@ -1887,17 +2155,21 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
 
     logging.info(f"Copied {client_name}/{couple_name} to {target_drive_label} ({format_size(total_copied)})")
 
-    # v3.46.0: gdrive staging cleanup. If the source was in the gdrive-staging
-    # tree, rmtree it now that the copy succeeded — frees local disk and
-    # prevents stale state files from misleading a future retry. Dropbox
-    # folders are managed by the Dropbox client, never cleaned by us.
+    # v3.46.0/3.47.0: staging cleanup. If the source was under EITHER the
+    # gdrive-staging OR wetransfer-staging tree, rmtree it now that the copy
+    # succeeded. Frees local disk + prevents stale state files from misleading
+    # a future retry. Dropbox folders are managed by the Dropbox client,
+    # never cleaned by us.
     try:
         real_source = os.path.realpath(source_path)
-        real_staging_root = os.path.realpath(GDRIVE_STAGING_ROOT)
-        if real_source.startswith(real_staging_root):
+        real_gdrive_root = os.path.realpath(GDRIVE_STAGING_ROOT)
+        real_wt_root = os.path.realpath(WETRANSFER_STAGING_ROOT)
+        if real_source.startswith(real_gdrive_root):
             _cleanup_staging(project_id)
+        elif real_source.startswith(real_wt_root):
+            _wetransfer_cleanup_staging(project_id)
     except Exception as cleanup_err:
-        logging.warning(f"Post-copy gdrive cleanup check failed: {cleanup_err}")
+        logging.warning(f"Post-copy staging cleanup check failed: {cleanup_err}")
 
 
 def handle_start_download(config, project_id, payload, known_drives, cmd_id):
