@@ -57,8 +57,9 @@ swapping.
 
 ## Cloud Pipeline (Downloading-Pro feature)
 
-Two link types fully supported: Dropbox + Google Drive. WeTransfer is intentionally
-blocked at the API layer (returns `WETRANSFER_NOT_IMPLEMENTED`).
+Three link types supported: Dropbox + Google Drive + WeTransfer. All three flow
+through the wizard's link_type dispatch (DownloadWizardModal.fetchShareStatus →
+appropriate /api/*-share-status endpoint).
 
 ### Dropbox flow
 1. Notion sync detects `dropbox.com` URL → `link_type=dropbox`
@@ -77,14 +78,49 @@ blocked at the API layer (returns `WETRANSFER_NOT_IMPLEMENTED`).
    on modern Dropbox/OneDrive/iCloud)
 8. After all files materialize, scanner copies to `<target_drive>:\<client>\<couple>\<files>\`
 
-### Google Drive flow
-- Same wizard pattern, but `/api/gdrive-share-status` checks if our app's OAuth token
-  can READ the share (Google Drive API). No popup needed — if our token has access,
-  wizard advances directly. If not, surface error about share permissions.
-- Scanner currently uses old shortcut-API path (creates Drive shortcut, syncs via
-  Drive desktop client). Refactor to direct-download via Drive API is in flight
-  (option D — uses files.get(alt=media) to download files directly to a staging
-  folder, no Drive desktop dependency).
+### Google Drive flow (scanner v3.46.0+ — direct download)
+- Wizard: `/api/gdrive-share-status` checks if our app's OAuth token can READ the
+  share. No popup — if token has access, wizard advances directly. If not, surface
+  error about share permissions.
+- Scanner: `add_gdrive_shared_folder(token, link, project_id, cancel_evt)` resolves
+  folder via `files.get(supportsAllDrives=true)`, recursively lists via
+  `files.list(q="'<id>' in parents")` with pageToken loop, downloads each file via
+  `files.get(alt=media)` streaming 8MB chunks with Range-resumable retry through a
+  ThreadPoolExecutor(6). Google Apps native types (Doc/Sheet/Slide/Drawing) export
+  to docx/xlsx/pptx/pdf via `_GDRIVE_EXPORT_MAP`. Files land in
+  `%LOCALAPPDATA%\BilalDriveMan\gdrive-staging\<project_id>\` then copy_to_drive
+  picks up the staging path as `cloud_folder_path`. Cleanup via `shutil.rmtree`
+  after copy success. No Drive desktop client involvement, no quota consumption.
+- Idempotency via `.staging-state.json` (atomic .tmp + rename) — crash/reboot
+  resume picks up at last completed file, transfer_id+folder_id guard against
+  user editing the link mid-job.
+
+### WeTransfer flow (scanner v3.47.0+ — direct download, per-file)
+- Wizard: `/api/wetransfer-share-status` resolves we.tl 302 chain to canonical
+  URL, extracts transfer_id + security_hash, calls WeTransfer's
+  `/api/v4/transfers/<id>/prepare-download` to confirm reachability + extract
+  file_count + total_size_bytes + expires_at. No "join" model — joined=true
+  means share is alive + not expired (anonymous public shares, ~7-day TTL).
+- Scanner: `add_wetransfer_share(link, project_id, cancel_evt, config)` reuses
+  the GDrive 3.46.0 staging primitives. wetransfer_provider.py exposes
+  `extract_transfer_ids`, `resolve_short_link`, `prepare_download`,
+  `request_file_download_url`, `stream_download` (Range-resumable, mid-download
+  direct_link refresh via closure on 403, exp backoff on 429/5xx, cancel-check
+  at chunk boundary, size verification). Per-file direct download — NO zip
+  (zip route fails mid-transfer for big sets per Zain).
+- Files land in `%LOCALAPPDATA%\BilalDriveMan\wetransfer-staging\<project_id>\`,
+  copy_to_drive picks up via cloud_folder_path. Cleanup hook checks both gdrive
+  + wetransfer staging roots.
+
+### Progress telemetry (scanner v3.46.1+)
+- `total_bytes_expected` column on `download_projects` (BIGINT, nullable).
+  Scanner emits it once per project right after the listing phase completes
+  (gdrive: after `files.list` recursion; wetransfer: after `prepare_download`).
+- `phase='gdrive_staging'` (reused for both gdrive + wetransfer staging) is the
+  signal that staging is in flight; portal renders progress_bytes /
+  total_bytes_expected as the live bar denominator. Falls back to
+  `cloud_size_bytes` when total_bytes_expected is NULL (Dropbox path — only
+  knows size after pin completes).
 
 ### Drive folder structure
 Files always land at `<target_drive>:\<client_name>\<couple_name>\<files>` on the
