@@ -121,6 +121,44 @@ appropriate /api/*-share-status endpoint).
   total_bytes_expected as the live bar denominator. Falls back to
   `cloud_size_bytes` when total_bytes_expected is NULL (Dropbox path — only
   knows size after pin completes).
+- *Migration required:* run
+  `ALTER TABLE download_projects ADD COLUMN IF NOT EXISTS total_bytes_expected BIGINT;`
+  in Supabase SQL Editor before the column populates. Scanner swallows the 400
+  silently if column missing — downloads still work, just no progress telemetry.
+
+### progress_bytes column footgun
+- *DO NOT use `download_progress_bytes`* — it's a legacy column that exists in
+  Supabase but is never updated by any code path. The live source-of-truth is
+  `progress_bytes` (scanner writes via `/api/download-progress.js`).
+- The portal card (`components/DownloadingProPage.js`) reads `progress_bytes` first,
+  falls back to `download_progress_bytes` only for historical rows. Don't reorder
+  or reintroduce `download_progress_bytes` as the primary read.
+
+## WeTransfer code-review-only smoke (scanner v3.47.0)
+- The 3.47.0 WeTransfer integration was *not* live E2E-tested. WeTransfer's 2026
+  free-tier gating (account/email required, captcha) made scripted upload from a
+  CLI session infeasible without browser automation we deemed too costly.
+- Code is integration-tested via `python3 -m py_compile` + `npm run build` only.
+- *First production WeTransfer download is the de-facto smoke test.* Watchpoints
+  to monitor on first real client share:
+  1. `_wt.resolve_short_link` 302 chain — most likely break vector if WeTransfer
+     adds bot detection on HEAD requests
+  2. `prepare_download` 403/404 on expired or quota-blocked shares
+  3. mid-stream `direct_link` refresh on 403 — closure-based, not network-tested
+- If the first real download fails, project is cancelable cleanly (cooperative
+  cancel-event wired through staging loop), so the failure is contained.
+
+## Two-Claude Coordination quirks
+- *Idle-update obligation:* if either side is idle for >30 min, post
+  `[mac/win] idle, available for tasks` in #claude-coord. Lets Zain hand off work
+  + lets the other side claim it.
+- *Email escalation rule:* if a side goes silent for 30 consecutive minutes when
+  the other is waiting on output, the other side emails Zain at
+  `zainansari0340@gmail.com` (from his logged-in `zainansari81@gmail.com` Gmail).
+  Don't sit on a blocker.
+- *Slack as task channel:* Zain may post tasks directly in #claude-coord
+  (untagged → first to ack takes it; `@mac`/`@win` → that side claims). Watch
+  every 60s tick like coord messages, treat user posts as work input.
 
 ### Drive folder structure
 Files always land at `<target_drive>:\<client_name>\<couple_name>\<files>` on the
@@ -161,10 +199,18 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
 - `/api/scanner-reset-stale-acked` — scanner boot recovery: PATCH acked-but-stale commands back to pending (atomic, server-clock cutoff)
 
 ### Notable dashboard-auth endpoints
-- `/api/download-projects` — list, plus actions (download_now, resume, cancel, etc.)
+- `/api/download-projects` — list, plus actions (download_now, resume, cancel, remove, etc.)
+  - `remove` action sends `cancel_download` to scanner BEFORE deleting the row (so scanner
+    stops staging) AND syncs Notion to 'idle' (so the next notion-sync doesn't re-create
+    the project with stale 'Downloading' status). Without this, removing a mid-download
+    project orphans the scanner thread + leaves Notion stale. Don't strip the cancel
+    or sync.
 - `/api/notion-sync` — pull from Notion → upsert download_projects
 - `/api/dropbox-share-status` — wizard check before download_now
 - `/api/gdrive-share-status` — same for Drive shares
+- `/api/wetransfer-share-status` — same for WeTransfer shares. Accepts EITHER
+  `?project_id=<uuid>` (normal flow) OR `?url=<wetransfer-link>` (ad-hoc QA mode for
+  validating an arbitrary we.tl link without creating a Notion card first)
 - `/api/cloud-accounts` — list of available Dropbox/GDrive accounts (Gap 1)
 
 ## Critical CSS Note (page-transition)
