@@ -637,7 +637,12 @@ function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
   const sizeGb = project.size_gb || '';
   const projectDate = project.project_date || '';
   const progress = project.download_progress_bytes || 0;
-  const totalSize = project.cloud_size_bytes || 0;
+  // Prefer scanner-emitted total_bytes_expected (gdrive/wetransfer staging
+  // know the full size up-front via API listing). Fall back to cloud_size_bytes
+  // (Dropbox sync — only known after pin completes). If neither is set, the
+  // bar renders empty until one populates.
+  const totalSize =
+    project.total_bytes_expected || project.cloud_size_bytes || 0;
   const projectId = project.id;
 
   const isDropbox = /dropbox/i.test(downloadLink);
