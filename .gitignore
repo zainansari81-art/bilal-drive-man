@@ -8,3 +8,14 @@ out/
 
 # Claude Code auto-memory (machine-local, never commit)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# PyInstaller intermediate artifacts. windows-scanner/build.sh regenerates
+# these on each build; we never commit them. The deployed binary at
+# windows-scanner/dist/BilalDriveMan-Scanner.exe IS committed (auto-update
+# fetches it from GitHub raw), but the build/ tree and the .spec file are
+# transient.
+windows-scanner/build/
+windows-scanner/__pycache__/
+windows-scanner/*.spec

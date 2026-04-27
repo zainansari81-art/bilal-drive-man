@@ -1,3 +1,6 @@
 # Windows scanner build artifacts — binary, don't diff or merge
 windows-scanner/dist/*.exe binary
 windows-scanner/dist/*.exe.sha256 text eol=lf
+
+# Bash script — LF endings or it won't run via bash on Windows / cross-platform
+windows-scanner/build.sh text eol=lf
