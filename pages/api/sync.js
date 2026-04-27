@@ -1,5 +1,101 @@
 import { addHistory, supabasePost, supabasePatch, supabaseFetch } from '../../lib/supabase';
 import { requireApiKey, sanitizeString, validatePositiveNumber } from '../../lib/auth';
+import { updateNotionProjectStatus } from '../../lib/notion';
+
+/**
+ * Auto-reset on couple-folder deletion (Option A — companion to manual
+ * `?action=reset` on /api/download-projects).
+ *
+ * When a previously-present couple folder disappears from a connected
+ * drive (the surrounding sync handler flips `couples.is_present` to
+ * false), check whether any matching `download_projects` row should be
+ * unlocked for re-download. The trigger:
+ *   - There exists a download_projects row with download_status='completed'
+ *     and matching couple_name (case-insensitive trimmed match).
+ *   - No other connected drive currently has the same couple folder
+ *     present (count of `couples` rows with is_present=true on a drive
+ *     where is_connected=true equals zero for that couple_name).
+ *
+ * If both hold, reset the project: clear download_status / phase /
+ * progress / cloud_folder_path / completed_at / error_message, and
+ * mirror 'idle' to Notion so Bilal sees the project as ready-to-pull
+ * again. This catches the workflow where Bilal deletes the local copy
+ * after a few days and a client later delivers changes — the project
+ * becomes downloadable again automatically without him touching the UI.
+ *
+ * Best-effort: any error is logged but doesn't abort the surrounding
+ * sync (the drive scan is the user-visible operation; reset is a
+ * janitor pass).
+ */
+async function autoResetCompletedProjects(removedCoupleNames) {
+  if (!removedCoupleNames || removedCoupleNames.size === 0) return 0;
+
+  let resetCount = 0;
+  try {
+    // Cache: which couple_names are still alive somewhere (any connected
+    // drive). Single query covering all the names we removed in this
+    // sync, instead of N round-trips.
+    const namesArr = Array.from(removedCoupleNames);
+    const inList = namesArr
+      .map(n => `"${n.replace(/"/g, '\\"')}"`)
+      .join(',');
+    const aliveCouples = await supabaseFetch(
+      `couples?couple_name=in.(${encodeURIComponent(inList)})` +
+        `&is_present=eq.true&select=couple_name,client:clients(drive:drives(is_connected))`
+    );
+    const aliveSomewhere = new Set();
+    for (const c of aliveCouples || []) {
+      if (c.client?.drive?.is_connected === true) {
+        aliveSomewhere.add((c.couple_name || '').trim().toLowerCase());
+      }
+    }
+
+    // Names that are now dead everywhere — candidates for project reset.
+    const deadNames = namesArr.filter(
+      n => !aliveSomewhere.has((n || '').trim().toLowerCase())
+    );
+    if (deadNames.length === 0) return 0;
+
+    const deadInList = deadNames
+      .map(n => `"${n.replace(/"/g, '\\"')}"`)
+      .join(',');
+    const candidates = await supabaseFetch(
+      `download_projects?couple_name=in.(${encodeURIComponent(deadInList)})` +
+        `&download_status=eq.completed` +
+        `&select=id,couple_name,notion_page_id`
+    );
+
+    for (const proj of candidates || []) {
+      try {
+        await supabasePatch(`download_projects?id=eq.${proj.id}`, {
+          download_status: 'idle',
+          download_phase: null,
+          progress_bytes: 0,
+          total_bytes_expected: null,
+          cloud_status: 'pending',
+          cloud_folder_path: null,
+          error_message: null,
+          completed_at: null,
+        });
+        if (proj.notion_page_id) {
+          updateNotionProjectStatus(proj.notion_page_id, 'idle').catch(() => {});
+        }
+        resetCount++;
+        console.log(
+          `[auto-reset] Project ${proj.id} (couple="${proj.couple_name}") ` +
+          `reset to idle: no connected drive has this couple folder present.`
+        );
+      } catch (e) {
+        console.error(
+          `[auto-reset] Failed to reset project ${proj.id}:`, e.message
+        );
+      }
+    }
+  } catch (e) {
+    console.error('[auto-reset] Outer error (sync continues):', e.message);
+  }
+  return resetCount;
+}
 
 async function supabaseGet(path) {
   return supabaseFetch(path);
@@ -195,6 +291,7 @@ export default requireApiKey(async function handler(req, res) {
       }
 
       // Mark removed couples
+      const removedCoupleNames = new Set();
       if (foldersRemoved > 0) {
         for (const ec of allDriveCouples) {
           if (ec.is_present && !currentCoupleKeys.has(`${ec.client_id}:${ec.couple_name}`)) {
@@ -202,7 +299,24 @@ export default requireApiKey(async function handler(req, res) {
               is_present: false,
               last_seen: new Date().toISOString(),
             });
+            removedCoupleNames.add(ec.couple_name);
           }
+        }
+      }
+
+      // Auto-reset completed download_projects whose only copy was on
+      // this drive (Option A). Best-effort, never aborts the sync.
+      const resetCount = await autoResetCompletedProjects(removedCoupleNames);
+      if (resetCount > 0) {
+        try {
+          await addHistory({
+            drive_id: driveId,
+            volume_label: volumeLabel,
+            event_type: 'projects_auto_reset',
+            details: `Auto-reset ${resetCount} completed project(s) — couple folder no longer present on any connected drive. They are now downloadable again.`,
+          });
+        } catch (e) {
+          console.error('[auto-reset] history insert failed:', e.message);
         }
       }
 
