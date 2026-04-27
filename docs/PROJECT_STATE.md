@@ -2,7 +2,51 @@
 
 > **READ THIS FIRST at the start of every session.** This is the running source of truth for what the project is, how it works, what we've fixed, what's broken, and what's next. Update at the end of every task that changes behavior, ships code, or moves the architecture. CLAUDE.md (in repo root) is for stable conventions. This file is for evolving state.
 
-Last updated: 2026-04-26 — initial creation, takeover-from-win-Claude session.
+Last updated: 2026-04-26 — added §0 Standing Operating Procedure.
+
+---
+
+## 0. Standing Operating Procedure (read every session)
+
+These are the standing rules from Zain. They override prior session improvisation. If anything below conflicts with an old §10 entry, this section wins.
+
+**Authority & ownership:**
+- I (mac-Claude) am the boss. Win-Claude on AAHIL is my employee. I give directions, he executes and reports.
+- I am also the working operator — I do the heavy lifting (code, git, architecture, docs, SQL, test orchestration). Win is testing-only on AAHIL.
+- Final decisions are mine. I should ask win for his perspective when his AAHIL-side knowledge helps, weigh it, and decide.
+
+**Polling cadence:**
+- Check Slack every ~1 minute when I'm free / between tasks. Don't go dormant for long stretches without a reason.
+- Win has the same protocol — autopolls Slack and reacts when free. I tell him what to do, expect a Slack-update after each task.
+- If win's response time is dragging on a blocker, ping again rather than wait silently.
+
+**Capabilities I have full access to (don't second-guess):**
+- The browser (Supabase dashboard, Vercel, Notion, Gmail, OAuth Playground, anything else open in Claude-in-Chrome).
+- Git: branch, commit, push, merge, cherry-pick. Always commit with explicit messages and Co-Authored-By; ship to main only when verified or explicitly approved.
+- Supabase via the dashboard's Bearer-token endpoint (`POST https://api.supabase.com/v1/projects/dialxndobebudwexsubr/database/query`) for any read or write — including DDL, command insertion, row resets.
+- Slack via the MCP — read + send messages in `#claude-coord` (C0AUX615GQK).
+- Gmail via the open Chrome tab — compose + send emails to Zain when needed (his email: `zainansari0340@gmail.com`).
+
+**When to email Zain (he is AFK by default — protect his attention):**
+- ONLY for important decisions I can't make autonomously, OR for milestone reports.
+- "GDrive workflow fully functional after E2E test" is the next milestone email — until then, work silently.
+- For everyday status, just push commits + update this doc + Slack.
+
+**E2E testing rules:**
+- I drive the test. Win observes and reports.
+- It's OK to rename a Notion test card slightly to force a fresh project row + fresh download_link if needed.
+- When something fails, fix it in real-time if I can; otherwise tell win and let him execute.
+- Make a feature *fully functional* before reporting up to Zain. Half-working is not done.
+
+**Coordination protocol with win:**
+- I assign tasks; win acks; win reports completion with concrete artifacts (commit SHA, PID list, log line, file path).
+- Win's specific value-adds: physical access to AAHIL filesystem, Dropbox/Drive desktop client state, scanner.log tail, `tasklist` output, .exe rebuild via build.sh.
+- If a task is purely portal-side (API endpoints, components, SQL, docs), I don't need win — just ship.
+- If a task needs scanner code change → I write the code, win runs build.sh on AAHIL and ships the .exe + sidecar. Branch flow (don't push source to main without paired .exe).
+
+**Self-management:**
+- When my context approaches 50%, I run `/compact` myself and update this doc with anything new since last update so the next compaction round still has full state.
+- Update this doc after every task that ships a commit or changes behavior. §10 is the running session log.
 
 ---
 
