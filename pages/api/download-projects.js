@@ -395,6 +395,60 @@ export default requireAuth(async function handler(req, res) {
         return res.status(200).json({ success: true });
       }
 
+      if (action === 'reset') {
+        // Manual "Re-download" — clears completion state on a project so the
+        // wizard treats it as fresh. Used when Bilal has deleted the local
+        // copy from the external drive and wants to re-pull (e.g. client gave
+        // changes after the original download). Auto-reset on couple-folder
+        // deletion is the scanner's job (drive scanner detects is_present
+        // flip and resets); this endpoint is the manual override for cases
+        // where the scanner can't observe the deletion (offline drive,
+        // renamed folder, etc.).
+        const pid = req.body.projectId || req.body.id;
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (!project) {
+          return res.status(404).json({ error: 'Project not found' });
+        }
+
+        // Only allow reset from terminal states. Resetting a live download
+        // would orphan the scanner thread (use cancel/remove for that).
+        const allowedStatuses = ['completed', 'failed'];
+        if (!allowedStatuses.includes(project.download_status)) {
+          return res.status(400).json({
+            error: 'INVALID_STATE',
+            message:
+              `Cannot reset a project in status='${project.download_status}'. ` +
+              `Only completed or failed projects can be reset.`,
+          });
+        }
+
+        const updated = await supabasePatch(`download_projects?id=eq.${pid}`, {
+          download_status: 'idle',
+          download_phase: null,
+          progress_bytes: 0,
+          total_bytes_expected: null,
+          cloud_status: 'pending',
+          cloud_folder_path: null,
+          error_message: null,
+          completed_at: null,
+        });
+
+        // Notion mirror so next notion-sync doesn't re-stamp 'Done' over our
+        // fresh idle state. Best-effort — failure here doesn't block the
+        // reset (Notion sync is eventually-consistent and a manual flip is
+        // always possible).
+        if (project.notion_page_id) {
+          syncNotionStatus(project.notion_page_id, 'idle');
+        }
+
+        return res.status(200).json(updated);
+      }
+
       if (action === 'set-target') {
         const { projectId, targetDrive } = req.body;
         const pid = projectId || req.body.id;

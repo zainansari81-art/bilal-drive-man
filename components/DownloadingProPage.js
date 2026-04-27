@@ -499,6 +499,28 @@ function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadCl
           {downloadStatus === 'failed' && (
             <button className="dp-list-action-btn primary" onClick={() => onDownloadClick(project)}>Restart</button>
           )}
+          {downloadStatus === 'completed' && (
+            // Re-download — for when the local copy was deleted from the
+            // target drive (e.g. 7-day cleanup) and the client has now
+            // delivered changes. Clears completion state, then opens the
+            // download wizard so the user can re-confirm machine + drive.
+            <button
+              className="dp-list-action-btn primary"
+              onClick={async () => {
+                if (!confirm(
+                  'Re-download this project?\n\n' +
+                  'This clears the "completed" mark so you can pull a fresh ' +
+                  'copy. Use this when client gave changes after the original ' +
+                  'download or you removed the local copy from the drive.'
+                )) return;
+                await onAction(projectId, 'reset');
+                onDownloadClick(project);
+              }}
+              title="Reset completion state and re-open the download wizard."
+            >
+              Re-download
+            </button>
+          )}
         </span>
       </div>
 
