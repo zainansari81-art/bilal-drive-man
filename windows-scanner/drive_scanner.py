@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.47.1'
+VERSION = '3.48.0'
 
 import os
 import sys
@@ -2009,31 +2009,66 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
                 folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
 
         elif link_type == 'dropbox':
-            folder_name = call_with_token_retry(
-                config, 'dropbox',
-                lambda tok: add_dropbox_shared_folder(tok, download_link),
-            )
-        elif link_type == 'google_drive':
-            # v3.46.0: direct-download to staging dir. Grab cancel event so
-            # the downloader can abort cooperatively between chunks/files.
-            cancel_evt = _get_cancel_event(project_id)
-            cloud_folder_abs = call_with_token_retry(
-                config, 'google_drive',
-                lambda tok: add_gdrive_shared_folder(
-                    tok, download_link,
-                    project_id=project_id, cancel_evt=cancel_evt,
-                    config=config,
-                ),
-            )
-            # folder_name is whatever the leaf directory is named; mostly used
-            # for logs. Pull from the root_name we stored in staging state.
-            try:
-                _s = _staging_state_read(cloud_folder_abs)
-                folder_name = (_s or {}).get('root_name') or os.path.basename(
-                    cloud_folder_abs.rstrip(os.sep)
+            # v3.48.0: pre-check the local Dropbox sync folder. When the
+            # Dropbox desktop client is signed into Bilal's account and
+            # the share has previously been "Added to my Dropbox" (either
+            # by an earlier scanner run with OAuth, or by Bilal manually
+            # via the web UI), the folder is already on disk. We can
+            # skip the API mount and use the local path directly — no
+            # OAuth credentials required in this case.
+            existing_local = find_cloud_folder(config, 'dropbox', couple_name)
+            if existing_local:
+                cloud_folder_abs = existing_local
+                folder_name = os.path.basename(existing_local.rstrip(os.sep))
+                logging.info(
+                    f"Dropbox short-circuit: found existing local folder "
+                    f"'{existing_local}' for couple '{couple_name}'; "
+                    f"skipping OAuth mount."
                 )
-            except Exception:
-                folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
+            else:
+                folder_name = call_with_token_retry(
+                    config, 'dropbox',
+                    lambda tok: add_dropbox_shared_folder(tok, download_link),
+                )
+        elif link_type == 'google_drive':
+            # v3.48.0: same pre-check for Google Drive. If the user has
+            # the Drive for Desktop client running and has already added
+            # the share to "My Drive" (manually via web UI, or via an
+            # earlier scanner run), the folder is on disk and we can
+            # skip the OAuth direct-download. find_cloud_folder() walks
+            # the configured gdrive_path and returns the matching folder
+            # if it exists. Falls through to the v3.46.0 direct-download
+            # path (which DOES need OAuth) only if no local copy exists.
+            existing_local_gd = find_cloud_folder(config, 'google_drive', couple_name)
+            if existing_local_gd:
+                cloud_folder_abs = existing_local_gd
+                folder_name = os.path.basename(existing_local_gd.rstrip(os.sep))
+                logging.info(
+                    f"GDrive short-circuit: found existing local folder "
+                    f"'{existing_local_gd}' for couple '{couple_name}'; "
+                    f"skipping OAuth direct-download."
+                )
+            else:
+                # v3.46.0: direct-download to staging dir. Grab cancel event so
+                # the downloader can abort cooperatively between chunks/files.
+                cancel_evt = _get_cancel_event(project_id)
+                cloud_folder_abs = call_with_token_retry(
+                    config, 'google_drive',
+                    lambda tok: add_gdrive_shared_folder(
+                        tok, download_link,
+                        project_id=project_id, cancel_evt=cancel_evt,
+                        config=config,
+                    ),
+                )
+                # folder_name is whatever the leaf directory is named; mostly
+                # used for logs. Pull from root_name we stored in staging state.
+                try:
+                    _s = _staging_state_read(cloud_folder_abs)
+                    folder_name = (_s or {}).get('root_name') or os.path.basename(
+                        cloud_folder_abs.rstrip(os.sep)
+                    )
+                except Exception:
+                    folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
         else:
             api_patch(config, 'download-commands', {
                 'id': cmd_id, 'status': 'failed',
