@@ -255,6 +255,13 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
 - 2026-04-26 early hours:
   - Re-fired GDrive E2E test (mac-side direct command insert). Same error confirmed: scanner alive, pipeline working, AAHIL config still empty.
   - Created this PROJECT_STATE.md and consolidated state ahead of taking over win's responsibilities.
+- 2026-04-26 afternoon:
+  - **Live E2E self-test fired** for both Dropbox ("ZAINN testing") and Google Drive ("gdrive-test - DO NOT DELETE") — driven via direct `download_commands` insert (mac side).
+  - *New finding:* Dropbox is also blocked on AAHIL. `add_to_cloud` failed with `"No dropbox token configured in scanner settings"`. Earlier assumption that Dropbox was working was wrong — the previously-completed ZAINN row succeeded only because `cloud_folder_path` was already mounted; OAuth credentials are missing too. Both Dropbox AND GDrive scanner credentials must be populated on AAHIL `config.json` to unblock real downloads.
+  - *UX bug discovered (deferred):* when commands fail, the *project* stays in `download_status='downloading'` indefinitely. Scanner only patches the command, not the project. Wizard shows a spinner forever — silent failure UX. Worth a follow-up patch.
+  - **Re-download / project-reset workflow shipped (Options A + B both portal-side, no scanner change):**
+    - `a72decb` — Option B: manual "Re-download" button on completed projects + `?action=reset` endpoint. Confirms with dialog, clears completion state, re-opens download wizard.
+    - `76f8a32` — Option A: auto-reset on couple-folder deletion. `/api/sync.js` now detects when a previously-present couple disappears from all connected drives + flips matching completed `download_projects` back to `idle` (clears `cloud_folder_path` + Notion-mirrors 'idle'). History event `projects_auto_reset` is written for audit. Multi-drive case handled (project stays completed until ALL copies gone).
 - 2026-04-26 midday:
   - **Mac-Claude takeover from win-Claude complete.** Per Zain's consolidation directive: I (mac) own all code, git, architecture, docs going forward. Win is testing-only on AAHIL.
   - Shipped `c05f86b` — this PROJECT_STATE.md as the session-start source of truth.
