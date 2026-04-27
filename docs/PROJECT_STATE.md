@@ -255,3 +255,14 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
 - 2026-04-26 early hours:
   - Re-fired GDrive E2E test (mac-side direct command insert). Same error confirmed: scanner alive, pipeline working, AAHIL config still empty.
   - Created this PROJECT_STATE.md and consolidated state ahead of taking over win's responsibilities.
+- 2026-04-26 midday:
+  - **Mac-Claude takeover from win-Claude complete.** Per Zain's consolidation directive: I (mac) own all code, git, architecture, docs going forward. Win is testing-only on AAHIL.
+  - Shipped `c05f86b` — this PROJECT_STATE.md as the session-start source of truth.
+  - Merged win's `scanner-3.47.2-build-script` (`db91f9a`) into main as `d400271` — `windows-scanner/build.sh` + auto-update regression doc + `.gitignore`/`.gitattributes` are now on main.
+  - Win audited AAHIL state: nothing local-only worth pushing. Stash @{0} contents superseded — dropping. No rogue `.md` files. `windows-scanner/dist/` only has the canonical pair. Confirmed `config.json` + `scanner.log` + `build/` artifacts intentionally never committed.
+  - Win's local `.exe` is 1309 bytes off main's canonical (16,601,648 vs 16,600,339; PyInstaller bundle stamping difference, functionally identical v3.47.1). Won't push. Will self-reconcile on next scanner restart.
+  - **AAHIL operational snapshot (per win, recorded for next session):**
+    - Scanner v3.47.1 running, PIDs alive from yesterday's launch
+    - `%APPDATA%/BilalDriveMan/config.json` GDrive credentials still empty — *unchanged blocker*
+    - scanner.log: clean drive-detect ticks, no errors
+    - Win autopolls Slack at 2-3 min cadence; mac autopolls 5-30 min based on activity
