@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.47.1'
+VERSION = '3.49.0'
 
 import os
 import sys
@@ -1696,6 +1696,71 @@ def api_patch(config, endpoint, data):
         return None
 
 
+def fetch_credentials_from_portal(config):
+    """v3.49.0: pull OAuth credentials from /api/scanner-credentials so we
+    don't need a manual config.json edit on each PC.
+
+    Idempotent + safe-fallback: if the portal is unreachable or the env
+    vars aren't populated on Vercel, we keep whatever's already in the
+    local config.json. Successful fetches merge into in-memory config
+    AND persist to disk via save_config so the next launch works even
+    if the network is down.
+
+    Never overwrites a populated local credential with a null from the
+    portal — defensive against a Vercel env-var deletion accidentally
+    wiping working scanner config.
+
+    Returns the (possibly mutated) config dict.
+    """
+    try:
+        creds = api_get(config, 'scanner-credentials')
+    except Exception as e:
+        logging.warning(f"scanner-credentials fetch raised: {e}; keeping local config.")
+        return config
+    if not creds:
+        logging.info("scanner-credentials returned empty; keeping local config.")
+        return config
+
+    changed = False
+    dropbox = creds.get('dropbox')
+    if dropbox:
+        for src, dst in (
+            ('refresh_token', 'dropbox_refresh_token'),
+            ('app_key',       'dropbox_app_key'),
+            ('app_secret',    'dropbox_app_secret'),
+        ):
+            v = dropbox.get(src) or ''
+            if v and config.get(dst, '') != v:
+                config[dst] = v
+                changed = True
+
+    gdrive = creds.get('google_drive')
+    if gdrive:
+        for src, dst in (
+            ('refresh_token', 'gdrive_refresh_token'),
+            ('client_id',     'gdrive_client_id'),
+            ('client_secret', 'gdrive_client_secret'),
+        ):
+            v = gdrive.get(src) or ''
+            if v and config.get(dst, '') != v:
+                config[dst] = v
+                changed = True
+
+    if changed:
+        try:
+            save_config(config)
+            logging.info(
+                f"scanner-credentials: refreshed local config (dropbox={'yes' if dropbox else 'no'}, "
+                f"gdrive={'yes' if gdrive else 'no'}). Persisted to disk."
+            )
+        except Exception as e:
+            logging.warning(f"scanner-credentials: in-memory updated but persist failed: {e}")
+    else:
+        logging.info("scanner-credentials: local config already matches portal; no-op.")
+
+    return config
+
+
 def get_machine_name():
     """Get this PC's computer name."""
     import socket
@@ -2009,31 +2074,66 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
                 folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
 
         elif link_type == 'dropbox':
-            folder_name = call_with_token_retry(
-                config, 'dropbox',
-                lambda tok: add_dropbox_shared_folder(tok, download_link),
-            )
-        elif link_type == 'google_drive':
-            # v3.46.0: direct-download to staging dir. Grab cancel event so
-            # the downloader can abort cooperatively between chunks/files.
-            cancel_evt = _get_cancel_event(project_id)
-            cloud_folder_abs = call_with_token_retry(
-                config, 'google_drive',
-                lambda tok: add_gdrive_shared_folder(
-                    tok, download_link,
-                    project_id=project_id, cancel_evt=cancel_evt,
-                    config=config,
-                ),
-            )
-            # folder_name is whatever the leaf directory is named; mostly used
-            # for logs. Pull from the root_name we stored in staging state.
-            try:
-                _s = _staging_state_read(cloud_folder_abs)
-                folder_name = (_s or {}).get('root_name') or os.path.basename(
-                    cloud_folder_abs.rstrip(os.sep)
+            # v3.48.0: pre-check the local Dropbox sync folder. When the
+            # Dropbox desktop client is signed into Bilal's account and
+            # the share has previously been "Added to my Dropbox" (either
+            # by an earlier scanner run with OAuth, or by Bilal manually
+            # via the web UI), the folder is already on disk. We can
+            # skip the API mount and use the local path directly — no
+            # OAuth credentials required in this case.
+            existing_local = find_cloud_folder(config, 'dropbox', couple_name)
+            if existing_local:
+                cloud_folder_abs = existing_local
+                folder_name = os.path.basename(existing_local.rstrip(os.sep))
+                logging.info(
+                    f"Dropbox short-circuit: found existing local folder "
+                    f"'{existing_local}' for couple '{couple_name}'; "
+                    f"skipping OAuth mount."
                 )
-            except Exception:
-                folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
+            else:
+                folder_name = call_with_token_retry(
+                    config, 'dropbox',
+                    lambda tok: add_dropbox_shared_folder(tok, download_link),
+                )
+        elif link_type == 'google_drive':
+            # v3.48.0: same pre-check for Google Drive. If the user has
+            # the Drive for Desktop client running and has already added
+            # the share to "My Drive" (manually via web UI, or via an
+            # earlier scanner run), the folder is on disk and we can
+            # skip the OAuth direct-download. find_cloud_folder() walks
+            # the configured gdrive_path and returns the matching folder
+            # if it exists. Falls through to the v3.46.0 direct-download
+            # path (which DOES need OAuth) only if no local copy exists.
+            existing_local_gd = find_cloud_folder(config, 'google_drive', couple_name)
+            if existing_local_gd:
+                cloud_folder_abs = existing_local_gd
+                folder_name = os.path.basename(existing_local_gd.rstrip(os.sep))
+                logging.info(
+                    f"GDrive short-circuit: found existing local folder "
+                    f"'{existing_local_gd}' for couple '{couple_name}'; "
+                    f"skipping OAuth direct-download."
+                )
+            else:
+                # v3.46.0: direct-download to staging dir. Grab cancel event so
+                # the downloader can abort cooperatively between chunks/files.
+                cancel_evt = _get_cancel_event(project_id)
+                cloud_folder_abs = call_with_token_retry(
+                    config, 'google_drive',
+                    lambda tok: add_gdrive_shared_folder(
+                        tok, download_link,
+                        project_id=project_id, cancel_evt=cancel_evt,
+                        config=config,
+                    ),
+                )
+                # folder_name is whatever the leaf directory is named; mostly
+                # used for logs. Pull from root_name we stored in staging state.
+                try:
+                    _s = _staging_state_read(cloud_folder_abs)
+                    folder_name = (_s or {}).get('root_name') or os.path.basename(
+                        cloud_folder_abs.rstrip(os.sep)
+                    )
+                except Exception:
+                    folder_name = os.path.basename(cloud_folder_abs.rstrip(os.sep))
         else:
             api_patch(config, 'download-commands', {
                 'id': cmd_id, 'status': 'failed',
@@ -2744,6 +2844,11 @@ def run_with_tray():
         return
 
     config = load_config()
+    # v3.49.0: pull OAuth credentials from /api/scanner-credentials on
+    # boot so we don't need a manual config.json edit on each PC. Safe
+    # fallback — if the portal is unreachable or env vars aren't set on
+    # Vercel, we keep whatever's already in the local config.
+    config = fetch_credentials_from_portal(config)
     status_text = ["Starting..."]
 
     def on_status(msg):
@@ -2788,6 +2893,11 @@ def run_with_tray():
 def run_console():
     """Run in console mode (no tray icon needed)."""
     config = load_config()
+    # v3.49.0: pull OAuth credentials from /api/scanner-credentials on
+    # boot so we don't need a manual config.json edit on each PC. Safe
+    # fallback — if the portal is unreachable or env vars aren't set on
+    # Vercel, we keep whatever's already in the local config.
+    config = fetch_credentials_from_portal(config)
     print("=" * 50)
     print(f"  Windows Scanner V.{VERSION} - BILAL DRIVE MAN")
     print(f"  Syncing to: {config['api_url']}")
