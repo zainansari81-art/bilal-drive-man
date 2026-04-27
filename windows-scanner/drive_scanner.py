@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.49.0'
+VERSION = '3.49.1'
 
 import os
 import sys
@@ -1721,7 +1721,22 @@ def fetch_credentials_from_portal(config):
         logging.info("scanner-credentials returned empty; keeping local config.")
         return config
 
+    # v3.49.1 diagnostic: log the response shape (key names + value lengths,
+    # no actual secret material). Helps debug the "log says refreshed but
+    # disk has empty values" case observed on AAHIL — we need to see whether
+    # the scanner actually receives populated dicts or empty/null shells.
+    def _redact_lens(d):
+        if not isinstance(d, dict):
+            return f"<not-dict: {type(d).__name__}>"
+        return {k: (len(v) if isinstance(v, str) else f"<{type(v).__name__}>") for k, v in d.items()}
+    logging.info(
+        f"scanner-credentials response: top_keys={list(creds.keys())}, "
+        f"dropbox={_redact_lens(creds.get('dropbox')) if creds.get('dropbox') is not None else 'None'}, "
+        f"google_drive={_redact_lens(creds.get('google_drive')) if creds.get('google_drive') is not None else 'None'}"
+    )
+
     changed = False
+    updates_applied = []  # v3.49.1: track what actually got updated, for log
     dropbox = creds.get('dropbox')
     if dropbox:
         for src, dst in (
@@ -1730,9 +1745,11 @@ def fetch_credentials_from_portal(config):
             ('app_secret',    'dropbox_app_secret'),
         ):
             v = dropbox.get(src) or ''
-            if v and config.get(dst, '') != v:
+            local_v = config.get(dst, '') or ''
+            if v and local_v != v:
                 config[dst] = v
                 changed = True
+                updates_applied.append(f"{dst}(portal_len={len(v)},local_was_len={len(local_v)})")
 
     gdrive = creds.get('google_drive')
     if gdrive:
@@ -1742,21 +1759,56 @@ def fetch_credentials_from_portal(config):
             ('client_secret', 'gdrive_client_secret'),
         ):
             v = gdrive.get(src) or ''
-            if v and config.get(dst, '') != v:
+            local_v = config.get(dst, '') or ''
+            if v and local_v != v:
                 config[dst] = v
                 changed = True
+                updates_applied.append(f"{dst}(portal_len={len(v)},local_was_len={len(local_v)})")
 
     if changed:
         try:
             save_config(config)
             logging.info(
-                f"scanner-credentials: refreshed local config (dropbox={'yes' if dropbox else 'no'}, "
-                f"gdrive={'yes' if gdrive else 'no'}). Persisted to disk."
+                f"scanner-credentials: refreshed local config "
+                f"(dropbox={'yes' if dropbox else 'no'}, gdrive={'yes' if gdrive else 'no'}). "
+                f"Updates applied: {updates_applied}. Persisted to disk."
             )
+            # v3.49.1: re-read from disk and verify the values we just wrote
+            # actually landed. If save_config silently failed (permission, fs
+            # weirdness) we want to know NOW, not three downloads later.
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    on_disk = json.load(f)
+                missing = [
+                    dst for (_src, dst) in [
+                        ('refresh_token', 'dropbox_refresh_token'),
+                        ('app_key',       'dropbox_app_key'),
+                        ('app_secret',    'dropbox_app_secret'),
+                        ('refresh_token', 'gdrive_refresh_token'),
+                        ('client_id',     'gdrive_client_id'),
+                        ('client_secret', 'gdrive_client_secret'),
+                    ]
+                    if config.get(dst) and on_disk.get(dst, '') != config.get(dst)
+                ]
+                if missing:
+                    logging.error(
+                        f"scanner-credentials: post-save verify FAILED — keys "
+                        f"{missing} are in memory but not on disk. save_config "
+                        f"may have silently failed."
+                    )
+                else:
+                    logging.info(
+                        f"scanner-credentials: post-save verify OK — disk matches memory."
+                    )
+            except Exception as e:
+                logging.warning(f"scanner-credentials: post-save verify raised: {e}")
         except Exception as e:
             logging.warning(f"scanner-credentials: in-memory updated but persist failed: {e}")
     else:
-        logging.info("scanner-credentials: local config already matches portal; no-op.")
+        logging.info(
+            f"scanner-credentials: local config already matches portal; no-op. "
+            f"(dropbox_present={dropbox is not None}, gdrive_present={gdrive is not None})"
+        )
 
     return config
 
