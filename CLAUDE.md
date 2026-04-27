@@ -64,6 +64,27 @@ After build, commit BOTH `dist/BilalDriveMan-Scanner.exe` and the `.sha256` side
 **in the same commit as the source change that bumped VERSION**. Auto-update fetches
 both from GitHub raw URLs and verifies the binary matches the sidecar before swapping.
 
+### Pre-merge runtime-verification trap (CRITICAL)
+
+**Never runtime-launch a scanner build whose source VERSION is ahead of main** (e.g. you bumped 3.49.1 → 3.49.2 locally, main is still 3.49.1). The boot-time `auto_update()` peeks remote main, sees local > remote, **downgrades** — downloads main's stale .exe, swaps via the batch shim, exits. Result: `dist/.exe` now contains main's old binary but your sidecar still has the new SHA. Silent corruption.
+
+Verify ahead-of-main builds **statically** instead:
+- Use PyInstaller's `CArchiveReader` to extract bundled bytecode from the .exe
+- Walk `co_consts` of the `drive_scanner` module to confirm `VERSION = '<new>'`
+- Confirm new function names exist in the PYZ
+- Confirm new log-string constants are embedded
+- This is bulletproof against the stale-`__pycache__` and the auto-update-downgrade traps
+
+After main merges to the new version, runtime-launch is safe (local matches remote, no swap fires).
+
+**Branch-flow for new scanner versions:**
+1. Mac edits source, bumps VERSION, commits to a `scanner-X.Y.Z-<feature>` branch
+2. Win pulls the branch, runs `./build.sh` (or `ALLOW_DIRTY=1 ./build.sh`), commits + pushes the new `.exe` + `.sha256` to the same branch
+3. Mac merges branch → main with `--no-ff` (preserves lineage). Source + .exe + sidecar land together; auto-update on AAHIL sees consistent triple.
+4. Mac deletes the dead branch from origin
+
+Never push v(N+1) source to main without a paired v(N+1) `.exe` rebuild — that's the original zombie-loop scenario `build.sh` exists to prevent.
+
 ### Auto-update regression test (run after touching build/auto-update code)
 
 We've validated this end-to-end three times today (3.45.0 hotfix, 3.46.0 cycle, 3.47.1
@@ -87,6 +108,15 @@ hotfix). The procedure:
 local <SAME OLD VERSION>` repeatedly. Zombie scanner processes accumulate. This is
 ALWAYS a build-side bug, never a network or auto-update logic bug. The fix is the
 hotfix path documented above (and `build.sh` makes it impossible to recur).
+
+## Scanner credentials architecture (v3.49.2+)
+
+OAuth credentials live in **one place**: Vercel env vars. The scanner pulls them via `/api/scanner-credentials` at startup and persists to local `%APPDATA%\BilalDriveMan\config.json`. **Never manually edit the OAuth keys in `config.json`** — they get auto-populated on next launch and any manual edit is overwritten.
+
+- Endpoint: `/api/scanner-credentials` (X-API-Key auth, returns `{dropbox: {refresh_token, app_key, app_secret} | null, google_drive: {refresh_token, client_id, client_secret} | null}`)
+- Scanner: `fetch_credentials_from_portal(config)` runs in `main()` after `load_config()`. Force-writes (no `local_v != v` short-circuit — that comparison was unreliable in 3.49.0/3.49.1, see PROJECT_STATE for the chase). Includes post-save verify that re-reads disk and logs ERROR if any field is in memory but not on disk.
+- *Adding a new PC:* install scanner with empty `config.json`. On first launch, scanner auto-fetches OAuth keys + persists. No manual edit. Only **paths** (`dropbox_path`, `gdrive_path`) and `is_download_pc` need to be hand-set per PC.
+- `dropbox_path` and `gdrive_path` are NOT credentials — they're operator config. Hand-set per machine. Used by `find_cloud_folder()` for the Dropbox shortcut path.
 
 ## Cloud Pipeline (Downloading-Pro feature)
 
@@ -127,6 +157,14 @@ appropriate /api/*-share-status endpoint).
 - Idempotency via `.staging-state.json` (atomic .tmp + rename) — crash/reboot
   resume picks up at last completed file, transfer_id+folder_id guard against
   user editing the link mid-job.
+- **Known limitation (3.49.2):** GDrive folders with **trailing whitespace** in
+  the name (e.g. `"montage reference two "`) cause `os.makedirs` to fail with
+  `[Errno 2] No such file or directory` on Windows. Affected files land in
+  `.staging-state.json.failed_files` with the path-traversal error. Fix is
+  scheduled for 3.50.0: `.rstrip()` each path segment before `os.path.join()`,
+  or switch to `pathlib`. Workaround for now: rename the GDrive folder client-
+  side OR accept that those files will fail (rest of the share downloads
+  fine — partial-failure tracking captures them).
 
 ### WeTransfer flow (scanner v3.47.0+ — direct download, per-file)
 - Wizard: `/api/wetransfer-share-status` resolves we.tl 302 chain to canonical
@@ -181,18 +219,6 @@ appropriate /api/*-share-status endpoint).
 - If the first real download fails, project is cancelable cleanly (cooperative
   cancel-event wired through staging loop), so the failure is contained.
 
-## Two-Claude Coordination quirks
-- *Idle-update obligation:* if either side is idle for >30 min, post
-  `[mac/win] idle, available for tasks` in #claude-coord. Lets Zain hand off work
-  + lets the other side claim it.
-- *Email escalation rule:* if a side goes silent for 30 consecutive minutes when
-  the other is waiting on output, the other side emails Zain at
-  `zainansari0340@gmail.com` (from his logged-in `zainansari81@gmail.com` Gmail).
-  Don't sit on a blocker.
-- *Slack as task channel:* Zain may post tasks directly in #claude-coord
-  (untagged → first to ack takes it; `@mac`/`@win` → that side claims). Watch
-  every 60s tick like coord messages, treat user posts as work input.
-
 ### Drive folder structure
 Files always land at `<target_drive>:\<client_name>\<couple_name>\<files>` on the
 external drive. If `<client_name>` folder already exists, reuse + create couple
@@ -246,6 +272,14 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
   validating an arbitrary we.tl link without creating a Notion card first)
 - `/api/cloud-accounts` — list of available Dropbox/GDrive accounts (Gap 1)
 
+## Diagnostic discipline on Windows (AAHIL)
+
+**Reading `config.json` to verify on-disk content:** use `cat path | python -c "..."`, **NOT** `python -c "open(path).read()"`. The latter has a Git-Bash + Python read-caching quirk on AAHIL that returns stale content even after fresh writes — caused us a 3-hour debugging chase in the 3.49.0 → 3.49.1 → 3.49.2 cycle (we thought scanner wasn't persisting credentials, when in fact disk was correct and the verification tool was lying). Always pipe through `cat` for live reads.
+
+**Heartbeat upsert footgun:** `pages/api/heartbeat.js` line 48 only calls `supabasePost('download_machines', …)` if `is_download_pc || dropbox_path || gdrive_path` is truthy. If all three are falsy in a heartbeat payload (e.g. scanner has empty config), the upsert is skipped entirely. *That means `download_machines.dropbox_path` in Supabase can show stale values that no longer reflect the live scanner config.* Don't trust the DB row as authoritative for live config — query the running scanner's heartbeat payload directly if you need ground truth.
+
+**Network-isolated scanner is still useful:** `googleapis.com`, `api.dropboxapi.com`, etc. resolve via separate DNS paths from `bilal-drive-man.vercel.app`. AAHIL can be portal-isolated (heartbeats failing, command poll dead) while still actively downloading from cloud APIs. When heartbeat is stale, **check `.staging-state.json.bytes_done` mtime** before assuming the download is dead — bytes may still be flowing locally.
+
 ## Critical CSS Note (page-transition)
 
 `.page-transition` uses an opacity-only animation (no transform). DO NOT add a
@@ -253,17 +287,23 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
 block for descendants and breaks `position: fixed` on modal overlays
 (DownloadWizardModal, DownloadMagicAnimation). Was a real bug we already fixed.
 
-## Two-Claude Coordination
+## Two-Claude Coordination (consolidated 2026-04-26)
 
-This project is worked by two Claude instances simultaneously:
-- *Mac Claude*: handles portal (Next.js + Vercel), web UI, OAuth setup via browser,
-  Mac-side scanner (when added), all deployments to local Mac filesystem + GitHub main
-- *Windows Claude*: handles Windows scanner code on AAHIL PC, builds the .exe, deploys
-  to AAHIL specifically, runs E2E tests on the Windows side
+Per Zain's consolidation directive: **mac-Claude (this Claude) owns all dev work.** Win-Claude is testing-only on AAHIL.
 
-They coordinate via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` /
-`[win]` prefix. *Deployments are split:* Mac handles Mac/local + GitHub merges, Win
-handles AAHIL .exe deployments. Each side respects the other's territory.
+- *Mac (me)*: all code (portal, scanner Python, mac-scanner), all git operations, all architecture decisions, all docs (CLAUDE.md + PROJECT_STATE.md), all Supabase queries, all OAuth/Vercel work, all build cycles. Never auto-commit without explicit user greenlight.
+- *Win (AAHIL)*: live testing only — fires test downloads on operator command, tails `scanner.log`, runs `tasklist | findstr BilalDriveMan` for liveness checks, edits `config.json` paths (`dropbox_path`/`gdrive_path` only — never OAuth keys). Reports observations back via Slack; mac writes them into PROJECT_STATE.
+
+Coordination via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` / `[win]` prefix.
+
+**Build cycle for scanner changes** (since mac can't build Windows .exe):
+1. Mac commits source change to a `scanner-X.Y.Z-<feature>` branch (NEVER push directly to main without paired .exe)
+2. Win pulls branch, runs `./build.sh` (or `ALLOW_DIRTY=1 ./build.sh`), commits + pushes new `.exe` + `.sha256` to same branch
+3. Mac merges branch → main with `--no-ff`, deletes branch from origin
+
+**Idle-update obligation:** if either side is idle for >30 min, post `[mac/win] idle, available for tasks` in #claude-coord.
+
+**Email escalation rule:** if a side goes silent for 30 consecutive minutes when the other is waiting on output, the other side emails Zain at `zainansari0340@gmail.com` (from his logged-in `zainansari81@gmail.com` Gmail). Don't sit on a blocker.
 
 ## Conventions
 - NEVER expose Supabase keys in client-side code

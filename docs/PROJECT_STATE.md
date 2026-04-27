@@ -301,6 +301,22 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
 - 2026-04-26 early hours:
   - Re-fired GDrive E2E test (mac-side direct command insert). Same error confirmed: scanner alive, pipeline working, AAHIL config still empty.
   - Created this PROJECT_STATE.md and consolidated state ahead of taking over win's responsibilities.
+- 2026-04-26 evening (cycle wrap):
+  - **copy_to_drive partial test fired (cmd `14dcb4ed`).** Re-fired `start_download` for `eddba0c4` with explicit `cloud_folder_path` pointing to the populated GDrive staging dir + `target_drive='extreme pro'`. Scanner executed the **entire pipeline cleanly through the 5-step happy path:**
+    - 21:21:24 `Monitoring cloud folder: <staging dir>` — Path A activated, no 90s wait
+    - 21:21:33 `Pinned 10/10 files for offline download`
+    - 21:21:45 `Cloud check #1: 10/10 files offline`
+    - 21:21:45 `All 10 files are offline! Starting copy...`
+    - 21:21:45 `ERROR: Target drive not found: extreme pro` — **environmental, not a code bug**
+  - **Extreme Pro (D:) is unplugged from AAHIL** (last "Detected drive" log entry was 19:23:55 PKT, ~2hrs before the GDrive download even started). The 7 GDrive files (462 MiB) are sitting in staging at `C:\Users\txbla\AppData\Local\BilalDriveMan\gdrive-staging\eddba0c4-.../` waiting for the drive to come back. Re-fire same `start_download` once Bilal reconnects Extreme Pro.
+  - **Net for the morning task:** the GDrive download flow is **proven working end-to-end** through every code path that doesn't require physical hardware presence. v3.46.0 direct-download → v3.47.1 staging hygiene → handle_start_download Path A → handle_copy_to_drive's drive-presence check. Last step halts cleanly with actionable error when target drive missing — exactly the right behavior.
+  - **CLAUDE.md durable-conventions update:** added 5 new sections / rules captured from today's chase:
+    1. `## Scanner credentials architecture (v3.49.2+)` — `/api/scanner-credentials` is source of truth, never manually edit OAuth keys in `config.json`
+    2. `### Pre-merge runtime-verification trap` — never runtime-launch ahead-of-main scanner builds, use CArchiveReader static verification
+    3. Branch-flow for new scanner versions (mac source change → win .exe rebuild → mac merge)
+    4. Trailing-whitespace folder limitation noted in GDrive flow section
+    5. `## Diagnostic discipline on Windows (AAHIL)` — `cat path | python` not `python -c "open"`, heartbeat upsert footgun, network-isolated scanner can still download
+  - Two-Claude Coordination section rewritten: mac owns all dev work, win is testing-only.
 - 2026-04-26 late afternoon:
   - **AAHIL scanner died unexpectedly at ~14:14 PKT.** PIDs 9336 + 1876 gone, no traceback, no graceful shutdown line. Last log line was a normal drive-detect tick. Win discovered ~30 min later when starting the 3.49.0 build cycle. Probable cause: OS sleep/lock during a DNS-flap (network errors had been recurring just before the gap). Logged as a known-but-unexplained failure mode. **Workaround:** scanner runs as a tray app, not a service — if AAHIL is going to be unattended for long stretches, install it as a Windows service so the OS can't kill the orphan. Backlog item.
   - **Architectural fix shipped: `/api/scanner-credentials` endpoint + scanner auto-fetch.** Vercel-side endpoint returns Dropbox + GDrive OAuth credentials gated by SYNC_API_KEY. Scanner pulls at startup, merges into in-memory config, persists locally. Closes the dual-config footgun (PROJECT_STATE §6 architectural item). Adding a new PC = install scanner → auto-fetch creds → ready, no manual config.json edit.
