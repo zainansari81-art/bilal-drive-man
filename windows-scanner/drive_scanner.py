@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.49.1'
+VERSION = '3.49.2'
 
 import os
 import sys
@@ -1735,8 +1735,24 @@ def fetch_credentials_from_portal(config):
         f"google_drive={_redact_lens(creds.get('google_drive')) if creds.get('google_drive') is not None else 'None'}"
     )
 
+    # v3.49.2: removed the `local_v != v` short-circuit. In 3.49.1 win
+    # observed that with TEST sentinel values in local config and clearly-
+    # different real values from the portal (different lengths, different
+    # content), the != comparison evaluated False for all 6 fields and
+    # changed stayed False — leading to a no-op despite the values
+    # genuinely differing. The comparison logic is broken in some way we
+    # can't reason about from outside (likely an artifact of how the
+    # scanner's runtime sees the dict — possibly a frozen-dict view from
+    # urllib's response stream re-entering the parser, but unproven).
+    #
+    # The optimization wasn't pulling its weight anyway: writing 6 string
+    # fields to a JSON file once at startup is microseconds even on the
+    # slowest disk; the optimization only saves a write when local already
+    # matches portal exactly, which is a small minority of launches. Drop
+    # it. Always write when portal returns populated dicts. Per-iteration
+    # diagnostic logging stays so the next time this hits we have data.
     changed = False
-    updates_applied = []  # v3.49.1: track what actually got updated, for log
+    updates_applied = []
     dropbox = creds.get('dropbox')
     if dropbox:
         for src, dst in (
@@ -1746,10 +1762,27 @@ def fetch_credentials_from_portal(config):
         ):
             v = dropbox.get(src) or ''
             local_v = config.get(dst, '') or ''
-            if v and local_v != v:
+            # v3.49.2 instrumentation: log the comparison inputs verbatim
+            # (lengths only, no secret material). If this iteration would
+            # have triggered an update under the old logic, the answer
+            # tells us whether the bug was in `v`, `local_v`, or the !=
+            # operator itself.
+            logging.info(
+                f"  [creds-loop] {dst}: portal_len={len(v)} type={type(v).__name__} "
+                f"local_len={len(local_v)} type={type(local_v).__name__} "
+                f"would_old_update={'yes' if (v and local_v != v) else 'no'}"
+            )
+            if v:
+                # New v3.49.2 behavior: always write when portal returned a
+                # populated value. Track which fields actually had a delta
+                # so the success log still tells us something useful.
+                actually_changed = local_v != v
                 config[dst] = v
                 changed = True
-                updates_applied.append(f"{dst}(portal_len={len(v)},local_was_len={len(local_v)})")
+                updates_applied.append(
+                    f"{dst}(portal_len={len(v)},local_was_len={len(local_v)},"
+                    f"old_logic_would_have_updated={'yes' if actually_changed else 'no'})"
+                )
 
     gdrive = creds.get('google_drive')
     if gdrive:
@@ -1760,10 +1793,19 @@ def fetch_credentials_from_portal(config):
         ):
             v = gdrive.get(src) or ''
             local_v = config.get(dst, '') or ''
-            if v and local_v != v:
+            logging.info(
+                f"  [creds-loop] {dst}: portal_len={len(v)} type={type(v).__name__} "
+                f"local_len={len(local_v)} type={type(local_v).__name__} "
+                f"would_old_update={'yes' if (v and local_v != v) else 'no'}"
+            )
+            if v:
+                actually_changed = local_v != v
                 config[dst] = v
                 changed = True
-                updates_applied.append(f"{dst}(portal_len={len(v)},local_was_len={len(local_v)})")
+                updates_applied.append(
+                    f"{dst}(portal_len={len(v)},local_was_len={len(local_v)},"
+                    f"old_logic_would_have_updated={'yes' if actually_changed else 'no'})"
+                )
 
     if changed:
         try:
