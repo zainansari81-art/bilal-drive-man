@@ -205,14 +205,20 @@ appropriate /api/*-share-status endpoint).
 - Idempotency via `.staging-state.json` (atomic .tmp + rename) — crash/reboot
   resume picks up at last completed file, transfer_id+folder_id guard against
   user editing the link mid-job.
-- **Known limitation (3.49.2):** GDrive folders with **trailing whitespace** in
-  the name (e.g. `"montage reference two "`) cause `os.makedirs` to fail with
-  `[Errno 2] No such file or directory` on Windows. Affected files land in
-  `.staging-state.json.failed_files` with the path-traversal error. Fix is
-  scheduled for 3.50.0: `.rstrip()` each path segment before `os.path.join()`,
-  or switch to `pathlib`. Workaround for now: rename the GDrive folder client-
-  side OR accept that those files will fail (rest of the share downloads
-  fine — partial-failure tracking captures them).
+- **Trailing-whitespace fix (3.50.0+):** Each path segment is `.rstrip(' .')`'d
+  before `os.path.join()` inside `_download_task` — strips trailing spaces AND
+  trailing dots (Windows reserves both as illegal terminal chars in path
+  components). Verified end-to-end on 2026-04-28's arfoglow run: the
+  `montage reference two ` folder + its 3 files (including
+  `ref 2 copy (old v).mp4`) now copy cleanly to D:. Note this only handles
+  *trailing* whitespace — leading whitespace (e.g. `" montage ref 1 our version.mp4"`)
+  is preserved and works fine on Windows.
+- **Failed-files retry-success cleanup (3.51.0+):** When a previously-failed
+  file succeeds on retry, scanner now `failed.pop(fid, None)`'s its entry from
+  `.staging-state.json.failed_files` in both gdrive + wetransfer download
+  loops. Pre-3.51.0 bug: `"12 ok, 3 failed"` tally lied because the dict still
+  held the originally-failed IDs. Verified 22:33:54 PKT on 2026-04-28:
+  `"1 files ok, 0 failed"` — clean tally even after wedge-recovery scenario.
 
 ### WeTransfer flow (scanner v3.47.0+ — direct download, per-file)
 - Wizard: `/api/wetransfer-share-status` resolves we.tl 302 chain to canonical
@@ -327,6 +333,20 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
 **Heartbeat upsert footgun:** `pages/api/heartbeat.js` line 48 only calls `supabasePost('download_machines', …)` if `is_download_pc || dropbox_path || gdrive_path` is truthy. If all three are falsy in a heartbeat payload (e.g. scanner has empty config), the upsert is skipped entirely. *That means `download_machines.dropbox_path` in Supabase can show stale values that no longer reflect the live scanner config.* Don't trust the DB row as authoritative for live config — query the running scanner's heartbeat payload directly if you need ground truth.
 
 **Network-isolated scanner is still useful:** `googleapis.com`, `api.dropboxapi.com`, etc. resolve via separate DNS paths from `bilal-drive-man.vercel.app`. AAHIL can be portal-isolated (heartbeats failing, command poll dead) while still actively downloading from cloud APIs. When heartbeat is stale, **check `.staging-state.json.bytes_done` mtime** before assuming the download is dead — bytes may still be flowing locally.
+
+**Post-network-gap recovery is slow — don't kill prematurely.** After a long DNS outage (we saw a 5h gap on 2026-04-28 17:29 → 22:22 PKT), the scanner's cached OAuth tokens go stale and pending HTTP sockets to `googleapis.com` may hang on `socket.recv()` (urllib3 has no default timeout). When network returns, the next `add_to_cloud` will:
+1. Refresh the OAuth token (logs `Refreshed Google Drive access token`)
+2. Retry the in-flight call (logs `Retrying google_drive call after token refresh`)
+3. **Then go silent for 4–7 minutes** while the retry chain unwedges and the listing completes — log mtime appears stuck, drive-monitor heartbeat (normally every ~12s) also goes silent because the GIL is held by the gdrive thread.
+
+This is **NOT a wedge** — it's the OAuth+listing recovery path being slow. Verified 2026-04-28: scanner went silent 22:27:07 → 22:33:54 (6m47s), then completed the full happy path cleanly (download → pin → copy → cleanup). Don't kill+relaunch unless silence exceeds ~10 min AND CPU% stays at 0 AND memory is flat (no oscillation).
+
+Diagnostic ladder before declaring wedge:
+1. `tasklist /FI "IMAGENAME eq BilalDriveMan-Scanner.exe"` — both PIDs alive?
+2. Memory drift over 30s — oscillating (44M ↔ 61M) = working; flat = wedged
+3. `ping bilal-drive-man.vercel.app` — network actually up?
+4. `Get-Counter "\Process(BilalDriveMan-Scanner*)\% Processor Time"` over 3 samples — bursty even at low % = working; sustained 0% = I/O-blocked
+5. Wait at least 8–10 min from the last log line before kill — token refresh chains genuinely take that long.
 
 ## Critical CSS Note (page-transition)
 
