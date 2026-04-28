@@ -109,6 +109,54 @@ local <SAME OLD VERSION>` repeatedly. Zombie scanner processes accumulate. This 
 ALWAYS a build-side bug, never a network or auto-update logic bug. The fix is the
 hotfix path documented above (and `build.sh` makes it impossible to recur).
 
+### In-process zombie self-defense (v3.51.0+)
+
+Even with `build.sh`, we hit the zombie loop trap **twice** on 2026-04-28 (3.50.0 and
+3.50.1 deploys) — Windows kept the old .exe locked while the new file landed on disk,
+so old processes kept running their pre-update bytecode. The disk SHA matched main's
+SHA, but the running PID was still on the previous VERSION.
+
+**3.51.0 added inline defense in `auto_update()`**: right after fetching the remote
+SHA, hash the on-disk .exe. If `local_disk_sha == expected_sha` AND `VERSION !=
+remote_ver`, this process is a zombie running stale code from memory. Log RED with
+`Auto-update: ZOMBIE SELF-DETECTED` and `sys.exit(0)`. Windows can't re-exec a running
+binary in-place, so the safe move is exit and let the OS / scheduled-task / user
+respawn from the fresh .exe.
+
+**Don't strip this guard.** It's the last line of defense when the build pipeline,
+the shim, and the file-lock semantics all conspire against you. False positives are
+impossible (the predicate requires both SHAs equal AND VERSION mismatch — only true
+if a zombie). Tail for the literal `ZOMBIE SELF-DETECTED` line in scanner.log if you
+suspect a stuck deploy.
+
+**Out-of-process discipline (still applies):** before pushing a new .exe, taskkill
+all old PIDs on AAHIL. The in-process guard is a backstop; killing first is the
+clean path. CLAUDE.md regression test from above stays the source of truth.
+
+## Wizard-race row-refetch pattern (v3.50.0+)
+
+When the portal wizard queues two commands at the same instant — e.g.
+`add_to_cloud` immediately followed by `start_download` — the second command's
+*payload* gets captured at enqueue time. If `add_to_cloud` writes a value back to
+the project row (like `cloud_folder_path`), `start_download`'s payload still has
+the **pre-write** value (empty). If the scanner pulls the second command before
+the first's row-write lands, the second handler sees an empty payload and may
+incorrectly fall through to legacy logic.
+
+**The pattern** (now in `handle_start_download`): if the payload is missing the
+expected field, **re-fetch the project row** from `/api/download-projects?id=X`
+before falling through. Use the freshly-backfilled value if it's there. Only if
+the row-fetch ALSO comes back empty fall through to the legacy path.
+
+This requires the GET endpoint to support both auth modes (dashboard cookie + scanner
+X-API-Key). Use `requireAuthOrApiKey` from `lib/auth.js` (added 2026-04-28 for this
+exact reason). New scanner-only endpoints can use plain `requireApiKey`; endpoints
+that already serve the dashboard need the dual.
+
+**When you add a future scanner-side feature that depends on a value written by
+another command in the same wizard click**, you'll likely need this pattern. Don't
+just trust the payload.
+
 ## Scanner credentials architecture (v3.49.2+)
 
 OAuth credentials live in **one place**: Vercel env vars. The scanner pulls them via `/api/scanner-credentials` at startup and persists to local `%APPDATA%\BilalDriveMan\config.json`. **Never manually edit the OAuth keys in `config.json`** — they get auto-populated on next launch and any manual edit is overwritten.
@@ -316,3 +364,6 @@ Coordination via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` 
 - Always include Co-Authored-By line when committing
 - Verify `npm run build` passes before pushing
 - For scanner changes, bump VERSION + rebuild .exe with `--clean`
+- **`.staging-state.json` dict hygiene**: when you add a state dict that tracks failures (`failed_files`, `failed_X`, etc.), also `dict.pop(key, None)` from it on retry-success. Otherwise the final tally over-counts failures (we shipped a misleading "12 ok, 3 failed" line in 3.50.0 because trailing-whitespace files succeeded on retry but stayed in `failed_files` — fixed in 3.51.0).
+- **Targeted Notion card cloning for E2E tests**: when running fresh E2E tests, append a suffix to a Notion card name (`(test-N)` or a date) so the wizard treats it as a new project. Don't reuse the same project across runs — the staging dir, completed_at timestamp, and progress_bytes from the prior run can mask new failures.
+- **All scanner code paths that wait + fail with a generic error** should distinguish failure modes via a one-shot cloud-side metadata probe (Dropbox: `/2/files/get_metadata`; GDrive: equivalent). The default error wording must point operators at the right system. Pattern documented in `dropbox_check_cloud_path_exists` (drive_scanner.py).
