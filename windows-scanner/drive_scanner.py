@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.50.0'
+VERSION = '3.50.1'
 
 import os
 import sys
@@ -2658,10 +2658,37 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
                         break
                     time.sleep(poll_interval)
                 if not os.path.isdir(cloud_folder):
-                    err = (
-                        f"Resolved cloud folder '{cloud_folder}' not yet "
-                        f"synced locally after {wait_seconds}s."
-                    )
+                    # v3.50.1 — apply the same fix #3 cloud-side
+                    # metadata check we do in the original
+                    # materialize-wait branch above. v3.50.0 omitted
+                    # this call here (the fix #2 path duplicated the
+                    # wait code but not the cloud-check), so the
+                    # backfilled-path failure mode emitted a less
+                    # useful generic error string instead of the new
+                    # "no longer present in Dropbox itself" wording.
+                    cloud_present = None
+                    if link_type == 'dropbox':
+                        cloud_present = dropbox_check_cloud_path_exists(
+                            config,
+                            config.get('dropbox_path', ''),
+                            cloud_folder,
+                        )
+                    if cloud_present is False:
+                        err = (
+                            f"Cloud folder '{cloud_folder}' is no longer "
+                            f"present in Dropbox itself (was added at "
+                            f"add_to_cloud time, has since vanished). "
+                            f"The recipient may have unshared the folder, "
+                            f"the share may have expired, or it was "
+                            f"deleted on the share owner's side. Re-add "
+                            f"the project from Notion or have the share "
+                            f"owner re-share the folder."
+                        )
+                    else:
+                        err = (
+                            f"Resolved cloud folder '{cloud_folder}' not yet "
+                            f"synced locally after {wait_seconds}s."
+                        )
                     logging.error(err)
                     api_request(config, 'download-progress', {
                         'project_id': project_id,
