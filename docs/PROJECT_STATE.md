@@ -352,3 +352,24 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
     - `%APPDATA%/BilalDriveMan/config.json` GDrive credentials still empty — *unchanged blocker*
     - scanner.log: clean drive-detect ticks, no errors
     - Win autopolls Slack at 2-3 min cadence; mac autopolls 5-30 min based on activity
+- **2026-04-28 midday — scanner-3.50.0 + 3.50.1 shipped, full E2E test cycle COMPLETE:**
+  - **GDrive workaround copy succeeded (cmd `f88bdfff`).** Project `eddba0c4` reached `completed` at 12:51 PKT — yesterday's 7 partial files (+the recovered `montage reference two/` files via 3.50.0) shipped to D:. Manual `target_drive='Extreme Pro'` exact-casing was required because of bug #4 (case-sensitive label match) — root-caused, fixed in 3.50.0.
+  - **scanner-3.50.0 shipped with 4 fixes (`375004b` on main):**
+    1. **Bug #1 trailing-whitespace folder names** (`montage reference two ` etc.) → `.rstrip(' .')` per path segment in `_download_task`. Yesterday lost 3 files; today all 12 land.
+    2. **Bug #2 wizard-race** in `handle_start_download` → re-fetches project row from new GET `/api/download-projects?id=X` before falling through to `find_cloud_folder`. Picks up `cloud_folder_path` backfilled by `add_to_cloud` even when the start_download payload arrives with empty path.
+    3. **Bug #3 Dropbox materialize-wait disambiguation** → new helper `dropbox_check_cloud_path_exists` calls `/2/files/get_metadata` after the 90s wait fails. Distinguishes "vanished cloud-side" (recipient unshared, share expired) from "Dropbox desktop client lagging."
+    4. **Bug #4 case-sensitive `target_drive` label match** in `handle_copy_to_drive` + `handle_delete_data` → `(label or '').strip().casefold() == norm_target`. Same bug present since wizard started lowercasing labels.
+  - **scanner-3.50.1 hotfix shipped (`433e730` on main):** 3.50.0 fix #2 duplicated the materialize-wait code into the new backfill branch but DIDN'T copy the fix #3 cloud-side check call (off-by-one mistake on my part). 3.50.1 mirrors the call into both branches. Backlog: refactor `_handle_materialize_wait_or_fail()` into a shared helper for 3.51.0.
+  - **bug #5 server-side patch (`4b466cd` on main):** scanner-3.50.0's new GET `/api/download-projects?id=X` was wrapped in `requireAuth` (cookie-only). Scanner sends `X-API-Key`. New helper `requireAuthOrApiKey` accepts either path. Unblocked fix #2 entirely.
+  - **All 5 fixes proven on production traffic in this session:**
+    - Fix #1: 12/12 GDrive files including 3 `montage reference two/` (was 9/12 yesterday → 0 trailing-whitespace failures today)
+    - Fix #2: log line `start_download: payload had empty cloud_folder_path, backfilled from project row: <path>` confirmed
+    - Fix #3: Dropbox failure now emits `Cloud folder ... is no longer present in Dropbox itself...` when share has vanished cloud-side. Confirmed on `2c59cd1c` (the ZAINN testing share is genuinely gone from Dropbox).
+    - Fix #4: GDrive copy succeeded via `'extreme pro'` lowercased label
+    - Fix #5: Vercel `HTTP 200` on `/api/download-projects?id=X` with X-API-Key
+  - **Auto-update zombie loop trap fired AGAIN** despite being documented in CLAUDE.md. PIDs from yesterday + today's chain held the .exe lock; new build downloaded but never loaded. Win caught it via SHA-vs-VERSION mismatch, remediated with `taskkill /F` + direct-launch from dist/. **Lesson:** the disk-SHA == remote-SHA check isn't enough. Need bytecode-level check that the *running* process is the version it claims. Cataloged as 3.51.0 hardening:
+    - Option (a) "if local SHA on disk matches remote and in-mem VERSION ≠ disk VERSION → I'm a zombie, taskkill self"
+    - Option (c) "I keep downloading the same SHA repeatedly → log RED" telemetry
+  - **Today's GDrive E2E: closed.** Project `eddba0c4` `completed` again at 13:49:26 PKT, 742 MB copied to `D:\zain\gdrive-test - DO NOT DELETE\` with full `revised/` hierarchy (including the 3 trailing-whitespace files that failed yesterday).
+  - **Today's Dropbox E2E: code path proven.** ZAINN testing share is genuinely gone from Dropbox cloud-side. System now correctly directs operator to "re-add via Notion or have share owner re-share" instead of misleading them toward Dropbox desktop client. Real-world resolution: Bilal/owner re-share, then re-fire wizard.
+  - **Bug #6 (cosmetic, deferred):** `failed_files` dict in `.staging-state.json` doesn't drop entries when a file later succeeds. The "X ok, Y failed" tally in the final log line over-counts failures. Net file-on-disk count is correct. 3.50.x cleanup item.
