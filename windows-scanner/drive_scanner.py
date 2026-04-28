@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.50.1'
+VERSION = '3.51.0'
 
 import os
 import sys
@@ -126,6 +126,45 @@ def auto_update():
         if not _re.fullmatch(r'[a-f0-9]{64}', expected_sha):
             logging.warning(f"Auto-update: bad SHA sidecar content, aborting update")
             return
+
+        # v3.51.0 zombie self-defense (option a) — caught us TWICE in one
+        # day on 2026-04-28. Failure mode: the new .exe is already on disk
+        # (a previous tick downloaded + swapped it), but the OLD process is
+        # still running in memory because Windows kept the file lock or
+        # because of a PyInstaller bootloader-side process tree the auto-
+        # update transition didn't fully tear down. Each subsequent tick
+        # then sees `remote_ver != VERSION`, tries to re-download, and the
+        # cycle compounds — multiple zombie processes accumulate, all
+        # running the OLD code from memory. CLAUDE.md documents this trap
+        # as the "build-side bug failure signature" and we hit it anyway.
+        #
+        # The check: if the on-disk SHA already equals the remote SHA, the
+        # new build is already deployed. If our in-memory VERSION still
+        # disagrees with remote_ver, we're a zombie — the running process
+        # has not yet reloaded from the new .exe. There's no graceful
+        # recovery for a zombie scanner (the file is in use, can't be
+        # re-execed in-place on Windows), so the safe move is to taskkill
+        # ourselves and let the OS / scheduled task / user respawn the
+        # fresh build cleanly.
+        try:
+            local_disk_sha = _sha256_file(exe_path)
+        except Exception as sha_err:
+            local_disk_sha = None
+            logging.warning(
+                f"Auto-update: couldn't hash on-disk exe for zombie check "
+                f"({sha_err}); proceeding with normal update path."
+            )
+        if local_disk_sha == expected_sha:
+            logging.error(
+                f"Auto-update: ZOMBIE SELF-DETECTED. On-disk .exe SHA "
+                f"({expected_sha[:12]}…) matches remote, but my in-memory "
+                f"VERSION is v{VERSION} (remote v{remote_ver}). The new "
+                f"build is already deployed — this process is running "
+                f"stale code from memory. Exiting so the OS can respawn "
+                f"the fresh build cleanly. (CLAUDE.md regression: zombie "
+                f"auto-update loop trap.)"
+            )
+            sys.exit(0)
 
         # Fetch the .exe.
         logging.info(f"Auto-update: remote v{remote_ver} differs from local v{VERSION}, downloading .exe")
@@ -1398,6 +1437,14 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
                 written = result[2]
                 dest = result[3]
                 completed[fid] = {'path': dest, 'size': written}
+                # v3.51.0 bug-fix #6: pop from failed_files when a
+                # previously-failed file succeeds on retry. Without this,
+                # the final "X ok, Y failed" tally over-counts failures
+                # (entries linger in failed_files even though the file is
+                # genuinely on disk now). 2026-04-28 GDrive retest hit
+                # this — log said "12 files ok, 3 failed" but disk had
+                # all 12 files including the previously-failed three.
+                failed.pop(fid, None)
                 total_bytes += written
             elif status == 'skipped':
                 total_bytes += result[2]
@@ -1668,6 +1715,8 @@ def add_wetransfer_share(download_link, project_id=None, cancel_evt=None, config
                 written = result[2]
                 dest = result[3]
                 completed[fid] = {'path': dest, 'size': written}
+                # v3.51.0 bug-fix #6 (mirror of the gdrive-side fix above).
+                failed.pop(fid, None)
                 total_bytes += written
             elif status == 'skipped':
                 total_bytes += result[2]
