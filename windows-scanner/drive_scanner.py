@@ -2374,9 +2374,20 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     # "D::\\" which Windows rejects with WinError 123. Strip any trailing
     # colon before adding the path separator so we produce "D:\\" regardless
     # of how the letter was captured.
+    # v3.50.0 bug-fix #4: case-insensitive label match.
+    # The portal sends `target_drive` lowercased
+    # (e.g. 'extreme pro') to keep payloads stable across machines that
+    # may report case differently. Drive labels detected via
+    # get_external_drives come back in their original Windows casing
+    # ('Extreme Pro'). The strict `==` comparison broke copy_to_drive
+    # for every project since the wizard introduced lowercase
+    # target_drive (caught 2026-04-28 on the GDrive copy retry — both
+    # 14dcb4ed and 14772278 failed identically while D: was plugged in).
+    # Strip + casefold both sides to match how the portal stores it.
+    norm_target = (target_drive_label or '').strip().casefold()
     target_path = None
     for label, drive in known_drives.items():
-        if label == target_drive_label:
+        if (label or '').strip().casefold() == norm_target:
             letter = drive['letter'].rstrip(':')
             target_path = f"{letter}:\\"
             break
@@ -2805,9 +2816,12 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
         raise Exception("Missing drive_label or client_name in payload")
 
     # Find the drive path (Windows drives use 'letter' key, e.g. 'D:')
+    # v3.50.0 bug-fix #4: case-insensitive label match (same rationale
+    # as handle_copy_to_drive — portal lowercases drive labels).
+    norm_drive_label = (drive_label or '').strip().casefold()
     target_path = None
     for label, drive in known_drives.items():
-        if label == drive_label:
+        if (label or '').strip().casefold() == norm_drive_label:
             target_path = drive.get('path') or drive.get('letter') or f"{label}\\"
             break
 
