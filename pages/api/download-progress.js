@@ -111,35 +111,71 @@ export default requireApiKey(async function handler(req, res) {
       updateNotionProjectStatus(notionId, status).catch(() => {});
     }
 
-    // If completed, check for next queued project on the same machine
-    if (status === 'completed') {
+    // If completed OR failed, check for next queued project on the same machine.
+    // v3.52.0: also dequeue on 'failed' (a stuck/failing project shouldn't
+    // freeze the rest of the queue forever). Plus emit BOTH add_to_cloud
+    // (if needed for cloud-share types) AND start_download — earlier we
+    // only emitted start_download, so queued Dropbox/GDrive/WeTransfer
+    // projects never resolved the share + got stuck.
+    if (status === 'completed' || status === 'failed') {
       const projects = await supabaseFetch(`download_projects?id=eq.${project_id}`);
       const completedProject = projects && projects[0];
 
       if (completedProject && completedProject.assigned_machine) {
         const machine = completedProject.assigned_machine;
 
-        // Find next queued project for this machine
+        // Find next queued project for this machine — fetch full row so we
+        // can rebuild the command payloads.
         const queued = await supabaseFetch(
-          `download_projects?assigned_machine=eq.${encodeURIComponent(machine)}&download_status=eq.queued&order=queue_position.asc&limit=1`
+          `download_projects?assigned_machine=eq.${encodeURIComponent(machine)}` +
+            `&download_status=eq.queued&order=queue_position.asc&limit=1`
         );
 
         if (queued && queued.length > 0) {
           const nextProject = queued[0];
 
-          // Update next project to downloading
+          // Update next project to downloading + clear queue_position
           await supabasePatch(`download_projects?id=eq.${nextProject.id}`, {
             download_status: 'downloading',
+            queue_position: null,
           });
           if (nextProject.notion_page_id) {
             updateNotionProjectStatus(nextProject.notion_page_id, 'downloading').catch(() => {});
           }
 
-          // Create start_download command for the machine
+          // Re-emit the same command pair we would have emitted at
+          // download_now time. Cloud-share projects need add_to_cloud first.
+          const needsCloudAdd =
+            nextProject.download_link &&
+            ['dropbox', 'google_drive', 'wetransfer'].includes(nextProject.link_type);
+
+          if (needsCloudAdd) {
+            await supabasePost('download_commands', {
+              machine_name: machine,
+              command: 'add_to_cloud',
+              project_id: nextProject.id,
+              payload: {
+                download_link: nextProject.download_link,
+                link_type: nextProject.link_type,
+                couple_name: nextProject.couple_name || '',
+                cloud_account_id: nextProject.cloud_account_id || null,
+              },
+              status: 'pending',
+            });
+          }
+
           await supabasePost('download_commands', {
             machine_name: machine,
             command: 'start_download',
             project_id: nextProject.id,
+            payload: {
+              cloud_folder_path: nextProject.cloud_folder_path || '',
+              link_type: nextProject.link_type || '',
+              couple_name: nextProject.couple_name || '',
+              client_name: nextProject.client_name || 'Unknown',
+              target_drive: nextProject.target_drive || '',
+              cloud_account_id: nextProject.cloud_account_id || null,
+            },
             status: 'pending',
           });
         }

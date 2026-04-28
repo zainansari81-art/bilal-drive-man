@@ -360,14 +360,22 @@ function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadCl
   const projectId = project.id;
   const downloadStatus = project.download_status || 'idle';
   const downloadLink = project.download_link || '';
+  const targetDrive = project.target_drive || '';
+
+  // v3.52.0: include target drive name in copying/completed labels so users
+  // see "Copying to Extreme Pro" / "Copied to Extreme Pro" not bare verbs.
+  // Falls back to the static label when target_drive is empty (e.g.
+  // "PC-only" downloads where the user hasn't picked a drive yet).
+  const copyingLabel = targetDrive ? `Copying to ${targetDrive}` : 'Copying';
+  const completedLabel = targetDrive ? `Copied to ${targetDrive}` : 'Completed';
 
   const statusConfig = {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7' },
     queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3' },
     downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe' },
     paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6' },
-    copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff' },
-    completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7' },
+    copying: { label: copyingLabel, color: '#4338ca', bg: '#e0e7ff' },
+    completed: { label: completedLabel, color: '#15803d', bg: '#dcfce7' },
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
   };
 
@@ -676,13 +684,17 @@ function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
   const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
   const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
 
+  // v3.52.0: include target drive name in copying/completed labels.
+  const copyingLabel = targetDrive ? `Copying to ${targetDrive}` : 'Copying';
+  const completedLabel = targetDrive ? `Copied to ${targetDrive}` : 'Completed';
+
   const statusConfig = {
     idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7', dot: '#f59e0b' },
     queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3', dot: '#eab308' },
     downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe', dot: '#3b82f6' },
     paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6', dot: '#9ca3af' },
-    copying: { label: 'Copying', color: '#4338ca', bg: '#e0e7ff', dot: '#6366f1' },
-    completed: { label: 'Completed', color: '#15803d', bg: '#dcfce7', dot: '#22c55e' },
+    copying: { label: copyingLabel, color: '#4338ca', bg: '#e0e7ff', dot: '#6366f1' },
+    completed: { label: completedLabel, color: '#15803d', bg: '#dcfce7', dot: '#22c55e' },
     failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2', dot: '#ef4444' },
   };
   const sCfg = statusConfig[downloadStatus] || statusConfig.idle;

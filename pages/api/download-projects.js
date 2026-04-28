@@ -190,10 +190,37 @@ export default requireAuthOrApiKey(async function handler(req, res) {
             ? overrideCloudAccountId
             : project.cloud_account_id || null;
 
-        // Persist overrides + flip status + clear queue slot
+        // v3.52.0: queue-when-busy. If another project for this machine is
+        // already actively downloading or copying, set this one to 'queued'
+        // with a queue_position so the user sees a clear "Queued" badge.
+        // The download-progress.js completion handler picks up the next
+        // 'queued' project for the same machine when the current one
+        // finishes — so we DON'T emit the start_download / add_to_cloud
+        // commands here when queuing; they'll be emitted on dequeue.
+        const busyRows = await supabaseFetch(
+          `download_projects?assigned_machine=eq.${encodeURIComponent(machineToUse)}` +
+            `&download_status=in.(downloading,copying)` +
+            `&id=neq.${pid}` +
+            `&select=id`
+        );
+        const machineBusy = (busyRows || []).length > 0;
+
+        let queuePositionToUse = null;
+        if (machineBusy) {
+          // Find max existing queue_position on this machine and add 1.
+          const queuedRows = await supabaseFetch(
+            `download_projects?assigned_machine=eq.${encodeURIComponent(machineToUse)}` +
+              `&download_status=eq.queued` +
+              `&select=queue_position&order=queue_position.desc&limit=1`
+          );
+          const maxPos = queuedRows?.[0]?.queue_position || 0;
+          queuePositionToUse = maxPos + 1;
+        }
+
+        // Persist overrides + flip status (queued OR downloading)
         const updatePayload = {
-          download_status: 'downloading',
-          queue_position: null,
+          download_status: machineBusy ? 'queued' : 'downloading',
+          queue_position: queuePositionToUse,
           assigned_machine: machineToUse,
         };
         if (overrideDrive !== null) updatePayload.target_drive = driveToUse;
@@ -208,7 +235,13 @@ export default requireAuthOrApiKey(async function handler(req, res) {
 
         // Mirror status to Notion so the next Notion → Supabase sync doesn't
         // revert us back to "Not Downloaded".
-        syncNotionStatus(project.notion_page_id, 'downloading');
+        syncNotionStatus(project.notion_page_id, machineBusy ? 'queued' : 'downloading');
+
+        // If queued, stop here — commands will be emitted by the
+        // download-progress completion handler when its turn comes.
+        if (machineBusy) {
+          return res.status(200).json(updated);
+        }
 
         // For Dropbox / Google Drive / WeTransfer, the scanner's add_to_cloud
         // step does the share resolution + (for Dropbox) cloud mount. For
