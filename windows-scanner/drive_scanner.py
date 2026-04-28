@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.49.2'
+VERSION = '3.50.0'
 
 import os
 import sys
@@ -885,6 +885,73 @@ def add_dropbox_shared_folder(access_token, shared_link):
     return meta.get('name', 'Unknown')
 
 
+def dropbox_check_cloud_path_exists(config, dropbox_root, local_path):
+    """v3.50.0 bug-fix #3 — cloud-side existence check.
+
+    When `handle_start_download` waits 90s for a Dropbox folder to
+    materialize locally and times out, we want to distinguish two very
+    different failure modes:
+      - Folder still exists in the user's Dropbox cloud, but the local
+        desktop client hasn't pulled it (rare; user action: nudge tray
+        icon → Sync now).
+      - Folder no longer exists cloud-side at all, e.g. the recipient
+        unshared, the share expired, or the placeholder was evicted by
+        Files-On-Demand and the cloud copy was concurrently deleted
+        (the 2026-04-27 ZAINN testing case — folder was present at
+        add_to_cloud time, gone 44 minutes later).
+
+    Today both surface as the same "Dropbox didn't sync" error, which
+    is misleading and forces manual investigation. This helper turns
+    `local_path` (e.g. `C:\\Users\\bob\\Dropbox\\share name`) into a
+    Dropbox account-relative path (e.g. `/share name`) and asks the
+    Dropbox API whether the folder still exists in the user's
+    namespace. Returns:
+      - True   → folder exists cloud-side
+      - False  → folder definitively does NOT exist cloud-side (404)
+      - None   → couldn't determine (no token, network error, etc.) —
+                 caller should keep its existing wording
+
+    Best-effort. Never raises.
+    """
+    try:
+        if not local_path or not dropbox_root:
+            return None
+        # Compute the dropbox-relative path. If `local_path` doesn't
+        # start with `dropbox_root`, we can't meaningfully translate.
+        norm_local = os.path.normpath(local_path)
+        norm_root = os.path.normpath(dropbox_root)
+        if not norm_local.lower().startswith(norm_root.lower()):
+            return None
+        rel = norm_local[len(norm_root):].lstrip('\\/')
+        # Dropbox paths use forward slashes and a leading slash.
+        dbx_path = '/' + rel.replace('\\', '/').strip('/')
+        if dbx_path == '/':
+            return None
+        token = get_dropbox_token(config)
+        if not token:
+            return None
+        body = json.dumps({'path': dbx_path}).encode('utf-8')
+        req = urllib.request.Request(
+            'https://api.dropboxapi.com/2/files/get_metadata',
+            data=body, method='POST'
+        )
+        req.add_header('Authorization', f'Bearer {token}')
+        req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                meta = json.loads(resp.read().decode())
+                # Tag will be 'folder' or 'file' if the path resolves.
+                return bool(meta.get('.tag'))
+        except urllib.error.HTTPError as e:
+            if e.code in (404, 409):
+                # 409 with `path/not_found` is Dropbox's idiomatic
+                # "doesn't exist" — same semantics as 404 here.
+                return False
+            return None
+    except Exception:
+        return None
+
+
 # ─── GDrive direct-download (v3.46.0) ───────────────────────────────────────
 #
 # v3.45.0 and earlier used the Drive shortcut API (files.create with
@@ -1264,6 +1331,18 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
         rel = file_meta['rel_path']
         # Normalize to OS separators, refuse path traversal.
         rel_os = rel.replace('/', os.sep).replace('\\', os.sep)
+        # v3.50.0 bug-fix #1: GDrive folder/file names may contain
+        # trailing whitespace or trailing dots that are perfectly
+        # legal on Linux/macOS and inside Drive itself, but Windows
+        # `os.makedirs` rejects them with `[Errno 2] No such file
+        # or directory`. The 2026-04-27 ZAINN/gdrive-test exposed
+        # this on a couple's "montage reference two " folder (3
+        # files lost). Strip trailing ' ' and '.' on a per-segment
+        # basis — leading/internal whitespace is fine on NTFS, only
+        # trailing is fatal.
+        rel_os = os.sep.join(
+            seg.rstrip(' .') for seg in rel_os.split(os.sep)
+        )
         dest = os.path.normpath(os.path.join(staging_dir, rel_os))
         real_staging = os.path.realpath(staging_dir)
         real_dest = os.path.realpath(os.path.dirname(dest))
@@ -2295,9 +2374,20 @@ def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
     # "D::\\" which Windows rejects with WinError 123. Strip any trailing
     # colon before adding the path separator so we produce "D:\\" regardless
     # of how the letter was captured.
+    # v3.50.0 bug-fix #4: case-insensitive label match.
+    # The portal sends `target_drive` lowercased
+    # (e.g. 'extreme pro') to keep payloads stable across machines that
+    # may report case differently. Drive labels detected via
+    # get_external_drives come back in their original Windows casing
+    # ('Extreme Pro'). The strict `==` comparison broke copy_to_drive
+    # for every project since the wizard introduced lowercase
+    # target_drive (caught 2026-04-28 on the GDrive copy retry — both
+    # 14dcb4ed and 14772278 failed identically while D: was plugged in).
+    # Strip + casefold both sides to match how the portal stores it.
+    norm_target = (target_drive_label or '').strip().casefold()
     target_path = None
     for label, drive in known_drives.items():
-        if label == target_drive_label:
+        if (label or '').strip().casefold() == norm_target:
             letter = drive['letter'].rstrip(':')
             target_path = f"{letter}:\\"
             break
@@ -2466,16 +2556,41 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
                     f"{cloud_folder}"
                 )
             else:
-                err = (
-                    f"Resolved cloud folder '{cloud_folder}' not yet synced "
-                    f"locally by Dropbox desktop after {wait_seconds}s. "
-                    f"Verify Dropbox desktop client is running and has pulled "
-                    f"the folder. Folder confirmed in cloud. If the folder "
-                    f"was added via the wizard's popup, Dropbox may need "
-                    f"manual intervention (tray icon \u2192 force sync, or "
-                    f"Dropbox website \u2192 right-click folder \u2192 'Make "
-                    f"available offline')."
-                )
+                # v3.50.0 bug-fix #3 \u2014 distinguish "vanished cloud-side"
+                # from "Dropbox desktop lagging". Without this, both
+                # failures share a single error string and operators
+                # (or whoever's reading scanner.log next) waste time
+                # looking at the local desktop client when the real
+                # problem is upstream.
+                cloud_present = None
+                if link_type == 'dropbox':
+                    cloud_present = dropbox_check_cloud_path_exists(
+                        config,
+                        config.get('dropbox_path', ''),
+                        cloud_folder,
+                    )
+                if cloud_present is False:
+                    err = (
+                        f"Cloud folder '{cloud_folder}' is no longer "
+                        f"present in Dropbox itself (was added at "
+                        f"add_to_cloud time, has since vanished). "
+                        f"The recipient may have unshared the folder, "
+                        f"the share may have expired, or it was "
+                        f"deleted on the share owner's side. Re-add "
+                        f"the project from Notion or have the share "
+                        f"owner re-share the folder."
+                    )
+                else:
+                    err = (
+                        f"Resolved cloud folder '{cloud_folder}' not yet synced "
+                        f"locally by Dropbox desktop after {wait_seconds}s. "
+                        f"Verify Dropbox desktop client is running and has pulled "
+                        f"the folder. Folder confirmed in cloud. If the folder "
+                        f"was added via the wizard's popup, Dropbox may need "
+                        f"manual intervention (tray icon \u2192 force sync, or "
+                        f"Dropbox website \u2192 right-click folder \u2192 'Make "
+                        f"available offline')."
+                    )
                 logging.error(err)
                 api_request(config, 'download-progress', {
                     'project_id': project_id,
@@ -2488,19 +2603,91 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
                 })
                 return
     else:
-        # Legacy path — pre-v3.43.0 commands have no resolved cloud_folder_path.
-        cloud_folder = find_cloud_folder(config, link_type, couple_name)
-        if not cloud_folder:
-            api_request(config, 'download-progress', {
-                'project_id': project_id,
-                'status': 'failed',
-                'error_message': f'Cloud folder not found for "{couple_name}". Configure cloud paths in scanner settings.',
-            })
-            api_patch(config, 'download-commands', {
-                'id': cmd_id, 'status': 'failed',
-                'error_message': 'Cloud folder not found',
-            })
-            return
+        # v3.50.0 bug-fix #2 — wizard-race recovery.
+        #
+        # The portal queues `add_to_cloud` and `start_download` in the
+        # same wizard click. Both rows arrive in `download_commands` at
+        # the same millisecond. add_to_cloud writes the resolved
+        # `cloud_folder_path` back to the project row when it finishes —
+        # but the start_download command's *payload* is captured at
+        # enqueue time, so it has an empty `cloud_folder_path`. If the
+        # scanner pulls start_download before add_to_cloud's backfill
+        # lands (timing seen on AAHIL 2026-04-27), the legacy
+        # find_cloud_folder fallback fires unnecessarily and may fail
+        # for shares that aren't yet locally synced.
+        #
+        # Recovery: before falling through, re-fetch the project row
+        # from the dashboard. If `cloud_folder_path` is now set, use
+        # it (path A semantics). Only if that's still empty do we fall
+        # through to the historical find_cloud_folder behavior so
+        # genuinely-legacy queue entries don't regress.
+        latest_path = ''
+        if project_id:
+            try:
+                proj = api_get(config, f'download-projects?id={project_id}')
+                if proj and isinstance(proj, dict):
+                    latest_path = (proj.get('cloud_folder_path') or '').strip()
+            except Exception as e:
+                logging.warning(
+                    f"start_download: project re-fetch failed ({e}); "
+                    f"falling through to find_cloud_folder."
+                )
+        if latest_path:
+            logging.info(
+                f"start_download: payload had empty cloud_folder_path, "
+                f"backfilled from project row: {latest_path}"
+            )
+            cloud_folder = latest_path
+            # Re-enter the materialize-wait branch by redirecting flow.
+            if not os.path.isdir(cloud_folder):
+                api_request(config, 'download-progress', {
+                    'project_id': project_id,
+                    'status': 'downloading',
+                    'phase': 'pinning',
+                })
+                wait_seconds = 90
+                poll_interval = 2
+                logging.info(
+                    f"Waiting up to {wait_seconds}s for cloud folder "
+                    f"to materialize '{cloud_folder}' locally..."
+                )
+                deadline = time.time() + wait_seconds
+                while time.time() < deadline:
+                    _check_cancelled(project_id)
+                    if os.path.isdir(cloud_folder):
+                        break
+                    time.sleep(poll_interval)
+                if not os.path.isdir(cloud_folder):
+                    err = (
+                        f"Resolved cloud folder '{cloud_folder}' not yet "
+                        f"synced locally after {wait_seconds}s."
+                    )
+                    logging.error(err)
+                    api_request(config, 'download-progress', {
+                        'project_id': project_id,
+                        'status': 'failed',
+                        'error_message': err,
+                    })
+                    api_patch(config, 'download-commands', {
+                        'id': cmd_id, 'status': 'failed',
+                        'error_message': err[:500],
+                    })
+                    return
+        else:
+            # Legacy path — pre-v3.43.0 commands have no resolved
+            # cloud_folder_path AND no row backfill happened.
+            cloud_folder = find_cloud_folder(config, link_type, couple_name)
+            if not cloud_folder:
+                api_request(config, 'download-progress', {
+                    'project_id': project_id,
+                    'status': 'failed',
+                    'error_message': f'Cloud folder not found for "{couple_name}". Configure cloud paths in scanner settings.',
+                })
+                api_patch(config, 'download-commands', {
+                    'id': cmd_id, 'status': 'failed',
+                    'error_message': 'Cloud folder not found',
+                })
+                return
 
     logging.info(f"Monitoring cloud folder: {cloud_folder}")
 
@@ -2629,9 +2816,12 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
         raise Exception("Missing drive_label or client_name in payload")
 
     # Find the drive path (Windows drives use 'letter' key, e.g. 'D:')
+    # v3.50.0 bug-fix #4: case-insensitive label match (same rationale
+    # as handle_copy_to_drive — portal lowercases drive labels).
+    norm_drive_label = (drive_label or '').strip().casefold()
     target_path = None
     for label, drive in known_drives.items():
-        if label == drive_label:
+        if (label or '').strip().casefold() == norm_drive_label:
             target_path = drive.get('path') or drive.get('letter') or f"{label}\\"
             break
 

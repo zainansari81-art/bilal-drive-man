@@ -35,6 +35,18 @@ function isWetransferProject(project) {
 export default requireAuth(async function handler(req, res) {
   try {
     if (req.method === 'GET') {
+      // Single-project fetch — used by the scanner to re-read a project
+      // row (specifically `cloud_folder_path`) when handle_start_download
+      // arrives before add_to_cloud's backfill has propagated. v3.50.0
+      // bug-fix #2 closes that race.
+      if (req.query.id) {
+        const id = String(req.query.id);
+        if (!/^[a-f0-9-]+$/i.test(id)) {
+          return res.status(400).json({ error: 'Invalid id' });
+        }
+        const rows = await supabaseFetch(`download_projects?id=eq.${id}`);
+        return res.status(200).json(rows?.[0] || null);
+      }
       const projects = await supabaseFetch('download_projects?order=created_at.desc');
       return res.status(200).json(projects || []);
     }
