@@ -1,5 +1,5 @@
 import { supabaseFetch, supabasePost, supabasePatch } from '../../lib/supabase';
-import { requireAuth, sanitizeString } from '../../lib/auth';
+import { requireAuthOrApiKey, sanitizeString } from '../../lib/auth';
 import { updateNotionProjectStatus } from '../../lib/notion';
 
 /**
@@ -32,7 +32,7 @@ function isWetransferProject(project) {
   return detectLinkType(project.download_link) === 'wetransfer';
 }
 
-export default requireAuth(async function handler(req, res) {
+export default requireAuthOrApiKey(async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       // Single-project fetch — used by the scanner to re-read a project
