@@ -110,6 +110,7 @@ echo "[2/4] Running PyInstaller (--clean, --onefile, --windowed)..."
     --clean \
     --name "$EXE_NAME" \
     --hidden-import=wetransfer_provider \
+    --hidden-import=live_progress \
     drive_scanner.py
 
 if [[ ! -f "dist/$EXE_NAME.exe" ]]; then
