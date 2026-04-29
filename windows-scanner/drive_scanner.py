@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.51.0'
+VERSION = '3.53.0'
 
 import os
 import sys
@@ -21,6 +21,28 @@ import urllib.error
 import urllib.parse
 import re as _re
 from datetime import datetime
+
+# v3.53.0: live per-file + speed progress emitter. Off by default; opt
+# in by setting LIVE_PROGRESS_ENABLED=1 in env. Import is unconditional
+# because the module exposes a no-op shim when the flag is off, so all
+# call sites here look the same and there's no `if enabled` clutter.
+# Wrapped in try/except so a problem with this new file can never block
+# the scanner from starting (existing flow is unaffected).
+try:
+    import live_progress as _live_progress  # noqa: E402
+except Exception as _e:
+    logging.warning(f"live_progress import failed, feature disabled: {_e}")
+    class _LPShim:
+        ENABLED = False
+        def make_tracker(self, *a, **kw):
+            class _N:
+                def update_gdrive(self, **kw): pass
+                def start_dropbox_sampler(self, *a, **kw): pass
+                def stop_sampler(self): pass
+                def update_phase(self, *a, **kw): pass
+                def stop(self, **kw): pass
+            return _N()
+    _live_progress = _LPShim()
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
 #
@@ -1244,7 +1266,7 @@ def _gdrive_download_one(access_token, file_meta, dest_path, cancel_check):
     return bytes_written
 
 
-def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_evt=None, config=None):
+def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_evt=None, config=None, live=None):
     """v3.46.0: direct-download a shared Google Drive folder to a local
     staging directory. Returns the absolute path of the staging directory
     (not the folder name) — caller persists it as cloud_folder_path so
@@ -1257,7 +1279,13 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
     Not backward-compatible with the 3.45.0 shortcut signature
     (access_token, shared_link) -> folder_name. Caller (handle_add_to_cloud)
     is updated in the same PR to pass project_id + cancel_evt and interpret
-    the absolute-path return value."""
+    the absolute-path return value.
+
+    v3.53.0: optional `live` LiveProgressTracker. When provided, we emit
+    per-file detail + cumulative bytes after each file completes so the
+    portal's live-progress card can show real-time speed. Defaults to
+    None (legacy callers and the no-op shim path) — passing nothing
+    keeps existing behavior identical."""
     file_id = _extract_gdrive_folder_id(shared_link)
 
     # Resolve the root via files.get so we catch 404/403 fast, and to learn
@@ -1421,7 +1449,11 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
         futures = {ex.submit(_download_task, fm): fm for fm in files}
         done_count = 0
         total_bytes = 0
+        # Map future -> file metadata so we can name the most-recently
+        # completed file in live emits without changing _download_task's
+        # return tuple.
         for fut in as_completed(futures):
+            file_meta = futures.get(fut, {})
             try:
                 result = fut.result()
             except CancelledError:
@@ -1475,6 +1507,32 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
                     })
                 except Exception:
                     # Telemetry failures are non-fatal to the download.
+                    pass
+            # v3.53.0: parallel high-cadence emit for the live progress
+            # card. The tracker is internally throttled to ~1.5s so calls
+            # in tight loops are cheap, and the call is wrapped in
+            # try/except inside the tracker so a failed live-emit can
+            # never break the download.
+            if live is not None:
+                try:
+                    file_size = None
+                    sz = (file_meta or {}).get('size')
+                    if sz is not None:
+                        try:
+                            file_size = int(sz)
+                        except (TypeError, ValueError):
+                            file_size = None
+                    live.update_gdrive(
+                        cumulative_bytes=total_bytes,
+                        total_bytes=total_bytes_expected,
+                        current_file_name=(file_meta or {}).get('rel_path')
+                            or (file_meta or {}).get('name'),
+                        current_file_index=done_count,
+                        total_files=len(files),
+                        current_file_size=file_size,
+                        phase='gdrive_staging',
+                    )
+                except Exception:
                     pass
 
     # Flush final state.
@@ -2266,12 +2324,26 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
         })
         return
 
+    # v3.53.0: live tracker spans only the GDrive/WeTransfer
+    # direct-download portion of add_to_cloud (those are the only
+    # link types where this function actually moves bytes — Dropbox
+    # short-circuits to find_cloud_folder or just calls the share
+    # API, no per-file progress to report). Created up-front and
+    # stopped in the finally block below so we never leak threads.
+    _live_source = 'gdrive' if link_type == 'google_drive' else (
+        'wetransfer' if link_type == 'wetransfer' else 'dropbox'
+    )
+    live = _live_progress.make_tracker(
+        config, project_id, _live_source, api_key=API_KEY,
+    )
+
     # Flip to the 'pinning' sub-phase so the UI can show it.
     api_request(config, 'download-progress', {
         'project_id': project_id,
         'status': 'downloading',
         'phase': 'pinning',
     })
+    live.update_phase('pinning')
 
     try:
         folder_name = None
@@ -2338,13 +2410,16 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
             else:
                 # v3.46.0: direct-download to staging dir. Grab cancel event so
                 # the downloader can abort cooperatively between chunks/files.
+                # v3.53.0: pass the live tracker through so per-file emits
+                # land on /api/download-progress-live without changing the
+                # legacy /api/download-progress flow.
                 cancel_evt = _get_cancel_event(project_id)
                 cloud_folder_abs = call_with_token_retry(
                     config, 'google_drive',
                     lambda tok: add_gdrive_shared_folder(
                         tok, download_link,
                         project_id=project_id, cancel_evt=cancel_evt,
-                        config=config,
+                        config=config, live=live,
                     ),
                 )
                 # folder_name is whatever the leaf directory is named; mostly
@@ -2405,6 +2480,23 @@ def handle_add_to_cloud(config, project_id, payload, cmd_id):
             'id': cmd_id, 'status': 'failed',
             'error_message': str(e)[:500],
         })
+        # v3.53.0: stop the live tracker on the failure path. Wrapped
+        # because the tracker swallows its own errors anyway, but
+        # belt-and-suspenders.
+        try:
+            live.stop(success=False)
+        except Exception:
+            pass
+    else:
+        # Success path — emit a final live-progress row so the UI
+        # freezes the gdrive_staging card with the avg-speed line.
+        # For Dropbox-short-circuit / Dropbox API mount the live row
+        # may have no samples; the tracker still emits a terminal
+        # phase=complete row which the UI handles gracefully.
+        try:
+            live.stop(success=True)
+        except Exception:
+            pass
 
 
 def handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id):
@@ -2560,6 +2652,23 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
     couple_name = payload.get('couple_name', '')
     client_name = payload.get('client_name', 'Unknown')
     target_drive_label = payload.get('target_drive', '')
+
+    # v3.53.0: live tracker for the sync-wait + copy phases. For Dropbox
+    # we also start a folder-size sampler thread once the local folder
+    # exists, so the live progress card updates every ~1.5s instead of
+    # every 30s (the existing api_request emit cadence in the wait
+    # loop). For GDrive direct-download projects the staging dir is
+    # already populated by add_to_cloud, so this tracker mostly emits
+    # the copy-phase progress. Wrapped — a tracker construction failure
+    # never blocks the download.
+    _live_source = (
+        'dropbox' if link_type == 'dropbox' else
+        'gdrive' if link_type == 'google_drive' else
+        'wetransfer' if link_type == 'wetransfer' else 'dropbox'
+    )
+    live = _live_progress.make_tracker(
+        config, project_id, _live_source, api_key=API_KEY,
+    )
 
     # v3.44.0 — two code paths here:
     #   (A) Resolved path is set in the payload (upstream add_to_cloud persisted
@@ -2774,6 +2883,7 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
         'status': 'downloading',
         'phase': 'pinning',
     })
+    live.update_phase('pinning')
 
     # Auto-pin all files for offline (forces cloud app to download them)
     logging.info(f"Pinning files for offline in: {cloud_folder}")
@@ -2786,56 +2896,91 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
         'status': 'downloading',
         'phase': 'syncing',
     })
+    live.update_phase('syncing')
 
-    # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
-    max_checks = 2880  # 24 hours at 30-second intervals
-    for check_num in range(max_checks):
-        # v3.45.0 gap-fix #9: cancel check at each 30s tick. This is the long
-        # wait — most of the download's wall-clock lives here — so cancel
-        # responsiveness matters.
-        _check_cancelled(project_id)
+    # v3.53.0: kick off the Dropbox-style folder-size sampler. Runs in
+    # a background daemon thread, samples cloud_folder every ~1.5s and
+    # POSTs to /api/download-progress-live. Started here (after the
+    # folder is confirmed materialized) so we never sample a missing
+    # path. Stopped in the finally-style cleanup below regardless of
+    # exit path. For gdrive_staging the staging dir is already fully
+    # populated, so the sampler converges to total_bytes immediately —
+    # that's fine, the UI just shows phase=syncing → copying transition.
+    try:
+        live.start_dropbox_sampler(cloud_folder, total_bytes_hint=0, phase='syncing')
+    except Exception:
+        pass
 
-        is_ready, total_files, offline_files, total_size = check_folder_offline_status(cloud_folder)
+    total_size = 0
+    try:
+        # Monitor until offline or timeout (check every 30 seconds for up to 24 hours)
+        max_checks = 2880  # 24 hours at 30-second intervals
+        for check_num in range(max_checks):
+            # v3.45.0 gap-fix #9: cancel check at each 30s tick. This is the long
+            # wait — most of the download's wall-clock lives here — so cancel
+            # responsiveness matters.
+            _check_cancelled(project_id)
 
-        # Report progress
-        if total_files > 0:
+            is_ready, total_files, offline_files, total_size = check_folder_offline_status(cloud_folder)
+
+            # Report progress
+            if total_files > 0:
+                api_request(config, 'download-progress', {
+                    'project_id': project_id,
+                    'status': 'downloading',
+                    'progress_bytes': total_size,
+                    'phase': 'syncing',
+                })
+
+            logging.info(f"Cloud check #{check_num + 1}: {offline_files}/{total_files} files offline in {cloud_folder}")
+
+            if is_ready:
+                logging.info(f"All {total_files} files are offline! Starting copy...")
+                break
+
+            time.sleep(30)
+
+        else:
+            # Timed out
             api_request(config, 'download-progress', {
                 'project_id': project_id,
-                'status': 'downloading',
-                'progress_bytes': total_size,
-                'phase': 'syncing',
+                'status': 'failed',
+                'error_message': 'Timed out waiting for files to go offline',
             })
-
-        logging.info(f"Cloud check #{check_num + 1}: {offline_files}/{total_files} files offline in {cloud_folder}")
-
-        if is_ready:
-            logging.info(f"All {total_files} files are offline! Starting copy...")
-            break
-
-        time.sleep(30)
-
-    else:
-        # Timed out
-        api_request(config, 'download-progress', {
-            'project_id': project_id,
-            'status': 'failed',
-            'error_message': 'Timed out waiting for files to go offline',
-        })
-        api_patch(config, 'download-commands', {
-            'id': cmd_id, 'status': 'failed',
-            'error_message': 'Timeout waiting for offline',
-        })
-        return
+            api_patch(config, 'download-commands', {
+                'id': cmd_id, 'status': 'failed',
+                'error_message': 'Timeout waiting for offline',
+            })
+            try:
+                live.stop(success=False)
+            except Exception:
+                pass
+            return
+    finally:
+        # Stop the Dropbox sampler before we move on to the copy phase —
+        # the on-disk folder size will plateau there and the live card
+        # should reflect the copy-phase numbers from now on.
+        try:
+            live.stop_sampler()
+        except Exception:
+            pass
 
     # Files are ready — copy to target drive
     if target_drive_label:
+        live.update_phase('copying')
         copy_payload = {
             'source_path': cloud_folder,
             'target_drive': target_drive_label,
             'client_name': client_name,
             'couple_name': couple_name,
         }
-        handle_copy_to_drive(config, project_id, copy_payload, known_drives, cmd_id)
+        try:
+            handle_copy_to_drive(config, project_id, copy_payload, known_drives, cmd_id)
+        finally:
+            try:
+                live.stop(success=True)
+            except Exception:
+                pass
     else:
         # No target drive specified — just mark as ready
         api_request(config, 'download-progress', {
@@ -2846,6 +2991,10 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'completed'
         })
+        try:
+            live.stop(success=True)
+        except Exception:
+            pass
         logging.info(f"Files offline for {couple_name} but no target drive specified")
 
 

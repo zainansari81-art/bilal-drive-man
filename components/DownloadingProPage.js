@@ -3,6 +3,11 @@ import { formatSize } from '../lib/format';
 import DownloadWizardModal from './DownloadWizardModal';
 import DownloadMagicAnimation from './DownloadMagicAnimation';
 import LoadingAnimation from './LoadingAnimation';
+// v3.53.0: live per-file + speed progress, mounted alongside the existing
+// aggregate progress bar. Renders nothing when the scanner isn't emitting
+// live rows (LIVE_PROGRESS_ENABLED off, or pre-feature scanner build), so
+// the existing UI is unaffected when the feature is disabled or rolled back.
+import LiveDownloadProgress from './LiveDownloadProgress';
 
 export default function DownloadingProPage({ drives }) {
   const [projects, setProjects] = useState([]);
@@ -596,6 +601,13 @@ function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadCl
               />
             </div>
           </div>
+          {/* v3.53.0 \u2014 live per-file detail + speed inside the expanded
+              row. Gated to status === 'downloading' only (copy phase
+              is local-disk-to-external-drive, fast, doesn't need this).
+              Renders nothing when no live row exists (scanner off). */}
+          {downloadStatus === 'downloading' && (
+            <LiveDownloadProgress projectId={projectId} status={downloadStatus} />
+          )}
           <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
             {downloadStatus === 'idle' && project.assigned_machine && (isDropbox || isGDrive) && (
               <button className="dp-list-action-btn cloud" onClick={() => onAction(projectId, 'start_cloud_download')}>
@@ -747,6 +759,14 @@ function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
           </div>
           {totalSize > 0 && (
             <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 4 }}>{formatSize(progress)} / {formatSize(totalSize)}</div>
+          )}
+          {/* v3.53.0 — live per-file detail + speed. Gated to
+              status === 'downloading' only (per Zain's spec): copying
+              is local-disk-to-external-drive, which is fast and doesn't
+              need real-time speed tracking. Renders nothing when the
+              scanner hasn't emitted a live row (feature off). */}
+          {downloadStatus === 'downloading' && (
+            <LiveDownloadProgress projectId={projectId} status={downloadStatus} />
           )}
         </div>
       )}
