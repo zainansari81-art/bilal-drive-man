@@ -34,12 +34,21 @@ function getTextValue(page, propName) {
 function mapNotionStatus(progress) {
   if (!progress) return null;
   const p = progress.toLowerCase().trim();
+  // Core statuses that map 1:1 with our internal values:
   if (p === 'not downloaded') return 'idle';
   if (p === 'downloading') return 'downloading';
   if (p === 'copying') return 'copying';
   if (p === 'downloaded') return 'completed';
   if (p === 'cancelled' || p === 'canceled') return 'idle';
   if (p === 'failed') return 'failed';
+  // 2026-05-04 — extended vocabulary discovered during pre-handover QA:
+  // 8 stuck "downloading" rows had Notion statuses we'd never mapped.
+  // Mirror them to the closest internal equivalent so the cron sync stays
+  // accurate without manual intervention.
+  if (p === 'approved') return 'idle';            // ready to start, not yet fired
+  if (p === 'in progress') return 'downloading';  // actively working
+  if (p === 'delivered') return 'completed';      // shipped to client
+  if (p === 'success') return 'completed';        // alt name for delivered
   return null;
 }
 
