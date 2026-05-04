@@ -384,6 +384,21 @@ JUNK_LABEL_SUBSTRINGS = (
     'sandbox',
     'test drive', 'testdrive', 'test_drive',
     'recovery', 'system reserved', 'efi',
+    # 2026-05-04 — software-mounted volumes that aren't real external storage.
+    # GetLogicalDrives enumerates these but the user doesn't want them in the
+    # dashboard. Camera SD cards, app installers, ISO mounts, virtual cloud
+    # mounts. NOTE: 'google drive' is in this list because the gdrive download
+    # workflow uses the Google Drive API directly (gdrive-staging local dir),
+    # NOT the I: mount — so filtering the I: drive from the dashboard does NOT
+    # break gdrive downloads. This skip applies to the heartbeat / drive-list /
+    # per-drive folder scan; cloud API calls are unaffected.
+    'codex installer',
+    'eos_digital',
+    'google drive',
+    '19045',
+    'final cut pro',
+    'qa-test',
+    'txb',
 )
 MIN_REAL_DRIVE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
 
