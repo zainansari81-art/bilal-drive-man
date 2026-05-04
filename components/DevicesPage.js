@@ -42,10 +42,11 @@ export default function DevicesPage({ drives }) {
     const name = hb.name;
     if (!name || name === 'Unknown') continue;
     if (!machines[name]) {
-      machines[name] = { name, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: hb.lastSeen, isHeartbeatOnline: !!hb.isOnline };
+      machines[name] = { name, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: hb.lastSeen, isHeartbeatOnline: !!hb.isOnline, scannerVersion: hb.scannerVersion || null };
     } else {
       machines[name].lastHeartbeat = hb.lastSeen;
       machines[name].isHeartbeatOnline = !!hb.isOnline;
+      if (hb.scannerVersion) machines[name].scannerVersion = hb.scannerVersion;
     }
   }
 
@@ -101,7 +102,22 @@ function MachineCard({ machine }) {
             {'\uD83D\uDCBB'}
           </div>
           <div>
-            <div className="device-name">{machine.name}</div>
+            <div className="device-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>{machine.name}</span>
+              {machine.scannerVersion && (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  background: '#eef2ff',
+                  color: '#4f46e5',
+                  letterSpacing: 0.3,
+                }}>
+                  v{machine.scannerVersion}
+                </span>
+              )}
+            </div>
             <div className="device-lastseen">Last seen: {lastSeenText}</div>
           </div>
         </div>

@@ -13,7 +13,7 @@ export default requireApiKey(async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { machine_name, platform, connected_drives, is_download_pc, dropbox_path, gdrive_path } = req.body;
+  const { machine_name, platform, connected_drives, is_download_pc, dropbox_path, gdrive_path, scanner_version } = req.body;
   if (!machine_name) {
     return res.status(400).json({ error: 'machine_name required' });
   }
@@ -23,12 +23,14 @@ export default requireApiKey(async function handler(req, res) {
   const safeDrives = Array.isArray(connected_drives)
     ? connected_drives.slice(0, 50).map(d => sanitizeString(String(d), 128))
     : [];
+  const safeVersion = scanner_version ? sanitizeString(String(scanner_version), 32) : null;
 
   deviceHeartbeats[safeName] = {
     name: safeName,
     platform: safePlatform,
     lastHeartbeat: new Date().toISOString(),
     connectedDrives: safeDrives,
+    scannerVersion: safeVersion,
   };
 
   // Update last_seen on any drives belonging to this machine

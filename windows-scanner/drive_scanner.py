@@ -2098,6 +2098,7 @@ def send_heartbeat(config, connected_drive_labels):
         'is_download_pc': config.get('is_download_pc', False),
         'dropbox_path': config.get('dropbox_path', ''),
         'gdrive_path': config.get('gdrive_path', ''),
+        'scanner_version': VERSION,
     }
     api_request(config, 'heartbeat', data)
 

@@ -56,6 +56,7 @@ export default requireAuth(async function handler(req, res) {
       machines[name].lastSeen = hb.lastHeartbeat;
       const age = now - new Date(hb.lastHeartbeat).getTime();
       machines[name].isOnline = age < 30000;
+      if (hb.scannerVersion) machines[name].scannerVersion = hb.scannerVersion;
     }
 
     return res.status(200).json(Object.values(machines));

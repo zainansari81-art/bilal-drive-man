@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.48.0'
+VERSION = '3.49.0'
 
 import os
 import sys
@@ -538,6 +538,7 @@ def send_heartbeat(config, connected_drive_labels):
         'machine_name': get_machine_name(),
         'platform': 'mac',
         'connected_drives': connected_drive_labels,
+        'scanner_version': VERSION,
     }
     api_request(config, 'heartbeat', data)
 
