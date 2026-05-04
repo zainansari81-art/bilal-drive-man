@@ -108,7 +108,11 @@ function DriveCard({ drive, onDeleted, onIgnore }) {
 
   return (
     <div className="drive-detail-card">
-      <div className="drive-detail-row" onClick={() => setOpen(!open)}>
+      <div
+        className="drive-detail-row"
+        onClick={() => setOpen(!open)}
+        style={onIgnore ? { gridTemplateColumns: '14px 220px 1fr 100px 180px auto' } : undefined}
+      >
         <span className="drive-detail-caret">{open ? '\u25BC' : '\u25B6'}</span>
         <span className="drive-detail-name">{d.name}</span>
         <span className="drive-detail-meta">
@@ -131,17 +135,16 @@ function DriveCard({ drive, onDeleted, onIgnore }) {
               onIgnore(d.id, d.name);
             }}
             style={{
-              marginLeft: 12,
-              padding: '4px 10px',
-              fontSize: 12,
-              border: '1px solid #4a4a5a',
+              padding: '5px 12px',
+              fontSize: 11,
+              fontWeight: 500,
+              border: '1px solid #d4d4d8',
               borderRadius: 6,
-              background: 'transparent',
+              background: '#fff',
               color: '#9ca3af',
               cursor: 'pointer',
-              opacity: 0.7,
               whiteSpace: 'nowrap',
-              flexShrink: 0,
+              transition: 'color 0.15s ease, border-color 0.15s ease',
               alignSelf: 'center',
             }}
             onMouseEnter={(e) => {
