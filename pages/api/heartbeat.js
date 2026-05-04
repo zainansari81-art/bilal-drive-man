@@ -44,19 +44,20 @@ export default requireApiKey(async function handler(req, res) {
     }
   }
 
-  // Register/update download machine if it reports cloud paths
-  if (is_download_pc || dropbox_path || gdrive_path) {
-    try {
-      await supabasePost('download_machines', {
-        machine_name: safeName,
-        is_download_pc: !!is_download_pc,
-        dropbox_path: sanitizeString(dropbox_path || '', 500),
-        gdrive_path: sanitizeString(gdrive_path || '', 500),
-        last_seen: new Date().toISOString(),
-      }, 'machine_name');
-    } catch (e) {
-      // ignore - machine registration is best-effort
-    }
+  // Persist EVERY heartbeat to download_machines so devices show up reliably
+  // across Vercel serverless instances (in-memory store alone is unreliable).
+  // 2026-05-04: previously gated on is_download_pc/cloud-paths — that meant
+  // any Mac without a drive plugged in was invisible on the Devices page.
+  try {
+    await supabasePost('download_machines', {
+      machine_name: safeName,
+      is_download_pc: !!is_download_pc,
+      dropbox_path: sanitizeString(dropbox_path || '', 500),
+      gdrive_path: sanitizeString(gdrive_path || '', 500),
+      last_seen: new Date().toISOString(),
+    }, 'machine_name');
+  } catch (e) {
+    // ignore - machine registration is best-effort
   }
 
   return res.status(200).json({ success: true });
