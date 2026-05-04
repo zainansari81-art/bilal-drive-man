@@ -44,7 +44,17 @@ export default requireAuth(async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid action' });
     }
 
-    res.setHeader('Allow', ['GET', 'POST']);
+    if (req.method === 'DELETE') {
+      const { machine_name } = req.body || {};
+      if (!machine_name) return res.status(400).json({ error: 'Missing machine_name' });
+      await supabaseFetch(
+        `download_machines?machine_name=eq.${encodeURIComponent(machine_name)}`,
+        { method: 'DELETE' }
+      );
+      return res.status(200).json({ success: true });
+    }
+
+    res.setHeader('Allow', ['GET', 'POST', 'DELETE']);
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   } catch (err) {
     console.error('Machines API error:', err);
