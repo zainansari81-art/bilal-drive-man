@@ -24,9 +24,22 @@ if [ -z "$PYTHON" ]; then
 fi
 echo "Using Python: $PYTHON"
 
-# Install rumps
+# Install dependencies (rumps + certifi for SSL)
 echo "Installing dependencies..."
-pip3 install rumps 2>/dev/null || true
+pip3 install --upgrade rumps certifi 2>/dev/null || true
+
+# Auto-fix SSL certificate bundle (Python.framework ships without one — every fresh
+# Mac would otherwise hit CERTIFICATE_VERIFY_FAILED on every HTTPS call.)
+echo "Configuring SSL certificates..."
+PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+if [ -n "$PY_VERSION" ]; then
+    CERT_CMD="/Applications/Python ${PY_VERSION}/Install Certificates.command"
+    if [ -f "$CERT_CMD" ]; then
+        bash "$CERT_CMD" >/dev/null 2>&1 && echo "  SSL certs installed via Install Certificates.command"
+    fi
+fi
+# Belt-and-braces: ensure certifi is current (works even if Install Certificates.command isn't present)
+"$PYTHON" -m pip install --upgrade certifi >/dev/null 2>&1 || true
 
 # Create log directory
 mkdir -p "$LOG_DIR"
