@@ -1,20 +1,51 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { formatTB, formatSize } from '../lib/format';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 export default function DevicesPage({ drives }) {
+  // Heartbeat-only machines (those without drives plugged in but reporting via /api/devices).
+  // We merge these into the drive-derived machine list so a freshly-installed Mac with no
+  // drives plugged in still shows up as a card. Refreshes every 30s alongside the page poll.
+  const [heartbeatMachines, setHeartbeatMachines] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/devices');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data)) setHeartbeatMachines(data);
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
   // Group ALL drives by source_machine (so offline machines still appear)
   const machines = {};
   for (const d of drives) {
     const machine = d.sourceMachine || 'Unknown Device';
     if (!machines[machine]) {
-      machines[machine] = { name: machine, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0 };
+      machines[machine] = { name: machine, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: null, isHeartbeatOnline: false };
     }
     machines[machine].allDrives.push(d);
     if (d.connected) {
       machines[machine].connectedDrives.push(d);
       machines[machine].totalUsed += d.used || 0;
       machines[machine].totalSize += d.total || 0;
+    }
+  }
+
+  // Merge in heartbeat-only machines that aren't already represented by a drive
+  for (const hb of heartbeatMachines) {
+    const name = hb.name;
+    if (!name || name === 'Unknown') continue;
+    if (!machines[name]) {
+      machines[name] = { name, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: hb.lastSeen, isHeartbeatOnline: !!hb.isOnline };
+    } else {
+      machines[name].lastHeartbeat = hb.lastSeen;
+      machines[name].isHeartbeatOnline = !!hb.isOnline;
     }
   }
 
@@ -46,12 +77,15 @@ function MachineCard({ machine }) {
   const [expanded, setExpanded] = useState(false);
   const [showHardDrives, setShowHardDrives] = useState(false);
   const connectedDrives = machine.connectedDrives;
-  const isOnline = connectedDrives.length > 0;
-  const lastSeen = machine.allDrives.reduce((latest, d) => {
+  // Online if either: (a) drives are connected, or (b) heartbeat is fresh
+  const isOnline = connectedDrives.length > 0 || machine.isHeartbeatOnline;
+  const driveLastSeen = machine.allDrives.reduce((latest, d) => {
     if (!d.lastSeen) return latest;
     const t = new Date(d.lastSeen).getTime();
     return t > latest ? t : latest;
   }, 0);
+  const heartbeatTime = machine.lastHeartbeat ? new Date(machine.lastHeartbeat).getTime() : 0;
+  const lastSeen = Math.max(driveLastSeen, heartbeatTime);
 
   const lastSeenText = lastSeen
     ? new Date(lastSeen).toLocaleString('en-US', {
