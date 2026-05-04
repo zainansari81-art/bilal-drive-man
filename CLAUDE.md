@@ -124,14 +124,73 @@ binary in-place, so the safe move is exit and let the OS / scheduled-task / user
 respawn from the fresh .exe.
 
 **Don't strip this guard.** It's the last line of defense when the build pipeline,
-the shim, and the file-lock semantics all conspire against you. False positives are
-impossible (the predicate requires both SHAs equal AND VERSION mismatch — only true
-if a zombie). Tail for the literal `ZOMBIE SELF-DETECTED` line in scanner.log if you
-suspect a stuck deploy.
+the shim, and the file-lock semantics all conspire against you. The predicate
+requires BOTH SHAs equal AND VERSION mismatch — true in two scenarios:
+1. **Genuine zombie:** old process running in memory after a successful disk-side
+   update. (intended target)
+2. **False positive — source VERSION ahead of binary on main:** someone bumped
+   `VERSION = '3.X.Y'` in `drive_scanner.py`, committed it, but never rebuilt and
+   committed the paired .exe. Every running scanner pulls remote_ver = '3.X.Y',
+   compares to its in-memory `VERSION = '3.(X-1).Y'`, hashes on-disk .exe (which
+   is the OLD .exe, hence its SHA matches the OLD .exe's expected_sha because
+   the .sha256 sidecar was never updated either), and self-kills. Task Scheduler
+   restarts it. Cycle repeats every ~5 min until source VERSION is corrected
+   OR a fresh paired .exe lands. We hit this 2026-05-04 — VERSION had been
+   bumped 3.51.0 → 3.53.0 for `live_progress` work but no .exe rebuild ever
+   landed in `dist/`. Fix was reverting the VERSION constant to 3.51.0 to match
+   the shipped binary (commit `17037f7`).
 
 **Out-of-process discipline (still applies):** before pushing a new .exe, taskkill
 all old PIDs on AAHIL. The in-process guard is a backstop; killing first is the
 clean path. CLAUDE.md regression test from above stays the source of truth.
+
+### Atomic VERSION bump rule (v3.51.0 lessons)
+
+**A scanner VERSION constant bump in `drive_scanner.py` and the paired .exe
+rebuild MUST land in the SAME git commit.** Any commit that touches the line
+`VERSION = '...'` without also touching `windows-scanner/dist/BilalDriveMan-Scanner.exe`
++ `windows-scanner/dist/BilalDriveMan-Scanner.exe.sha256` is a production
+landmine — every downstream scanner self-kills on the next auto-update tick
+via the false-positive path documented above.
+
+**Pre-push verification command** (run this before every `git push origin main`
+that touches `drive_scanner.py`):
+
+```bash
+# In web-app root. Should print nothing (silent = safe).
+SOURCE_VER=$(grep -m1 "^VERSION = " windows-scanner/drive_scanner.py | sed "s/.*'\(.*\)'.*/\1/")
+EXE_SHA_FILE=$(cat windows-scanner/dist/BilalDriveMan-Scanner.exe.sha256 | tr -d '\n')
+EXE_SHA_REAL=$(shasum -a 256 windows-scanner/dist/BilalDriveMan-Scanner.exe | awk '{print $1}')
+[ "$EXE_SHA_FILE" != "$EXE_SHA_REAL" ] && echo "MISMATCH: .sha256 sidecar does not match actual .exe SHA"
+git log -1 --name-only --format="" | grep -q "drive_scanner.py" && \
+  ! git log -1 --name-only --format="" | grep -q "BilalDriveMan-Scanner.exe$" && \
+  echo "DANGER: drive_scanner.py changed without paired .exe rebuild in this commit"
+```
+
+Two checks:
+- `.exe.sha256` sidecar matches the actual `.exe` hash on disk (file integrity)
+- If the last commit changed `drive_scanner.py`, it MUST also include
+  `windows-scanner/dist/BilalDriveMan-Scanner.exe` (atomic-bump enforcement)
+
+**Mac-Claude can't build the .exe.** When mac-side wants to ship a feature that
+bumps VERSION, the workflow is:
+1. Mac creates a `scanner-X.Y.Z-<feature>` branch with the source change AND
+   bumped VERSION constant.
+2. Push branch — DO NOT MERGE TO MAIN YET.
+3. A Windows machine with PyInstaller (AAHIL or one of the downloading PCs)
+   pulls the branch, runs `./windows-scanner/build.sh`, commits the resulting
+   `dist/BilalDriveMan-Scanner.exe` + `.exe.sha256` to the SAME branch, pushes.
+4. Mac merges the branch to main with `--no-ff` only after both source AND
+   binary are present in the branch tip.
+5. Auto-update propagates. Run the pre-push verification command above one
+   last time before the merge for safety.
+
+**If main ever ends up with source VERSION > binary VERSION again** (shouldn't
+happen with the above discipline, but if):
+- Symptom: every scanner instance dies within ~5 min of launch with `LastTaskResult: 0`.
+- Quick fix: revert VERSION constant on main back to whatever the .exe was built from.
+- Proper fix: rebuild the .exe at the higher version + commit it as a paired
+  bump immediately after.
 
 ## Wizard-race row-refetch pattern (v3.50.0+)
 
