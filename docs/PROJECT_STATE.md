@@ -157,6 +157,14 @@ Built for one user with high reliability requirements. No multi-tenancy, no publ
 
 > **Format:** `<commit>` — `<date> <author>` — short description. Add an entry every time you push.
 
+- _(next commit)_ — 2026-05-05 mac — Mac scanner 3.48.0: removed macOS `display notification` popup for low-space warnings (was spamming operator laptops every scan cycle). Warning still logged + portal still shows "X GB left" inline. Added `mac-scanner/bootstrap.sh` for privacy-clean install (downloads only the 3 mac-scanner files, not full repo). Drives page now sorts by fullness descending (most-full at top of each section).
+- `0dac044` — 2026-05-05 mac — Drives page row layout fix: extended grid-template-columns to 6 cols when "Ignore Permanently" button is rendered (was wrapping onto a 2nd row).
+- `8661b9b` — 2026-05-05 mac — `DELETE /api/machines` for cleaning up orphan device rows.
+- `b53619e` — 2026-05-05 mac — Devices page now fetches `/api/devices` and merges in heartbeat-only machines (Macs without drives plugged in are no longer invisible).
+- `2c3acc4` — 2026-05-05 mac — Mac `install.sh` auto-runs `Install Certificates.command` + `pip install certifi` so fresh Macs no longer hit `CERTIFICATE_VERIFY_FAILED`. True one-paste install.
+- `527983b` — 2026-05-05 mac — Heartbeats now persist to `download_machines` for every device (was gated on `is_download_pc/cloud-paths`). `/api/devices` merges in persisted rows so devices show across Vercel cold starts.
+- `f2a2cf5` — 2026-05-05 mac — Rebuilt HANDOVER_OPS.pdf with corrected status mapping.
+- `af12180` — 2026-05-05 mac — Notion mapping fix: "In Progress" → `completed` (it's editor post-processing, not active download — was making projects look stuck).
 - `bf0987f` — 2026-04-25 mac — Drives tab junk filter (Docker, WSL, virtual mounts, <1 GB) at both `lib/supabase.js` (display layer) + `windows-scanner/drive_scanner.py` (enum layer).
 - `c7c43aa` — 2026-04-25 mac — Scanner 3.47.1 staging cleanup on cancel; `_safe_run_command` CancelledError branch now best-effort cleans both gdrive + wetransfer staging roots so cancel-then-remove no longer leaves orphan bytes.
 - `8e628e1` — 2026-04-25 mac (cherry-pick of win's `e8929fd`) — Scanner 3.47.1 .exe rebuild (mac source-bumped VERSION but never ran PyInstaller; main shipped a stale 3.47.0 binary with 3.47.1 sidecar → AAHIL auto-update zombie loop, 8 zombies accumulated; win killed + rebuilt clean; fresh SHA `5c2e4837...`).
@@ -290,6 +298,27 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
 ---
 
 ## 10. Today's session log (rolling — wipe & restart at next morning's session)
+
+- 2026-05-05 (post-handover, multi-Mac rollout session):
+  - **Notion vocabulary fix #2.** "In Progress" was mapped to `downloading` — discovered it actually means the editor is post-processing already-downloaded files. Re-mapped to `completed` (`af12180`). Rebuilt HANDOVER_OPS.pdf to match (`f2a2cf5`).
+  - **Multi-Mac rollout — New York, Washington's Mac mini.**
+    - Hit `CERTIFICATE_VERIFY_FAILED` on every fresh python.org Python 3.14 install. Manual fix: `/Applications/Python\ 3.14/Install\ Certificates.command`. Then automated it in `install.sh` (`2c3acc4`) — true one-paste install going forward.
+    - `setup_mac.sh` FDA polling check is over-strict (probes TCC.db read access, which isn't actually required for /Volumes scanning). Documented bypass: ctrl+C, run cert command directly. Real fix is to relax the check; not done yet.
+    - `New York` Mac heartbeated successfully but didn't appear on Devices page. Two layered bugs:
+      - **Server bug:** heartbeats stored in-memory only. Vercel serverless functions don't share memory → heartbeat lost across cold starts. Fix `527983b`: persist every heartbeat to `download_machines` (was previously gated on `is_download_pc || cloud-paths`).
+      - **UI bug:** `DevicesPage` only iterated `/api/drives` data, never called `/api/devices`. Any Mac without a drive plugged in was invisible. Fix `b53619e`: page now fetches both and merges heartbeat-only machines.
+    - Added `DELETE /api/machines` (`8661b9b`) for cleaning orphan rows. Used it to remove the literal "Washington" record I'd accidentally created via curl tests (real ComputerName was "Washington's Mac mini").
+  - **Drives page UI cleanup.**
+    - "Ignore Permanently" button was breaking row layout — `drive-detail-row` is a 5-column CSS grid, button auto-wrapped onto a 2nd row. Fix `0dac044`: inline-override grid-template-columns to 6 cols when button is present.
+    - Sort by fullness descending within each section so operators can spot full drives at a glance (next commit, paired with this session-log update).
+  - **Mac scanner 3.48.0 (next commit).**
+    - Removed `osascript display notification` for low-space warnings — was spamming operator laptops every scan cycle. Warning is still logged AND portal still shows the orange "X GB left" inline. Add back behind a config flag if individual operators want desktop notifications.
+    - Created `mac-scanner/bootstrap.sh` for privacy-clean install. Downloads only the 3 mac-scanner files (`drive_scanner_mac.py`, `install.sh`, `setup_mac.sh`) instead of the entire repo — no web-app source, docs, or Windows scanner exposed on operator Macs.
+  - **Today's "why is this so painful?" learning.** Mac onboarding had FOUR friction points (cert install, FDA grant, scanner registration, UI invisibility) that compounded. After today's fixes, fresh-Mac onboarding is genuinely one paste:
+    ```
+    curl -fsSL https://raw.githubusercontent.com/zainansari81-art/bilal-drive-man/main/mac-scanner/bootstrap.sh | bash
+    ```
+    Within 60 seconds the Mac auto-appears on the Devices page. No follow-up commands.
 
 - 2026-04-25 evening:
   - Shipped junk-drive filter (`bf0987f`).

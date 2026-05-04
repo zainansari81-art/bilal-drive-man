@@ -65,8 +65,17 @@ export default function DrivesPage({ drives }) {
       return { ...d, clients };
     });
 
-  const connected = visibleDrives.filter(d => d.connected).sort((a, b) => a.name.localeCompare(b.name));
-  const disconnected = visibleDrives.filter(d => !d.connected).sort((a, b) => a.name.localeCompare(b.name));
+  // 2026-05-05: sort by fullness (most-full first) so operators can see at
+  // a glance which drives need swapping. Tiebreak alphabetically for a stable
+  // ordering on identical-fullness drives.
+  const byFullness = (a, b) => {
+    const pa = a.total > 0 ? a.used / a.total : 0;
+    const pb = b.total > 0 ? b.used / b.total : 0;
+    if (pb !== pa) return pb - pa;
+    return a.name.localeCompare(b.name);
+  };
+  const connected = visibleDrives.filter(d => d.connected).sort(byFullness);
+  const disconnected = visibleDrives.filter(d => !d.connected).sort(byFullness);
 
   if (visibleDrives.length === 0) {
     return (

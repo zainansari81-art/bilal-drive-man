@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.47.0'
+VERSION = '3.48.0'
 
 import os
 import sys
@@ -925,19 +925,14 @@ class DriveMonitor:
 
         self.last_scan[drive['label']] = time.time()
 
-        # Low space warning
+        # Low space warning — log only. The portal shows the visual warning
+        # (orange "X GB left" inline on the Drives page). We deliberately do
+        # NOT pop a macOS notification — it's noisy on operator laptops and
+        # repeats every scan cycle. Add this back only behind a config flag
+        # if individual operators want desktop notifications. (2026-05-05)
         threshold = self.config.get('low_space_gb', 100) * 1024**3
         if drive['free'] < threshold:
             self.status(f"WARNING: {drive['label']} has only {format_size(drive['free'])} free!")
-            try:
-                label = drive['label'].replace('"', '')
-                free_str = format_size(drive['free'])
-                subprocess.run([
-                    'osascript', '-e',
-                    f'display notification "{label} has only {free_str} free!" with title "Bilal - Drive Man" subtitle "Low Space Warning"'
-                ], timeout=5)
-            except:
-                pass
 
     def _scan_all(self):
         drives = get_external_drives()
