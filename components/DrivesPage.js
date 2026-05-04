@@ -6,6 +6,9 @@ export default function DrivesPage({ drives }) {
   // Optimistic-hide state: keys for clients/couples the user just deleted.
   // Key format: "drive|client|*" for a whole client, "drive|client|couple" for a couple.
   const [hidden, setHidden] = useState(() => new Set());
+  // 2026-05-04: optimistic-ignore — drive ids the user just clicked
+  // "Ignore Permanently" on. Hides instantly while the PATCH is in flight.
+  const [ignoredIds, setIgnoredIds] = useState(() => new Set());
 
   const handleDeleted = ({ driveName, clientName, coupleName, type }) => {
     const key = type === 'client'
@@ -18,18 +21,49 @@ export default function DrivesPage({ drives }) {
     });
   };
 
+  const handleIgnore = async (driveId, driveName) => {
+    if (!driveId) return;
+    if (!window.confirm(
+      `Ignore "${driveName}" permanently?\n\nIt will be hidden from this dashboard, the wizard, and stat counts. The scanner still detects it physically — this only affects display. You can un-ignore via SQL if needed.`
+    )) return;
+    // Optimistic hide
+    setIgnoredIds(prev => {
+      const next = new Set(prev);
+      next.add(driveId);
+      return next;
+    });
+    try {
+      const res = await fetch('/api/drives', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: driveId, is_ignored: true }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      // Revert optimistic hide on failure
+      setIgnoredIds(prev => {
+        const next = new Set(prev);
+        next.delete(driveId);
+        return next;
+      });
+      window.alert(`Failed to ignore drive: ${err.message}`);
+    }
+  };
+
   // Apply hidden filter so just-deleted items disappear without a refresh
-  const visibleDrives = drives.map(d => {
-    const clients = (d.clients || [])
-      .filter(c => !hidden.has(`${d.name}|${c.name}|*`))
-      .map(c => ({
-        ...c,
-        couples: (c.couples || []).filter(cp =>
-          !hidden.has(`${d.name}|${c.name}|${cp.name}`)
-        ),
-      }));
-    return { ...d, clients };
-  });
+  const visibleDrives = drives
+    .filter(d => !ignoredIds.has(d.id))
+    .map(d => {
+      const clients = (d.clients || [])
+        .filter(c => !hidden.has(`${d.name}|${c.name}|*`))
+        .map(c => ({
+          ...c,
+          couples: (c.couples || []).filter(cp =>
+            !hidden.has(`${d.name}|${c.name}|${cp.name}`)
+          ),
+        }));
+      return { ...d, clients };
+    });
 
   const connected = visibleDrives.filter(d => d.connected).sort((a, b) => a.name.localeCompare(b.name));
   const disconnected = visibleDrives.filter(d => !d.connected).sort((a, b) => a.name.localeCompare(b.name));
@@ -48,20 +82,20 @@ export default function DrivesPage({ drives }) {
       {connected.length > 0 && (
         <>
           <h3 style={{ color: '#22c55e', margin: '10px 0' }}>Connected ({connected.length})</h3>
-          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} /></div>)}
+          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} onIgnore={handleIgnore} /></div>)}
         </>
       )}
       {disconnected.length > 0 && (
         <>
           <h3 style={{ color: '#8c8ca1', margin: '20px 0 10px' }}>Disconnected ({disconnected.length})</h3>
-          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} /></div>)}
+          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} onIgnore={handleIgnore} /></div>)}
         </>
       )}
     </div>
   );
 }
 
-function DriveCard({ drive, onDeleted }) {
+function DriveCard({ drive, onDeleted, onIgnore }) {
   const [open, setOpen] = useState(false);
   const d = drive;
   const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
@@ -85,6 +119,42 @@ function DriveCard({ drive, onDeleted }) {
           <div className="drive-progress-fill-mini" style={{ background: barColor, width: `${pct}%` }}></div>
         </div>
         <span className="drive-detail-status" style={{ color: statusColor }}>{statusText}</span>
+        {/* 2026-05-04: ignore-permanently per-drive button. e.stopPropagation
+            prevents the row's expand-toggle from firing on click. */}
+        {onIgnore && (
+          <button
+            type="button"
+            className="drive-ignore-btn"
+            title="Hide this drive from the dashboard permanently"
+            onClick={(e) => {
+              e.stopPropagation();
+              onIgnore(d.id, d.name);
+            }}
+            style={{
+              marginLeft: 12,
+              padding: '4px 10px',
+              fontSize: 12,
+              border: '1px solid #4a4a5a',
+              borderRadius: 6,
+              background: 'transparent',
+              color: '#9ca3af',
+              cursor: 'pointer',
+              opacity: 0.7,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.opacity = '1';
+              e.currentTarget.style.borderColor = '#ef4444';
+              e.currentTarget.style.color = '#ef4444';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '0.7';
+              e.currentTarget.style.borderColor = '#4a4a5a';
+              e.currentTarget.style.color = '#9ca3af';
+            }}
+          >
+            Ignore Permanently
+          </button>
+        )}
       </div>
       {open && (
         <div className="drive-detail-expanded">

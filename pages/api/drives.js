@@ -1,4 +1,4 @@
-import { getDrivesWithClients, formatDrivesForFrontend, upsertDrive } from '../../lib/supabase';
+import { getDrivesWithClients, formatDrivesForFrontend, upsertDrive, supabasePatch } from '../../lib/supabase';
 import { requireAuth, sanitizeString, validatePositiveNumber } from '../../lib/auth';
 
 export default requireAuth(async function handler(req, res) {
@@ -24,7 +24,27 @@ export default requireAuth(async function handler(req, res) {
       return res.status(200).json(result);
     }
 
-    res.setHeader('Allow', ['GET', 'POST']);
+    // 2026-05-04: PATCH for user-driven "ignore permanently" toggle.
+    // Body: { id: <int>, is_ignored: <bool> }. Scanner UPSERTs don't
+    // include is_ignored in their payload, so this flag is preserved
+    // across re-syncs (the scanner can't accidentally un-ignore).
+    if (req.method === 'PATCH') {
+      const { id, is_ignored } = req.body || {};
+      const driveId = Number(id);
+      if (!Number.isFinite(driveId) || driveId <= 0) {
+        return res.status(400).json({ error: 'Invalid id' });
+      }
+      if (typeof is_ignored !== 'boolean') {
+        return res.status(400).json({ error: 'is_ignored must be boolean' });
+      }
+      const updated = await supabasePatch(
+        `drives?id=eq.${driveId}`,
+        { is_ignored }
+      );
+      return res.status(200).json(updated);
+    }
+
+    res.setHeader('Allow', ['GET', 'POST', 'PATCH']);
     return res.status(405).json({ error: `Method ${req.method} not allowed` });
   } catch (err) {
     console.error('Drives API error:', err);
