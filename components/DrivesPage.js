@@ -140,6 +140,9 @@ function DriveCard({ drive, onDeleted, onIgnore }) {
               color: '#9ca3af',
               cursor: 'pointer',
               opacity: 0.7,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+              alignSelf: 'center',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.opacity = '1';
