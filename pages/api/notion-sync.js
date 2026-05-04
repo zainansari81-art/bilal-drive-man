@@ -46,7 +46,10 @@ function mapNotionStatus(progress) {
   // Mirror them to the closest internal equivalent so the cron sync stays
   // accurate without manual intervention.
   if (p === 'approved') return 'idle';            // ready to start, not yet fired
-  if (p === 'in progress') return 'downloading';  // actively working
+  // "In Progress" in Notion = editor is post-processing AFTER download finished.
+  // From the portal's perspective the download job is DONE — files are on the
+  // drive. Map to completed so these don't show as stuck downloads. (2026-05-04 fix)
+  if (p === 'in progress') return 'completed';
   if (p === 'delivered') return 'completed';      // shipped to client
   if (p === 'success') return 'completed';        // alt name for delivered
   return null;

@@ -83,9 +83,9 @@ The portal automatically syncs with Notion every 5 minutes:
 |---|---|
 | Not Downloaded | idle |
 | Approved | idle (ready to fire) |
-| Downloading / In Progress | downloading |
+| Downloading | downloading |
 | Copying | copying |
-| Downloaded / Delivered / Success | completed |
+| Downloaded / In Progress / Delivered / Success | completed |
 | Failed | failed |
 | Cancelled | idle |
 
