@@ -12,7 +12,8 @@
 ## Folder Structure
 - /pages           Next.js pages and API routes
 - /pages/api       All backend endpoints
-- /components      React components (one per page: DrivesPage, DevicesPage, etc.)
+- /components      React components — page components (DashboardPage, DrivesPage, DevicesPage, DownloadingProPage, SearchPage, HistoryPage), shell (Sidebar=Rail, Header=StatusStrip), shared primitives (atoms.js: LED/Gauge/Spool/Fuel/Runway/etc., CountUp.js)
+- /pages/_document.js  Document — font <link>s live HERE, not in next/head (see SSR footguns)
 - /lib             Shared utilities (supabase.js, auth.js, format.js)
 - /styles          globals.css — single CSS file for all styling
 - /mac-scanner     Mac scanner Python script (synced to GitHub for auto-update)
@@ -414,6 +415,44 @@ Diagnostic ladder before declaring wedge:
 block for descendants and breaks `position: fixed` on modal overlays
 (DownloadWizardModal, DownloadMagicAnimation). Was a real bug we already fixed.
 
+## UI Redesign & SSR footguns (2026-05-18 — "console" redesign shipped, commit d774b74)
+
+The portal UI is the minimal "console" redesign as of 2026-05-18. All 6 pages
+restyled; `globals.css` replaced wholesale; Geist Sans/Mono from Google Fonts;
+shared primitives in `components/atoms.js`; animated counter in `CountUp.js`.
+The redesign was frontend-only — `pages/api/*` and `lib/*` were untouched.
+
+Three footguns learned shipping it — DO NOT regress these:
+
+1. **Font `<link rel="stylesheet">` MUST go in `pages/_document.js`, never in
+   `next/head`** (`_app.js` or a page's `<Head>`). A stylesheet added via
+   next/head makes Next.js inject `<style>body{display:none}</style>` as a FOUC
+   guard that only clears once the sheet loads. If the font CDN is slow or
+   unreachable the whole app white-screens — and `display:none` on `body` also
+   freezes every CSS animation. This caused a full white-screen on 2026-05-18.
+
+2. **Never render `new Date()`, `Date.now()`, `Math.random()`, or any
+   time/locale-dependent value during SSR render.** The server value and the
+   first client render differ → React hydration mismatch → hydration aborts
+   ("Text content does not match server-rendered HTML"). Pattern: start the
+   state `null`, populate it in `useEffect` (client-only), render a placeholder
+   until then. `ClockTime` in `Header.js` is the reference implementation.
+
+3. **The `.fade-in` page wrapper must stay visible without its animation.** A
+   page-level opacity animation is a single point of failure for a blank page —
+   if it ever stalls at frame 0 the whole page is invisible. `.fade-in` is now
+   `animation: none; opacity: 1`; per-list `.stagger` animations provide entry
+   motion instead.
+
+## .env.local footgun — `$` in values
+
+Next.js loads `.env.local` through dotenv-expand, which treats `$NAME` as a
+variable reference. Values containing `$` — notably the bcrypt
+`AUTH_PASSWORD_HASH` (`$2b$12$...`) — get mangled (`$2b`, `$12` expand to empty)
+so local-dev login silently fails with 401. **Escape every `$` as `\$`** in
+`.env.local`. Production is unaffected — Vercel stores env-var values literally,
+no dotenv parsing.
+
 ## Two-Claude Coordination (consolidated 2026-04-26)
 
 Per Zain's consolidation directive: **mac-Claude (this Claude) owns all dev work.** Win-Claude is testing-only on AAHIL.
@@ -446,3 +485,7 @@ Coordination via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` 
 - **`.staging-state.json` dict hygiene**: when you add a state dict that tracks failures (`failed_files`, `failed_X`, etc.), also `dict.pop(key, None)` from it on retry-success. Otherwise the final tally over-counts failures (we shipped a misleading "12 ok, 3 failed" line in 3.50.0 because trailing-whitespace files succeeded on retry but stayed in `failed_files` — fixed in 3.51.0).
 - **Targeted Notion card cloning for E2E tests**: when running fresh E2E tests, append a suffix to a Notion card name (`(test-N)` or a date) so the wizard treats it as a new project. Don't reuse the same project across runs — the staging dir, completed_at timestamp, and progress_bytes from the prior run can mask new failures.
 - **All scanner code paths that wait + fail with a generic error** should distinguish failure modes via a one-shot cloud-side metadata probe (Dropbox: `/2/files/get_metadata`; GDrive: equivalent). The default error wording must point operators at the right system. Pattern documented in `dropbox_check_cloud_path_exists` (drive_scanner.py).
+- **Font links → `pages/_document.js` only.** Never add `<link rel="stylesheet">` via `next/head` — triggers Next's `body{display:none}` FOUC guard that white-screens the app if the CDN is slow. (See "UI Redesign & SSR footguns".)
+- **No time/random values in SSR render.** `new Date()`/`Date.now()`/`Math.random()` during render → hydration mismatch. Start state `null`, set in `useEffect`.
+- **`.env.local` `$`-escaping.** Escape every `$` as `\$` in `.env.local` values (bcrypt hashes etc.) — dotenv-expand mangles unescaped `$`.
+- **Dropbox shared-folder "(1)" suffix.** When a folder is re-added to Dropbox and one of that name already exists, Dropbox appends ` (1)`/` (2)`. `dropbox-share-status.js` detection probes the base name + numbered variants; the operator-facing fix is to rename the folder to drop the suffix so the scanner's exact-path `cloud_folder_path` resolves.
