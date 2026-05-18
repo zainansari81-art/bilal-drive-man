@@ -299,6 +299,16 @@ Vercel env vars (used by `/api/gdrive-share-status` for share-URL pre-validation
 
 ## 10. Today's session log (rolling — wipe & restart at next morning's session)
 
+- 2026-05-18 (multi-Mac rollout, Dropbox E2E test, UI redesign shipped):
+  - **Notion "In Progress" remap.** "In Progress" now maps to `completed` (it's editor post-processing, not an active download) — `af12180`. HANDOVER_OPS.pdf rebuilt.
+  - **Multi-Mac scanner rollout.** Brought New York, Washington's Mac mini, Illinois's Mac mini, Nevada, Hawaii Mac online. Hit `CERTIFICATE_VERIFY_FAILED` on fresh python.org Python 3.14 (no CA bundle) — `install.sh` now auto-runs `Install Certificates.command` + `pip install certifi` (`2c3acc4`). Added `mac-scanner/bootstrap.sh` privacy-clean installer (downloads only the 3 mac-scanner files). Mac scanner → 3.48.0 (killed desktop low-space notification spam) → 3.49.0 (sends `scanner_version` in heartbeat).
+  - **Heartbeat persistence.** Heartbeats were in-memory only → devices without drives were invisible across Vercel cold starts. Now every heartbeat upserts `download_machines`; `DevicesPage` fetches `/api/devices` + `/api/machines` and merges by name (`527983b`, `b53619e`). Added `DELETE /api/machines` (`8661b9b`), removed dead `AAHIL` machine everywhere. Scanner version badge on Devices.
+  - **Drives page** — Ignore-Permanently button layout fix (6-col grid, `0dac044`); sort by fullness descending (`7e76b2f`).
+  - **Dropbox E2E test PASSED.** Fired `DROPBOX WORKFLOW TESTING - ZAIN` on DOWNLOADING-PRO → Texas 2tb, completed (~310 MB copied). Two bugs found + fixed: (1) `dropbox-share-status.js` now suffix-tolerant — a re-added shared folder Dropbox renames to `AUR NEW SONGS (1)` (`a35a189`); (2) `cloud_folder_path` is built from the canonical share name so the scanner needs the local folder named exactly — operator fix is to rename the Dropbox folder to drop the ` (1)` suffix. Confirmed the Vercel `DROPBOX_REFRESH_TOKEN` account matches DOWNLOADING-PRO's Dropbox.
+  - **UI redesign SHIPPED to production** (`d774b74`, live at bilal-drive-man.vercel.app). Full "console" redesign — all 6 pages, Rail nav, StatusStrip, `atoms.js` primitives, `CountUp.js`, motion polish (stagger/shimmer/hover-lift), login Show/Hide password. Ported on `redesign-console-ui` branch, reviewed on localhost, merged to main. Frontend-only — `pages/api/*` + `lib/*` untouched (verified). White-screen incident during review: fonts via `next/head` triggered Next's `body{display:none}` FOUC guard → moved to `pages/_document.js`; `ClockTime` SSR hydration mismatch → guarded with `useState(null)`+`useEffect`. Both footguns now in CLAUDE.md (`5534ea9`).
+  - **`.env.local` footgun found:** `$` in values (bcrypt `AUTH_PASSWORD_HASH`) mangled by dotenv-expand → escape as `\$`. Local-dev only; production unaffected.
+  - History already records the deleting machine for both `folder_removed` and `data_deleted` events (in the details column) — confirmed, no change needed.
+
 - 2026-05-05 (post-handover, multi-Mac rollout session):
   - **Notion vocabulary fix #2.** "In Progress" was mapped to `downloading` — discovered it actually means the editor is post-processing already-downloaded files. Re-mapped to `completed` (`af12180`). Rebuilt HANDOVER_OPS.pdf to match (`f2a2cf5`).
   - **Multi-Mac rollout — New York, Washington's Mac mini.**
