@@ -173,32 +173,49 @@ export default requireAuth(async function handler(req, res) {
       });
     }
 
-    // Probe Rafay's Dropbox root for a folder with this exact name.
-    // Dropbox always saves "Add to my Dropbox" content at /<name>.
+    // Probe Rafay's Dropbox root for a folder with this name.
+    // Dropbox saves "Add to my Dropbox" content at /<name>, BUT when a folder
+    // of that name already exists Dropbox appends " (1)", " (2)", etc. So we
+    // probe the exact name first, then the numbered variants — any match
+    // counts as joined, and we return the ACTUAL folder name found so the
+    // downstream scanner looks in the right place. (2026-05-18)
+    const candidateNames = [
+      folderName,
+      ...[1, 2, 3, 4, 5].map(n => `${folderName} (${n})`),
+    ];
     let savedInUserTree = false;
-    try {
-      const metaProbeResp = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ path: `/${folderName}` }),
-      });
-      if (metaProbeResp.ok) {
-        const probeMeta = await metaProbeResp.json();
-        savedInUserTree = probeMeta['.tag'] === 'folder';
+    let matchedFolderName = folderName;
+    for (const candidate of candidateNames) {
+      try {
+        const metaProbeResp = await fetch('https://api.dropboxapi.com/2/files/get_metadata', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ path: `/${candidate}` }),
+        });
+        if (metaProbeResp.ok) {
+          const probeMeta = await metaProbeResp.json();
+          if (probeMeta['.tag'] === 'folder') {
+            savedInUserTree = true;
+            matchedFolderName = probeMeta.name || candidate;
+            break;
+          }
+        }
+        // 409 (path/not_found) is the expected "not this variant" signal —
+        // keep probing the remaining candidates.
+      } catch (probeErr) {
+        console.error('Dropbox get_metadata probe failed:', probeErr.message);
       }
-      // 409 (path/not_found) is the expected "not joined yet" signal — leave
-      // savedInUserTree=false. Other errors fall through the same way.
-    } catch (probeErr) {
-      console.error('Dropbox get_metadata probe failed:', probeErr.message);
     }
 
     return res.status(200).json({
       joined: savedInUserTree,
       shared_folder_id: null,
-      folder_name: folderName,
+      // Return the matched name (e.g. "AUR NEW SONGS (1)") so the scanner's
+      // find_cloud_folder substring match resolves to the right local folder.
+      folder_name: matchedFolderName,
       link_type: 'dropbox',
       error: null,
     });
