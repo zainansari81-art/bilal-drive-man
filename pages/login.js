@@ -47,12 +47,8 @@ export default function LoginPage() {
       <Head>
         <title>Login — Bilal Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
+        {/* Font links live in pages/_document.js — adding a stylesheet via
+            next/head triggers Next's body{display:none} FOUC guard. */}
         <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='5' y='15' width='90' height='70' rx='10' fill='%2318181B'/><rect x='12' y='22' width='76' height='40' rx='5' fill='%2384CC16'/></svg>" />
       </Head>
 

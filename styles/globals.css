@@ -1589,8 +1589,12 @@ a { color: inherit; text-decoration: none; }
   transition: height 0.25s cubic-bezier(.16,1,.3,1);
 }
 
-/* ---- Page-level entry override (more directional than a plain fade) ---- */
-.fade-in { animation: rise-in 0.35s cubic-bezier(.16,1,.3,1) both; }
+/* ---- Page-level entry: keep the page reliably visible. ----
+   A page-level opacity animation is a single point of failure — if it ever
+   stalls at frame 0 the whole page goes blank. The per-list `.stagger`
+   animations already provide entry motion, so the page wrapper itself just
+   stays visible with no opacity animation. (2026-05-18 white-screen fix) */
+.fade-in { animation: none; opacity: 1; }
 
 @media (prefers-reduced-motion: reduce) {
   * {

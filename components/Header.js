@@ -1,11 +1,23 @@
 import { useState, useEffect } from 'react';
 
 function ClockTime() {
-  const [now, setNow] = useState(new Date());
+  // `now` starts null so the server render and the first client render match
+  // (both empty) — rendering `new Date()` during SSR causes a hydration
+  // mismatch because the clock has already ticked by the time the client
+  // hydrates. The real time is set client-side in useEffect.
+  const [now, setNow] = useState(null);
   useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+  if (!now) {
+    return (
+      <span className="t-mono" style={{ fontSize: 13, letterSpacing: '0.06em', color: 'var(--ink)' }}>
+        --:--<span style={{ color: 'var(--ink-mute)' }}>:--</span>
+      </span>
+    );
+  }
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
   const ss = String(now.getSeconds()).padStart(2, '0');
