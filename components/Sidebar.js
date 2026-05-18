@@ -1,105 +1,63 @@
 import { useState, useEffect } from 'react';
 
-export default function Sidebar({ currentPage, onNavigate, driveCount, onScan, username, collapsed, onToggleCollapse }) {
-  const [scanning, setScanning] = useState(false);
+const PAGES = [
+  { id: 'dashboard',   glyph: '☰',  label: 'Dashboard' },
+  { id: 'drives',      glyph: '⧉',  label: 'Drives' },
+  { id: 'devices',     glyph: '▢',  label: 'Machines' },
+  { id: 'downloading', glyph: '↓',  label: 'Transfers' },
+  { id: 'search',      glyph: '⌕',  label: 'Search' },
+  { id: 'history',     glyph: '⏱',  label: 'History' },
+];
+
+export default function Sidebar({ currentPage, onNavigate, projects }) {
+  const activeCount = (projects || []).filter(
+    p => ['downloading', 'copying'].includes(p.download_status)
+  ).length;
 
   const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     window.location.href = '/login';
   };
 
-  const handleScan = async () => {
-    setScanning(true);
-    await onScan();
-    setTimeout(() => setScanning(false), 1500);
-  };
-
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '\u25A6' },
-    { id: 'drives', label: 'Drives', icon: '\u26C1', badge: driveCount },
-    { id: 'devices', label: 'Devices', icon: '\uD83D\uDCBB' },
-    { id: 'downloading', label: 'Downloading-Pro', icon: '\u2B07' },
-    { id: 'search', label: 'Search', icon: '\u2315' },
-    { id: 'history', label: 'History', icon: '\u29D6' },
-  ];
-
   return (
-    <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <div className="logo">
-        <div className="logo-circle">B</div>
-        {!collapsed && (
-          <div>
-            <div className="logo-text">Bilal - Drive Man</div>
-            <div className="logo-sub">by TXB</div>
-          </div>
-        )}
+    <aside className="rail">
+      <div className="rail-logo">
+        <div className="mark">B</div>
+        <div className="brand">
+          <div className="brand-name">Bilal Drive Man</div>
+          <div className="brand-sub">TXB Studios</div>
+        </div>
       </div>
 
-      <button
-        className="sidebar-toggle"
-        onClick={onToggleCollapse}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        {collapsed ? '\u276F' : '\u276E'}
-      </button>
+      <div className="rail-divider" />
 
-      <div className="sidebar-divider"></div>
-
-      <div className="nav-items">
-        {navItems.map(item => (
+      <nav className="rail-nav">
+        {PAGES.map(p => (
           <button
-            key={item.id}
-            className={`nav-item${currentPage === item.id ? ' active' : ''}`}
-            onClick={() => onNavigate(item.id)}
-            title={collapsed ? item.label : ''}
+            key={p.id}
+            className={`rail-item ${currentPage === p.id ? 'active' : ''}`}
+            onClick={() => onNavigate(p.id)}
+            title={p.label}
           >
-            <span className="nav-icon">{item.icon}</span>
-            {!collapsed && item.label}
-            {!collapsed && item.badge && <span className="nav-badge">{item.badge}</span>}
+            <span className="glyph">{p.glyph}</span>
+            <span>{p.label}</span>
+            {p.id === 'downloading' && activeCount > 0 && (
+              <span className="badge-dot" />
+            )}
           </button>
         ))}
-      </div>
+      </nav>
 
-      <div className="sidebar-bottom">
-        {!collapsed ? (
-          <>
-            <div className="scan-card">
-              <h3>Scan Drives</h3>
-              <p>Rescan all connected external drives</p>
-              <button className="scan-btn" onClick={handleScan} disabled={scanning}>
-                {scanning ? 'Scanning...' : 'Scan Now'}
-              </button>
-            </div>
-            <div className="sidebar-brand">Powered by TXB</div>
-            <button
-              onClick={handleLogout}
-              className="sidebar-logout-btn"
-            >
-              <span style={{ fontSize: '16px' }}>{'\u2190'}</span>
-              Logout{username ? ` (${username})` : ''}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className="nav-item"
-              onClick={handleScan}
-              disabled={scanning}
-              title="Scan Drives"
-              style={{ justifyContent: 'center' }}
-            >
-              <span className="nav-icon">{scanning ? '\u23F3' : '\u{1F50D}'}</span>
-            </button>
-            <button
-              className="nav-item"
-              onClick={handleLogout}
-              title="Logout"
-              style={{ justifyContent: 'center' }}
-            >
-              <span className="nav-icon">{'\u2190'}</span>
-            </button>
-          </>
-        )}
+      <div className="rail-foot">
+        <div className="rail-divider" />
+        <button
+          className="rail-item"
+          onClick={handleLogout}
+          title="Log out"
+        >
+          <span className="glyph">↩</span>
+          <span>Log out</span>
+        </button>
       </div>
     </aside>
   );

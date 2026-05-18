@@ -44,52 +44,140 @@ export default function LoginPage() {
   return (
     <>
       <Head>
-        <title>Login - Bilal Drive Man</title>
+        <title>Login — Bilal Drive Man</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='5' y='15' width='90' height='70' rx='10' fill='%231a1a2e'/><rect x='12' y='22' width='76' height='40' rx='5' fill='%23c8e600'/><circle cx='30' cy='72' r='5' fill='%23c8e600'/><circle cx='45' cy='72' r='5' fill='%23c8e600'/><rect x='60' y='68' width='22' height='8' rx='3' fill='%23c8e600'/></svg>" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
+          rel="stylesheet"
+        />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='5' y='15' width='90' height='70' rx='10' fill='%2318181B'/><rect x='12' y='22' width='76' height='40' rx='5' fill='%2384CC16'/></svg>" />
       </Head>
 
-      <div style={styles.wrapper}>
-        <div style={styles.card}>
-          <div style={styles.logoRow}>
-            <div style={styles.logoCircle}>B</div>
+      <div style={{
+        minHeight: '100vh',
+        background: 'var(--bg, #F8F8F7)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+      }}>
+        <div style={{
+          background: 'var(--panel, #fff)',
+          borderRadius: 12,
+          padding: '40px',
+          width: '100%',
+          maxWidth: '380px',
+          border: '1px solid var(--rule, #E5E4E1)',
+          boxShadow: '0 1px 3px rgba(24,24,27,0.05), 0 1px 2px rgba(24,24,27,0.03)',
+        }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 8,
+              background: 'var(--ink, #18181B)',
+              display: 'grid', placeItems: 'center',
+              fontWeight: 700, fontSize: 16, color: '#fff', letterSpacing: '-0.01em',
+            }}>B</div>
             <div>
-              <div style={styles.logoText}>Bilal - Drive Man</div>
-              <div style={styles.logoSub}>by TXB</div>
+              <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink, #18181B)', letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+                Bilal Drive Man
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--ink-mute, #71717A)' }}>TXB Studios</div>
             </div>
           </div>
-          <p style={styles.subtitle}>Sign in to your account</p>
 
-          <form onSubmit={handleSubmit} style={styles.form}>
-            {error && <div style={styles.error}>{error}</div>}
+          <p style={{ fontSize: 13, color: 'var(--ink-mute, #71717A)', marginBottom: 24 }}>
+            Sign in to your account
+          </p>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Username</label>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {error && (
+              <div style={{
+                background: 'var(--alert-bg, #FEF2F2)',
+                color: 'var(--alert-fg, #991B1B)',
+                padding: '10px 14px',
+                borderRadius: 6,
+                fontSize: 13,
+                border: '1px solid var(--alert, #DC2626)',
+              }}>
+                {error}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-2, #3F3F46)' }}>
+                Username
+              </label>
               <input
                 type="text"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={styles.input}
+                onChange={e => setUsername(e.target.value)}
                 placeholder="Enter username"
                 autoFocus
                 required
+                style={{
+                  padding: '9px 12px',
+                  borderRadius: 6,
+                  border: '1px solid var(--rule, #E5E4E1)',
+                  fontSize: 13.5,
+                  fontFamily: 'inherit',
+                  color: 'var(--ink, #18181B)',
+                  outline: 'none',
+                  background: 'var(--panel, #fff)',
+                  transition: 'border-color 0.12s',
+                }}
+                onFocus={e => { e.target.style.borderColor = 'var(--ink, #18181B)'; e.target.style.boxShadow = '0 0 0 3px rgba(24,24,27,0.05)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--rule, #E5E4E1)'; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
-            <div style={styles.field}>
-              <label style={styles.label}>Password</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-2, #3F3F46)' }}>
+                Password
+              </label>
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={styles.input}
+                onChange={e => setPassword(e.target.value)}
                 placeholder="Enter password"
                 required
+                style={{
+                  padding: '9px 12px',
+                  borderRadius: 6,
+                  border: '1px solid var(--rule, #E5E4E1)',
+                  fontSize: 13.5,
+                  fontFamily: 'inherit',
+                  color: 'var(--ink, #18181B)',
+                  outline: 'none',
+                  background: 'var(--panel, #fff)',
+                  transition: 'border-color 0.12s',
+                }}
+                onFocus={e => { e.target.style.borderColor = 'var(--ink, #18181B)'; e.target.style.boxShadow = '0 0 0 3px rgba(24,24,27,0.05)'; }}
+                onBlur={e => { e.target.style.borderColor = 'var(--rule, #E5E4E1)'; e.target.style.boxShadow = 'none'; }}
               />
             </div>
 
-            <button type="submit" style={styles.button} disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                background: 'var(--ink, #18181B)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px',
+                borderRadius: 6,
+                fontSize: 13.5,
+                fontWeight: 600,
+                cursor: loading ? 'wait' : 'pointer',
+                fontFamily: 'inherit',
+                marginTop: 4,
+                transition: 'background 0.12s',
+                opacity: loading ? 0.7 : 1,
+              }}
+            >
+              {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
         </div>
@@ -97,106 +185,3 @@ export default function LoginPage() {
     </>
   );
 }
-
-const styles = {
-  wrapper: {
-    minHeight: '100vh',
-    background: '#f4f5f7',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontFamily: "'Inter', 'Segoe UI', sans-serif",
-  },
-  card: {
-    background: '#fff',
-    borderRadius: '16px',
-    padding: '40px',
-    width: '100%',
-    maxWidth: '400px',
-    border: '1px solid #e8eaed',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
-  },
-  logoRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    marginBottom: '6px',
-  },
-  logoCircle: {
-    width: '42px',
-    height: '42px',
-    background: '#c8e600',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 800,
-    fontSize: '13px',
-    color: '#1a1a2e',
-  },
-  logoText: {
-    fontSize: '18px',
-    fontWeight: 800,
-    color: '#1a1a2e',
-  },
-  logoSub: {
-    fontSize: '11px',
-    fontWeight: 600,
-    color: '#8c8ca1',
-    letterSpacing: '1.5px',
-    textTransform: 'uppercase',
-    marginTop: '1px',
-  },
-  subtitle: {
-    fontSize: '14px',
-    color: '#8c8ca1',
-    marginBottom: '28px',
-    marginTop: '4px',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '18px',
-  },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  label: {
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#4a4a6a',
-  },
-  input: {
-    padding: '10px 14px',
-    borderRadius: '10px',
-    border: '1px solid #e5e7eb',
-    fontSize: '14px',
-    fontFamily: 'inherit',
-    color: '#1a1a2e',
-    outline: 'none',
-    transition: 'border-color 0.15s',
-  },
-  button: {
-    background: '#c8e600',
-    color: '#1a1a2e',
-    border: 'none',
-    padding: '12px',
-    borderRadius: '10px',
-    fontSize: '14px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    marginTop: '4px',
-    transition: 'background 0.15s',
-  },
-  error: {
-    background: '#fee2e2',
-    color: '#ef4444',
-    padding: '10px 14px',
-    borderRadius: '8px',
-    fontSize: '13px',
-    fontWeight: 500,
-  },
-};

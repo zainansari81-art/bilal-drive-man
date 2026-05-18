@@ -1,43 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
-import { formatSize } from '../lib/format';
+import { LED, Runway, Fuel, Src, Empty, fmtBytes, sourceFromLink } from './atoms';
 import DownloadWizardModal from './DownloadWizardModal';
 import DownloadMagicAnimation from './DownloadMagicAnimation';
-import LoadingAnimation from './LoadingAnimation';
-// v3.53.0: live per-file + speed progress, mounted alongside the existing
-// aggregate progress bar. Renders nothing when the scanner isn't emitting
-// live rows (LIVE_PROGRESS_ENABLED off, or pre-feature scanner build), so
-// the existing UI is unaffected when the feature is disabled or rolled back.
 import LiveDownloadProgress from './LiveDownloadProgress';
 
-export default function DownloadingProPage({ drives }) {
+export default function DownloadingProPage({ drives, onProjectsChange }) {
   const [projects, setProjects] = useState([]);
   const [machines, setMachines] = useState([]);
-  // Gap 1 — list of cloud_accounts rows, fed to the Download wizard as an
-  // optional "pick which account receives this download" picker. Null/empty
-  // on this machine means the wizard hides the picker and the backend falls
-  // back to the PC's default cloud path (today's behavior).
   const [cloudAccounts, setCloudAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [viewMode, setViewMode] = useState('list');
-  // Project being configured in the Download wizard. Null = wizard closed.
+  const [expanded, setExpanded] = useState(null);
   const [wizardProject, setWizardProject] = useState(null);
-  // Project name for the magic animation. Null = no animation playing.
   const [magicProjectName, setMagicProjectName] = useState(null);
 
-  const connectedDrives = drives.filter(d => d.connected);
+  const connectedDrives = (drives || []).filter(d => d.connected);
 
   const fetchMachines = useCallback(async () => {
     try {
       const res = await fetch('/api/machines');
-      if (res.ok) {
-        const data = await res.json();
-        setMachines(data || []);
-      }
-    } catch (err) { /* silent */ }
+      if (res.ok) setMachines((await res.json()) || []);
+    } catch {}
   }, []);
 
   const fetchCloudAccounts = useCallback(async () => {
@@ -45,12 +31,10 @@ export default function DownloadingProPage({ drives }) {
       const res = await fetch('/api/cloud-accounts');
       if (res.ok) {
         const data = await res.json();
-        // Accept either { accounts: [...] } or a bare array for
-        // compatibility with the existing /api/cloud-accounts shape.
         const rows = Array.isArray(data) ? data : data.accounts || [];
         setCloudAccounts(rows.filter(a => a.is_active !== false));
       }
-    } catch (err) { /* silent — picker stays hidden if this fails */ }
+    } catch {}
   }, []);
 
   const fetchProjects = useCallback(async () => {
@@ -58,16 +42,17 @@ export default function DownloadingProPage({ drives }) {
       const res = await fetch('/api/download-projects');
       if (!res.ok) throw new Error('Failed to fetch projects');
       const data = await res.json();
-      setProjects(data.projects || data || []);
+      const list = data.projects || data || [];
+      setProjects(list);
+      if (onProjectsChange) onProjectsChange(list);
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onProjectsChange]);
 
-  // Auto-sync from Notion every 5 minutes
   const autoSync = useCallback(async () => {
     try {
       const res = await fetch('/api/notion-sync', { method: 'POST' });
@@ -78,7 +63,7 @@ export default function DownloadingProPage({ drives }) {
           setError(`Auto-sync: ${data.synced}/${data.total} with ${data.errors.length} errors`);
         }
       }
-    } catch (err) { /* silent auto-sync failure */ }
+    } catch {}
     await fetchProjects();
   }, [fetchProjects]);
 
@@ -86,9 +71,7 @@ export default function DownloadingProPage({ drives }) {
     fetchProjects();
     fetchMachines();
     fetchCloudAccounts();
-    // Sync from Notion on first load
     autoSync();
-    // Refresh project list every 10s, sync from Notion every 5min, machines every 30s
     const refreshInterval = setInterval(fetchProjects, 10000);
     const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
     const machineInterval = setInterval(fetchMachines, 30000);
@@ -129,14 +112,9 @@ export default function DownloadingProPage({ drives }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        // API asked us to prompt for machine — open the wizard.
         if (data.error === 'MACHINE_REQUIRED') {
-          const project = projects.find((p) => p.id === projectId);
-          if (project) {
-            setWizardProject(project);
-            setError(null);
-            return;
-          }
+          const project = projects.find(p => p.id === projectId);
+          if (project) { setWizardProject(project); setError(null); return; }
         }
         setError(data.error || `${action} failed (HTTP ${res.status})`);
         return;
@@ -148,9 +126,6 @@ export default function DownloadingProPage({ drives }) {
     }
   };
 
-  // Entry point for the Download button. Opens the wizard if the project
-  // lacks an assigned machine OR a target drive; otherwise plays the magic
-  // animation and fires download_now directly.
   const handleDownloadClick = (project) => {
     if (!project.assigned_machine || !project.target_drive) {
       setWizardProject(project);
@@ -165,164 +140,124 @@ export default function DownloadingProPage({ drives }) {
     const pid = wizardProject.id;
     const name = wizardProject.couple_name || 'Project';
     setWizardProject(null);
-    // Kick off the magic animation and fire the download in parallel.
     setMagicProjectName(name);
-    // cloud_account_id is optional; null/undefined means "use PC's default
-    // cloud path" (today's behavior).
     const payload = { assigned_machine, target_drive };
     if (cloud_account_id) payload.cloud_account_id = cloud_account_id;
     await handleAction(pid, 'download_now', payload);
   };
 
-  // Stats
-  const totalCount = projects.length;
-  const notDownloadedCount = projects.filter(p => (p.download_status || 'idle') === 'idle').length;
-  const activeCount = projects.filter(p => ['downloading', 'copying', 'queued', 'paused'].includes(p.download_status)).length;
-  const completedCount = projects.filter(p => p.download_status === 'completed').length;
-  const failedCount = projects.filter(p => p.download_status === 'failed').length;
-
-  // Filter and sort
-  const statusFilter = (p) => {
-    const s = p.download_status || 'idle';
-    if (filter === 'all') return true;
-    if (filter === 'idle') return s === 'idle';
-    if (filter === 'active') return ['downloading', 'copying', 'queued', 'paused'].includes(s);
-    if (filter === 'completed') return s === 'completed';
-    if (filter === 'failed') return s === 'failed';
-    return true;
+  // Counts
+  const counts = {
+    all: projects.length,
+    downloading: projects.filter(p => ['downloading', 'copying'].includes(p.download_status)).length,
+    queued: projects.filter(p => p.download_status === 'queued').length,
+    paused: projects.filter(p => p.download_status === 'paused').length,
+    idle: projects.filter(p => (p.download_status || 'idle') === 'idle').length,
+    completed: projects.filter(p => p.download_status === 'completed').length,
+    failed: projects.filter(p => p.download_status === 'failed').length,
   };
 
-  const filtered = [...projects].filter(statusFilter).sort((a, b) => {
-    const order = { downloading: 0, copying: 0, paused: 1, queued: 2, idle: 3, completed: 4, failed: 5 };
-    const aOrder = order[a.download_status] ?? 6;
-    const bOrder = order[b.download_status] ?? 6;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    if (a.download_status === 'queued' && b.download_status === 'queued') {
-      return (a.queue_position || 99) - (b.queue_position || 99);
-    }
+  const filterFn = (p) => {
+    const s = p.download_status || 'idle';
+    if (filter === 'all') return true;
+    if (filter === 'downloading') return ['downloading', 'copying'].includes(s);
+    return s === filter;
+  };
+
+  const order = { downloading: 0, copying: 0, paused: 1, queued: 2, idle: 3, completed: 4, failed: 5 };
+  const sorted = [...projects].filter(filterFn).sort((a, b) => {
+    const oa = order[a.download_status] ?? 6;
+    const ob = order[b.download_status] ?? 6;
+    if (oa !== ob) return oa - ob;
+    if (a.download_status === 'queued') return (a.queue_position || 99) - (b.queue_position || 99);
     return 0;
   });
 
-  if (loading) {
-    return <LoadingAnimation label="Loading projects..." size="lg" padding={60} />;
-  }
+  const CHIPS = [
+    { k: 'all',         label: 'All',     count: counts.all },
+    { k: 'downloading', label: 'Active',  count: counts.downloading },
+    { k: 'queued',      label: 'Queued',  count: counts.queued },
+    { k: 'paused',      label: 'Paused',  count: counts.paused },
+    { k: 'idle',        label: 'Idle',    count: counts.idle },
+    { k: 'completed',   label: 'Done',    count: counts.completed },
+    { k: 'failed',      label: 'Failed',  count: counts.failed, alert: true },
+  ];
 
   return (
-    <div>
-      {/* Stat Cards */}
-      <div className="stat-cards animate-in">
-        <StatCard icon={'\u{1F4CB}'} iconBg="#f0fde0" label="Total" value={totalCount} sub="All projects" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <StatCard icon={'\u{1F4E5}'} iconBg="#fef3c7" label="Not Downloaded" value={notDownloadedCount} sub="Waiting" active={filter === 'idle'} onClick={() => setFilter('idle')} />
-        <StatCard icon={'\u2B07'} iconBg="#dbeafe" label="Active" value={activeCount} sub="Downloading / Queued / Paused" active={filter === 'active'} onClick={() => setFilter('active')} />
-        <StatCard icon={'\u2705'} iconBg="#d1fae5" label="Downloaded" value={completedCount} sub="Completed" active={filter === 'completed'} onClick={() => setFilter('completed')} />
-        {failedCount > 0 && <StatCard icon={'\u274C'} iconBg="#fee2e2" label="Failed" value={failedCount} sub="Needs attention" active={filter === 'failed'} onClick={() => setFilter('failed')} />}
+    <div className="fade-in">
+      <div className="page-header">
+        <div className="page-title"><h1>Transfers</h1></div>
+        <div className="page-sub">
+          Cloud → local → drive. Each row is one project; each step shows where in the pipeline it is.
+        </div>
+      </div>
+
+      {/* Filter chips */}
+      <div className="filter-strip">
+        {CHIPS.map(chip => (
+          <div
+            key={chip.k}
+            className={`filter-chip${filter === chip.k ? ' active' : ''}${chip.alert ? ' alert' : ''}`}
+            onClick={() => setFilter(chip.k)}
+          >
+            <span className="l">{chip.label}</span>
+            <span className="v">{chip.count}</span>
+          </div>
+        ))}
       </div>
 
       {/* Toolbar */}
-      <div className="animate-in" style={{ animationDelay: '80ms' }}>
-        <div className="dp-toolbar">
+      <div className="row between" style={{ marginBottom: 18 }}>
+        <div className="row gap-12" style={{ alignItems: 'center' }}>
           <button
-            className={`dp-toolbar-btn primary ${syncing ? 'syncing' : ''}`}
+            className={`btn primary${syncing ? '' : ''}`}
             onClick={handleSync}
             disabled={syncing}
           >
-            {syncing ? '\u{1F504} Syncing...' : '\u{1F504} Sync from Notion'}
+            {syncing ? '↻ Syncing…' : '↻ Sync from Notion'}
           </button>
-
           {lastSynced && (
-            <span className="dp-toolbar-meta">
-              Last synced: {lastSynced.toLocaleString('en-US', {
+            <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+              Last synced · {lastSynced.toLocaleString('en-US', {
                 month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
               })}
             </span>
           )}
-
           {error && (
-            <span className="dp-toolbar-error">
+            <span style={{ fontSize: 12, color: 'var(--alert-fg)', background: 'var(--alert-bg)', padding: '4px 10px', borderRadius: 'var(--r)', display: 'flex', alignItems: 'center', gap: 8 }}>
               {error}
-              <button onClick={() => setError(null)} className="dp-toolbar-error-dismiss">{'\u2715'}</button>
+              <button className="btn ghost sm" onClick={() => setError(null)}>×</button>
             </span>
           )}
-
-          <span className="dp-toolbar-spacer" />
-
-          <span className="dp-toolbar-meta">
-            {filtered.length} of {totalCount}
-          </span>
-
-          {/* View toggle */}
-          <div className="dp-view-toggle">
-            <button
-              className={`dp-view-btn ${viewMode === 'list' ? 'active' : ''}`}
-              onClick={() => setViewMode('list')}
-              title="List view"
-            >
-              {'\u2630'}
-            </button>
-            <button
-              className={`dp-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
-              onClick={() => setViewMode('grid')}
-              title="Grid view"
-            >
-              {'\u2587\u2587'}
-            </button>
-          </div>
         </div>
+        <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>
+          {sorted.length} of {projects.length} projects
+        </span>
       </div>
 
-      {/* Projects */}
-      <div className="animate-in" style={{ animationDelay: '160ms' }}>
-        {filtered.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
-            <p style={{ fontSize: 18 }}>
-              {totalCount === 0 ? 'No projects yet' : 'No projects match this filter'}
-            </p>
-            <p style={{ fontSize: 14, marginTop: 8 }}>
-              {totalCount === 0 ? 'Click "Sync from Notion" to pull in your download projects.' : 'Try selecting a different status above.'}
-            </p>
-          </div>
-        ) : viewMode === 'list' ? (
-          /* ===== LIST VIEW ===== */
-          <div className="dp-list-container">
-            {/* Table header */}
-            <div className="dp-list-header">
-              <span className="dp-list-col dp-col-expand" />
-              <span className="dp-list-col dp-col-name">Project</span>
-              <span className="dp-list-col dp-col-client">Client</span>
-              <span className="dp-list-col dp-col-date">Date</span>
-              <span className="dp-list-col dp-col-status">Status</span>
-              <span className="dp-list-col dp-col-queue">Queue</span>
-              <span className="dp-list-col dp-col-actions">Actions</span>
-            </div>
-            {/* Table rows */}
-            {filtered.map((project, i) => (
-              <div key={project.id || i}>
-                <ProjectRow
-                  project={project}
-                  connectedDrives={connectedDrives}
-                  machines={machines}
-                  onAction={handleAction}
-                  onDownloadClick={handleDownloadClick}
-                />
-              </div>
-            ))}
-          </div>
-        ) : (
-          /* ===== GRID VIEW ===== */
-          <div className="devices-grid">
-            {filtered.map((project, i) => (
-              <div key={project.id || i}>
-                <ProjectCard
-                  project={project}
-                  connectedDrives={connectedDrives}
-                  onAction={handleAction}
-                  onDownloadClick={handleDownloadClick}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Lanes */}
+      {loading ? (
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--ink-mute)', fontSize: 13 }}>
+          Loading projects…
+        </div>
+      ) : sorted.length === 0 ? (
+        <Empty
+          title="Nothing here"
+          sub="Try a different filter above, or sync from Notion to pull in new projects."
+        />
+      ) : sorted.map(p => (
+        <FullLane
+          key={p.id}
+          project={p}
+          expanded={expanded === p.id}
+          onToggle={() => setExpanded(expanded === p.id ? null : p.id)}
+          onAction={action => handleAction(p.id, action)}
+          onDownloadClick={() => handleDownloadClick(p)}
+          connectedDrives={connectedDrives}
+          machines={machines}
+          fetchProjects={fetchProjects}
+        />
+      ))}
 
       {wizardProject && (
         <DownloadWizardModal
@@ -345,281 +280,271 @@ export default function DownloadingProPage({ drives }) {
   );
 }
 
-function StatCard({ icon, iconBg, label, value, sub, active, onClick }) {
-  return (
-    <div className={`stat-card ${active ? 'accent' : ''}`} onClick={onClick} style={{ cursor: 'pointer' }}>
-      <div className="stat-card-top">
-        <div className="stat-card-icon" style={{ background: iconBg }}>{icon}</div>
-        <div className="stat-card-arrow">{'\u2197'}</div>
-      </div>
-      <div className="stat-card-label">{label}</div>
-      <div className="stat-card-value">{value}</div>
-      <div className="stat-card-sub">{sub}</div>
-    </div>
-  );
-}
+// ── Full Transfer Lane ──────────────────────────────────────────────────────
 
-/* ===== LIST VIEW ROW ===== */
-function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadClick }) {
-  const [expanded, setExpanded] = useState(false);
-  const projectId = project.id;
-  const downloadStatus = project.download_status || 'idle';
-  const downloadLink = project.download_link || '';
-  const targetDrive = project.target_drive || '';
+function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, connectedDrives, machines, fetchProjects }) {
+  const status = p.download_status || 'idle';
+  const phase = p.download_phase;
+  const failed = status === 'failed';
+  const active = ['downloading', 'copying'].includes(status);
+  const pct = p.total_bytes_expected > 0
+    ? Math.min(100, ((p.progress_bytes || 0) / p.total_bytes_expected) * 100)
+    : 0;
 
-  // v3.52.0: include target drive name in copying/completed labels so users
-  // see "Copying to Extreme Pro" / "Copied to Extreme Pro" not bare verbs.
-  // Falls back to the static label when target_drive is empty (e.g.
-  // "PC-only" downloads where the user hasn't picked a drive yet).
-  const copyingLabel = targetDrive ? `Copying to ${targetDrive}` : 'Copying';
-  const completedLabel = targetDrive ? `Copied to ${targetDrive}` : 'Completed';
-
-  const statusConfig = {
-    idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7' },
-    queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3' },
-    downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe' },
-    paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6' },
-    copying: { label: copyingLabel, color: '#4338ca', bg: '#e0e7ff' },
-    completed: { label: completedLabel, color: '#15803d', bg: '#dcfce7' },
-    failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2' },
+  const STATUS_MAP = {
+    downloading: { label: 'Staging',                             dot: 'on'    },
+    copying:     { label: 'Copying',                             dot: 'mauve' },
+    paused:      { label: 'Paused',                              dot: 'warn'  },
+    queued:      { label: `Queued · #${p.queue_position || '?'}`, dot: 'warn' },
+    completed:   { label: 'Complete',                            dot: 'on'    },
+    failed:      { label: 'Failed',                              dot: 'alert' },
+    idle:        { label: 'Idle',                                dot: 'off'   },
   };
-
-  const isDropbox = /dropbox/i.test(downloadLink);
-  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
-  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
-  const sourceLabel = isDropbox ? 'Dropbox' : isGDrive ? 'Google Drive' : isWeTransfer ? 'WeTransfer' : downloadLink ? 'Link' : '—';
-  const sourceColor = isDropbox ? '#1a56db' : isGDrive ? '#b45309' : isWeTransfer ? '#7c3aed' : '#8c8ca1';
-  const sourceBg = isDropbox ? '#e8f0fe' : isGDrive ? '#fef3e2' : isWeTransfer ? '#f3e8ff' : '#f0f1f3';
-
-  const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
+  const s = STATUS_MAP[status] || STATUS_MAP.idle;
 
   const updateField = (field, value) => {
-    onAction(projectId, 'update', { fields: { [field]: value } });
+    onAction('update');
+    fetch('/api/download-projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: p.id, action: 'update', fields: { [field]: value } }),
+    }).then(() => fetchProjects()).catch(() => {});
   };
 
   return (
-    <div className={`dp-list-row-wrapper ${expanded ? 'expanded' : ''}`}>
-      {/* Main row */}
-      <div className="dp-list-row" onClick={() => setExpanded(!expanded)}>
-        <span className="dp-list-col dp-col-expand">
-          <span className={`dp-expand-arrow ${expanded ? 'open' : ''}`}>{'\u25B6'}</span>
-        </span>
-        <span className="dp-list-col dp-col-name">
-          <EditableText
-            value={project.couple_name || ''}
-            placeholder="Project name"
-            bold
-            onSave={(val) => updateField('couple_name', val)}
-          />
-          {project.error_message && (
-            <span className="dp-row-error" title={project.error_message}>
-              {project.error_message}
+    <div className={`lane${active ? ' active' : ''}`}>
+      <div className="lane-top">
+        <div className="lane-id">
+          <div className="row gap-12" style={{ alignItems: 'baseline', flexWrap: 'nowrap', minWidth: 0 }}>
+            <EditableText
+              value={p.couple_name || ''}
+              placeholder="Project name"
+              bold
+              onSave={val => updateField('couple_name', val)}
+              className="nm"
+            />
+            <Src link={p.download_link} />
+            <span style={{ fontSize: 12, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+              <EditableText
+                value={p.client_name || ''}
+                placeholder="Client"
+                onSave={val => updateField('client_name', val)}
+              />
+              {p.project_date && ` · ${p.project_date}`}
             </span>
-          )}
-        </span>
-        <span className="dp-list-col dp-col-client">
-          <EditableText
-            value={project.client_name || ''}
-            placeholder="Client name"
-            onSave={(val) => updateField('client_name', val)}
-          />
-        </span>
-        <span className="dp-list-col dp-col-date">
-          <input
-            type="date"
-            className="dp-list-input dp-list-date-input"
-            value={project.project_date || ''}
-            onChange={(e) => { e.stopPropagation(); updateField('project_date', e.target.value); }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        </span>
-        <span className="dp-list-col dp-col-status" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 0 }}>
-          <select
-            className="dp-list-select-badge"
-            value={downloadStatus}
-            onChange={(e) => { e.stopPropagation(); updateField('download_status', e.target.value); }}
-            onClick={(e) => e.stopPropagation()}
-            style={{ background: sCfg.bg, color: sCfg.color }}
-          >
-            {Object.entries(statusConfig).map(([key, cfg]) => (
-              <option key={key} value={key}>{cfg.label}</option>
-            ))}
-          </select>
-          {project.download_phase && (
-            <span className="dp-row-phase">
-              {{
-                pinning: '\u{1F4CC} Pinning',
-                syncing: '\u{1F4E5} Syncing',
-                copying: '\u{1F4BE} Copying',
-              }[project.download_phase] || project.download_phase}
+          </div>
+          <div className="meta">
+            <strong>{p.assigned_machine || 'No machine'}</strong>
+            <span style={{ margin: '0 6px', color: 'var(--ink-dim)' }}>→</span>
+            <strong>{p.target_drive || 'No drive'}</strong>
+            {p.size_gb && p.size_gb !== '—' && (
+              <span style={{ color: 'var(--ink-dim)' }}> · {p.size_gb}</span>
+            )}
+          </div>
+        </div>
+        <div className="lane-right">
+          <div className="row gap-8">
+            <LED state={s.dot} />
+            <span style={{
+              fontSize: 12.5, fontWeight: 500,
+              color: failed ? 'var(--alert-fg)' : active ? 'var(--accent-fg)' : 'var(--ink-2)',
+            }}>
+              {s.label}
             </span>
+          </div>
+          {(p.progress_bytes > 0 || p.total_bytes_expected > 0) && (
+            <div className="bytes">
+              {fmtBytes(p.progress_bytes || 0)}
+              <span className="of"> / {fmtBytes(p.total_bytes_expected || 0)}</span>
+            </div>
           )}
-        </span>
-        <span className="dp-list-col dp-col-queue" onClick={(e) => e.stopPropagation()}>
-          {downloadStatus === 'idle' || downloadStatus === 'queued' ? (
-            <select
-              className="dp-list-queue-select"
-              value={project.queue_position || ''}
-              onChange={(e) => {
-                const pos = parseInt(e.target.value);
-                if (pos) {
-                  onAction(projectId, 'queue', { position: pos });
-                } else {
-                  onAction(projectId, 'cancel');
-                }
-              }}
-            >
-              <option value="">—</option>
-              <option value="1">Q1</option>
-              <option value="2">Q2</option>
-              <option value="3">Q3</option>
-              <option value="4">Q4</option>
-              <option value="5">Q5</option>
-            </select>
-          ) : (
-            <span style={{ fontSize: 11, color: '#b0b0c0' }}>—</span>
-          )}
-        </span>
-        <span className="dp-list-col dp-col-actions" onClick={(e) => e.stopPropagation()}>
-          {downloadStatus === 'idle' && (
-            <button className="dp-list-action-btn primary" onClick={() => onDownloadClick(project)}>Download</button>
-          )}
-          {downloadStatus === 'downloading' && (
-            <>
-              <button className="dp-list-action-btn warn" onClick={() => onAction(projectId, 'pause')}>Pause</button>
-              <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
-            </>
-          )}
-          {downloadStatus === 'paused' && (
-            <>
-              {/* Gap 3 — document that already-synced files are skipped on resume.
-                  No partial byte checkpointing: Dropbox/GDrive desktop clients
-                  resume at the filesystem level, so the UI counter resetting
-                  to zero is cosmetic, not actual work lost. */}
-              <button
-                className="dp-list-action-btn primary"
-                onClick={() => onAction(projectId, 'resume')}
-                title="Resuming — already-synced files will skip."
-              >
-                Resume
-              </button>
-              <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
-            </>
-          )}
-          {downloadStatus === 'queued' && (
-            <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'cancel')}>Cancel</button>
-          )}
-          {downloadStatus === 'failed' && (
-            <button className="dp-list-action-btn primary" onClick={() => onDownloadClick(project)}>Restart</button>
-          )}
-          {downloadStatus === 'completed' && (
-            // Re-download — for when the local copy was deleted from the
-            // target drive (e.g. 7-day cleanup) and the client has now
-            // delivered changes. Clears completion state, then opens the
-            // download wizard so the user can re-confirm machine + drive.
-            <button
-              className="dp-list-action-btn primary"
-              onClick={async () => {
-                if (!confirm(
-                  'Re-download this project?\n\n' +
-                  'This clears the "completed" mark so you can pull a fresh ' +
-                  'copy. Use this when client gave changes after the original ' +
-                  'download or you removed the local copy from the drive.'
-                )) return;
-                await onAction(projectId, 'reset');
-                onDownloadClick(project);
-              }}
-              title="Reset completion state and re-open the download wizard."
-            >
-              Re-download
-            </button>
-          )}
-        </span>
+        </div>
       </div>
 
-      {/* Expandable detail panel */}
-      {expanded && (
-        <div className="dp-list-detail">
-          <div className="dp-detail-grid">
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Size</label>
-              <EditableText
-                value={project.size_gb || ''}
-                placeholder="Enter size..."
-                onSave={(val) => updateField('size_gb', val)}
-              />
-            </div>
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Target Drive</label>
-              <select
-                value={project.target_drive || ''}
-                onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
-                className="dp-list-select"
-              >
-                <option value="">Select drive...</option>
-                {connectedDrives.map((d, i) => (
-                  <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
-                ))}
-              </select>
-            </div>
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Source</label>
-              <span className="dp-list-badge" style={{ background: sourceBg, color: sourceColor }}>{sourceLabel}</span>
-            </div>
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Download Link</label>
-              {downloadLink ? (
-                <a href={downloadLink} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}>
-                  {downloadLink.length > 70 ? downloadLink.substring(0, 70) + '...' : downloadLink}
-                </a>
-              ) : (
-                <span style={{ fontSize: 12, color: '#b0b0c0' }}>No link</span>
-              )}
-            </div>
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Assigned Machine</label>
-              <select
-                value={project.assigned_machine || ''}
-                onChange={(e) => onAction(projectId, 'assign_machine', { machine_name: e.target.value })}
-                className="dp-list-select"
-              >
-                <option value="">Select machine...</option>
-                {machines.map((m, i) => (
-                  <option key={i} value={m.machine_name}>
-                    {m.machine_name} {m.dropbox_path || m.gdrive_path ? '\u2601' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="dp-detail-field">
-              <label className="dp-detail-label">Cloud Folder Path</label>
-              <EditableText
-                value={project.cloud_folder_path || ''}
-                placeholder="Auto-detected or enter path..."
-                onSave={(val) => updateField('cloud_folder_path', val)}
-              />
-            </div>
+      <Runway status={status} phase={phase} failed={failed} />
+
+      {(active || status === 'paused' || status === 'completed' || status === 'failed') && (
+        <>
+          <Fuel pct={pct} copying={status === 'copying'} failed={failed} />
+          <div className="row between" style={{ fontSize: 12, color: 'var(--ink-mute)', marginTop: 4 }}>
+            <span className="t-mono">{pct.toFixed(1)}%</span>
           </div>
-          {/* v3.53.0 \u2014 live per-file detail + speed inside the expanded
-              row. Gated to status === 'downloading' only (copy phase
-              is local-disk-to-external-drive, fast, doesn't need this).
-              Renders nothing when no live row exists (scanner off). */}
-          {downloadStatus === 'downloading' && (
-            <LiveDownloadProgress projectId={projectId} status={downloadStatus} />
+        </>
+      )}
+
+      {p.error_message && (
+        <div style={{
+          marginTop: 10, padding: '10px 14px',
+          background: 'var(--alert-bg)', borderRadius: 'var(--r)',
+          fontSize: 12.5, color: 'var(--alert-fg)',
+        }}>
+          {p.error_message}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="lane-actions">
+        {status === 'idle' && (
+          <button className="btn primary" onClick={onDownloadClick}>Download</button>
+        )}
+        {status === 'downloading' && (
+          <>
+            <button className="btn" onClick={() => onAction('pause')}>Pause</button>
+            <button className="btn danger" onClick={() => onAction('cancel')}>Cancel</button>
+          </>
+        )}
+        {status === 'paused' && (
+          <>
+            <button className="btn primary" onClick={() => onAction('resume')} title="Resuming — already-synced files will skip.">Resume</button>
+            <button className="btn danger" onClick={() => onAction('cancel')}>Cancel</button>
+          </>
+        )}
+        {status === 'queued' && (
+          <button className="btn danger" onClick={() => onAction('cancel')}>Cancel</button>
+        )}
+        {status === 'failed' && (
+          <button className="btn primary" onClick={onDownloadClick}>Restart</button>
+        )}
+        {status === 'completed' && (
+          <button
+            className="btn"
+            onClick={async () => {
+              if (!confirm(
+                'Re-download this project?\n\nThis clears the "completed" mark so you can pull a fresh copy.'
+              )) return;
+              await fetch('/api/download-projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectId: p.id, action: 'reset' }),
+              });
+              onDownloadClick();
+            }}
+          >
+            Re-download
+          </button>
+        )}
+        <button className="btn ghost" onClick={onToggle}>
+          {expanded ? 'Hide details' : 'Show details'}
+        </button>
+      </div>
+
+      {/* Expanded detail */}
+      {expanded && (
+        <div className="lane-detail">
+          <div className="f">
+            <span className="l">Target drive</span>
+            <span className="v">
+              <select
+                value={p.target_drive || ''}
+                onChange={e => {
+                  fetch('/api/download-projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projectId: p.id, action: 'set-target', targetDrive: e.target.value }),
+                  }).then(() => fetchProjects()).catch(() => {});
+                }}
+                style={{ background: 'transparent', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', padding: '4px 6px', fontSize: 12, color: 'var(--ink)', fontFamily: 'inherit' }}
+              >
+                <option value="">Select drive…</option>
+                {connectedDrives.map(d => (
+                  <option key={d.id || d.name} value={d.name}>{d.name} ({fmtBytes(d.free)} free)</option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <div className="f">
+            <span className="l">Assigned machine</span>
+            <span className="v">
+              <select
+                value={p.assigned_machine || ''}
+                onChange={e => {
+                  fetch('/api/download-projects', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projectId: p.id, action: 'assign_machine', machine_name: e.target.value }),
+                  }).then(() => fetchProjects()).catch(() => {});
+                }}
+                style={{ background: 'transparent', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', padding: '4px 6px', fontSize: 12, color: 'var(--ink)', fontFamily: 'inherit' }}
+              >
+                <option value="">Select machine…</option>
+                {machines.map(m => (
+                  <option key={m.machine_name} value={m.machine_name}>{m.machine_name}</option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <div className="f">
+            <span className="l">Project date</span>
+            <span className="v">
+              <input
+                type="date"
+                value={p.project_date || ''}
+                onChange={e => updateField('project_date', e.target.value)}
+                style={{ background: 'transparent', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', padding: '4px 6px', fontSize: 12, color: 'var(--ink)', fontFamily: 'inherit' }}
+              />
+            </span>
+          </div>
+          <div className="f">
+            <span className="l">Size</span>
+            <span className="v">
+              <EditableText
+                value={p.size_gb || ''}
+                placeholder="Enter size…"
+                onSave={val => updateField('size_gb', val)}
+              />
+            </span>
+          </div>
+          <div className="f">
+            <span className="l">Cloud folder path</span>
+            <span className="v dim" style={{ wordBreak: 'break-all' }}>
+              <EditableText
+                value={p.cloud_folder_path || ''}
+                placeholder="Auto-detected or enter path…"
+                onSave={val => updateField('cloud_folder_path', val)}
+              />
+            </span>
+          </div>
+          <div className="f">
+            <span className="l">Phase</span>
+            <span className="v">{p.download_phase || '—'}</span>
+          </div>
+          <div className="f">
+            <span className="l">Download link</span>
+            <span className="v dim" style={{ wordBreak: 'break-all' }}>
+              {p.download_link
+                ? (p.download_link.length > 56 ? p.download_link.slice(0, 56) + '…' : p.download_link)
+                : '—'}
+            </span>
+          </div>
+
+          {/* Live progress */}
+          {status === 'downloading' && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <LiveDownloadProgress projectId={p.id} status={status} />
+            </div>
           )}
-          <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-            {downloadStatus === 'idle' && project.assigned_machine && (isDropbox || isGDrive) && (
-              <button className="dp-list-action-btn cloud" onClick={() => onAction(projectId, 'start_cloud_download')}>
-                {'\u2601'} Start Cloud Download
+
+          {/* Cloud-only download + copy-to-drive actions */}
+          {status === 'idle' && p.assigned_machine && (() => {
+            const src = sourceFromLink(p.download_link);
+            return (src === 'dropbox' || src === 'gdrive') ? (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <button className="btn" onClick={() => onAction('start_cloud_download')}>
+                  ↓ Start cloud download
+                </button>
+              </div>
+            ) : null;
+          })()}
+          {status === 'downloading' && p.assigned_machine && p.target_drive && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <button className="btn" onClick={() => onAction('copy_to_drive')}>
+                Copy to drive
               </button>
-            )}
-            {downloadStatus === 'downloading' && project.assigned_machine && project.target_drive && (
-              <button className="dp-list-action-btn primary" onClick={() => onAction(projectId, 'copy_to_drive')}>
-                {'\u{1F4BE}'} Copy to Drive
-              </button>
-            )}
-            <button className="dp-list-action-btn danger" onClick={() => onAction(projectId, 'remove')}>Remove Project</button>
+            </div>
+          )}
+
+          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, paddingTop: 6 }}>
+            <button className="btn danger" onClick={() => onAction('remove')}>Remove from board</button>
           </div>
         </div>
       )}
@@ -627,187 +552,46 @@ function ProjectRow({ project, connectedDrives, machines, onAction, onDownloadCl
   );
 }
 
-/* ===== INLINE EDITABLE TEXT ===== */
-function EditableText({ value, placeholder, bold, onSave }) {
+// ── Inline editable text ──────────────────────────────────────────────────
+
+function EditableText({ value, placeholder, bold, onSave, className }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
   const handleBlur = () => {
     setEditing(false);
-    if (draft !== value) {
-      onSave(draft);
-    }
+    if (draft !== value) onSave(draft);
   };
-
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') { e.target.blur(); }
+    if (e.key === 'Enter') e.target.blur();
     if (e.key === 'Escape') { setDraft(value); setEditing(false); }
   };
 
   if (editing) {
     return (
       <input
-        className="dp-list-inline-input"
+        style={{
+          border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+          padding: '2px 6px', fontSize: 'inherit', fontFamily: 'inherit',
+          fontWeight: bold ? 700 : 400, color: 'var(--ink)', background: 'var(--panel)', outline: 0,
+        }}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={e => setDraft(e.target.value)}
         onBlur={handleBlur}
         onKeyDown={handleKeyDown}
         autoFocus
-        style={{ fontWeight: bold ? 700 : 400 }}
       />
     );
   }
 
   return (
     <span
-      className={`dp-list-editable ${bold ? 'bold' : ''}`}
+      className={className}
       onClick={() => { setDraft(value); setEditing(true); }}
+      style={{ cursor: 'text', fontWeight: bold ? 700 : undefined }}
       title="Click to edit"
     >
-      {value || <span style={{ color: '#b0b0c0' }}>{placeholder}</span>}
+      {value || <span style={{ color: 'var(--ink-dim)' }}>{placeholder}</span>}
     </span>
-  );
-}
-
-/* ===== GRID VIEW CARD ===== */
-function ProjectCard({ project, connectedDrives, onAction, onDownloadClick }) {
-  const projectName = project.couple_name || 'Unknown Project';
-  const clientName = project.client_name || 'Unknown Client';
-  const downloadStatus = project.download_status || 'idle';
-  const downloadLink = project.download_link || '';
-  const targetDrive = project.target_drive || '';
-  const sizeGb = project.size_gb || '';
-  const projectDate = project.project_date || '';
-  // Scanner writes to `progress_bytes` (per /api/download-progress.js).
-  // `download_progress_bytes` is a legacy column that exists in Supabase but
-  // is no longer updated by any code path — keeping it as fallback only so
-  // historical rows still render. Prefer the live column.
-  const progress =
-    project.progress_bytes || project.download_progress_bytes || 0;
-  // Prefer scanner-emitted total_bytes_expected (gdrive/wetransfer staging
-  // know the full size up-front via API listing). Fall back to cloud_size_bytes
-  // (Dropbox sync — only known after pin completes). If neither is set, the
-  // bar renders empty until one populates.
-  const totalSize =
-    project.total_bytes_expected || project.cloud_size_bytes || 0;
-  const projectId = project.id;
-
-  const isDropbox = /dropbox/i.test(downloadLink);
-  const isGDrive = /drive\.google|docs\.google/i.test(downloadLink);
-  const isWeTransfer = /we\.tl|wetransfer/i.test(downloadLink);
-
-  // v3.52.0: include target drive name in copying/completed labels.
-  const copyingLabel = targetDrive ? `Copying to ${targetDrive}` : 'Copying';
-  const completedLabel = targetDrive ? `Copied to ${targetDrive}` : 'Completed';
-
-  const statusConfig = {
-    idle: { label: 'Not Downloaded', color: '#92400e', bg: '#fef3c7', dot: '#f59e0b' },
-    queued: { label: 'Queued', color: '#a16207', bg: '#fef9c3', dot: '#eab308' },
-    downloading: { label: 'Downloading', color: '#1d4ed8', bg: '#dbeafe', dot: '#3b82f6' },
-    paused: { label: 'Paused', color: '#6b7280', bg: '#f3f4f6', dot: '#9ca3af' },
-    copying: { label: copyingLabel, color: '#4338ca', bg: '#e0e7ff', dot: '#6366f1' },
-    completed: { label: completedLabel, color: '#15803d', bg: '#dcfce7', dot: '#22c55e' },
-    failed: { label: 'Failed', color: '#dc2626', bg: '#fee2e2', dot: '#ef4444' },
-  };
-  const sCfg = statusConfig[downloadStatus] || statusConfig.idle;
-
-  const formattedDate = projectDate ? new Date(projectDate + 'T00:00:00').toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  }) : '';
-
-  return (
-    <div className="device-card">
-      <div className="device-card-top">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div className="device-icon" style={{ background: sCfg.bg }}>
-            {isDropbox ? '\u{1F4E6}' : isGDrive ? '\u{1F4C1}' : isWeTransfer ? '\u{1F4E8}' : '\u{1F517}'}
-          </div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#1a1a2e' }}>{projectName}</div>
-            <div style={{ fontSize: 12, color: '#8c8ca1', marginTop: 2 }}>{clientName}</div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: sCfg.dot, display: 'inline-block' }} />
-          <span style={{ fontSize: 11, fontWeight: 600, color: sCfg.color }}>{sCfg.label}</span>
-        </div>
-      </div>
-
-      <div className="device-meta" style={{ marginTop: 12 }}>
-        {formattedDate && <span>{formattedDate}</span>}
-        {sizeGb && <span>{sizeGb}{!sizeGb.toLowerCase().includes('gb') ? ' GB' : ''}</span>}
-        {targetDrive && <span>{targetDrive}</span>}
-        {!formattedDate && !sizeGb && !targetDrive && <span style={{ color: '#b0b0c0' }}>No details</span>}
-      </div>
-
-      {downloadLink && (
-        <div style={{ marginTop: 8 }}>
-          <a href={downloadLink} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: 11, color: '#3b82f6', textDecoration: 'none', wordBreak: 'break-all' }}>
-            {downloadLink.length > 55 ? downloadLink.substring(0, 55) + '...' : downloadLink}
-          </a>
-        </div>
-      )}
-
-      {(downloadStatus === 'downloading' || downloadStatus === 'copying') && (
-        <div style={{ marginTop: 10 }}>
-          <div className="drive-progress-bar">
-            <div className="drive-progress-fill" style={{
-              width: totalSize > 0 ? `${Math.min((progress / totalSize) * 100, 100)}%` : '0%',
-              background: downloadStatus === 'copying' ? 'linear-gradient(90deg, #8b5cf6, #a78bfa)' : 'linear-gradient(90deg, #c8e600, #a3c400)',
-            }} />
-          </div>
-          {totalSize > 0 && (
-            <div style={{ fontSize: 11, color: '#8c8ca1', marginTop: 4 }}>{formatSize(progress)} / {formatSize(totalSize)}</div>
-          )}
-          {/* v3.53.0 — live per-file detail + speed. Gated to
-              status === 'downloading' only (per Zain's spec): copying
-              is local-disk-to-external-drive, which is fast and doesn't
-              need real-time speed tracking. Renders nothing when the
-              scanner hasn't emitted a live row (feature off). */}
-          {downloadStatus === 'downloading' && (
-            <LiveDownloadProgress projectId={projectId} status={downloadStatus} />
-          )}
-        </div>
-      )}
-
-      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 11, color: '#8c8ca1', fontWeight: 500 }}>Target:</span>
-        <select value={targetDrive} onChange={(e) => onAction(projectId, 'set-target', { targetDrive: e.target.value })}
-          style={{ flex: 1, padding: '5px 8px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 11, fontFamily: 'inherit', background: '#fff', color: '#4a4a6a', cursor: 'pointer' }}>
-          <option value="">Select drive...</option>
-          {connectedDrives.map((d, i) => (
-            <option key={i} value={d.name}>{d.name} ({formatSize(d.free)} free)</option>
-          ))}
-        </select>
-      </div>
-
-      <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {downloadStatus === 'idle' && (
-          <>
-            <ActionBtn label="Download" primary onClick={() => onDownloadClick(project)} />
-            <ActionBtn label="Queue" onClick={() => onAction(projectId, 'queue')} />
-          </>
-        )}
-        {(downloadStatus === 'downloading' || downloadStatus === 'queued') && (
-          <ActionBtn label="Cancel" danger onClick={() => onAction(projectId, 'cancel')} />
-        )}
-        <ActionBtn label="Remove" danger onClick={() => onAction(projectId, 'remove')} />
-      </div>
-    </div>
-  );
-}
-
-function ActionBtn({ label, primary, danger, onClick }) {
-  const bg = primary ? '#c8e600' : '#fff';
-  const color = primary ? '#1a1a2e' : danger ? '#ef4444' : '#4a4a6a';
-  const border = primary ? '#c8e600' : danger ? '#fecaca' : '#e5e7eb';
-  return (
-    <button onClick={onClick}
-      style={{ padding: '6px 14px', borderRadius: 8, fontSize: 11, fontWeight: 600, border: `1px solid ${border}`, background: bg, color, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s ease' }}
-      onMouseEnter={(e) => { e.target.style.transform = 'translateY(-1px)'; e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; }}
-      onMouseLeave={(e) => { e.target.style.transform = ''; e.target.style.boxShadow = ''; }}>
-      {label}
-    </button>
   );
 }

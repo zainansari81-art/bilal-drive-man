@@ -1,265 +1,212 @@
 import { useState, useEffect } from 'react';
-import { formatTB, formatSize } from '../lib/format';
+import { LED, Gauge, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
+function heartbeatAgo(iso) {
+  if (!iso) return 'Never';
+  const delta = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (delta < 60) return `${Math.round(delta)}s ago`;
+  if (delta < 3600) return `${Math.round(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.round(delta / 3600)}h ago`;
+  return `${Math.round(delta / 86400)}d ago`;
+}
+
 export default function DevicesPage({ drives }) {
-  // Heartbeat-only machines (those without drives plugged in but reporting via /api/devices).
-  // We merge these into the drive-derived machine list so a freshly-installed Mac with no
-  // drives plugged in still shows up as a card. Refreshes every 30s alongside the page poll.
-  const [heartbeatMachines, setHeartbeatMachines] = useState([]);
+  const [mergedMachines, setMergedMachines] = useState([]);
+
   useEffect(() => {
     let cancelled = false;
+
     const load = async () => {
       try {
-        const res = await fetch('/api/devices');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled && Array.isArray(data)) setHeartbeatMachines(data);
-      } catch {}
+        const [devicesRes, machinesRes] = await Promise.all([
+          fetch('/api/devices'),
+          fetch('/api/machines'),
+        ]);
+        const devicesData = devicesRes.ok ? await devicesRes.json() : [];
+        const machinesData = machinesRes.ok ? await machinesRes.json() : [];
+
+        const byName = new Map();
+
+        // seed from drives (for offline machines with drive history)
+        for (const d of drives) {
+          const nm = d.sourceMachine || 'Unknown Device';
+          if (!nm || nm === 'Unknown') continue;
+          if (!byName.has(nm)) {
+            byName.set(nm, { name: nm, isOnline: false, lastSeen: null, scannerVersion: null, platform: 'mac' });
+          }
+        }
+
+        // merge heartbeat data from /api/devices
+        for (const hb of (Array.isArray(devicesData) ? devicesData : [])) {
+          const nm = hb.name;
+          if (!nm) continue;
+          const existing = byName.get(nm) || { name: nm, platform: 'mac' };
+          byName.set(nm, {
+            ...existing,
+            isOnline: !!hb.isOnline,
+            lastSeen: hb.lastSeen || existing.lastSeen,
+            scannerVersion: hb.scannerVersion || existing.scannerVersion,
+          });
+        }
+
+        // merge machine config from /api/machines
+        for (const m of (Array.isArray(machinesData) ? machinesData : [])) {
+          const nm = m.machine_name;
+          if (!nm) continue;
+          const existing = byName.get(nm) || { name: nm, isOnline: false, platform: 'mac' };
+          byName.set(nm, {
+            ...existing,
+            dropbox_path: m.dropbox_path,
+            gdrive_path: m.gdrive_path,
+            is_download_pc: m.is_download_pc,
+            lastSeen: m.last_seen || existing.lastSeen,
+          });
+        }
+
+        if (!cancelled) {
+          setMergedMachines([...byName.values()].sort((a, b) => a.name.localeCompare(b.name)));
+        }
+      } catch (err) {
+        console.error('DevicesPage fetch error:', err);
+      }
     };
+
     load();
     const id = setInterval(load, 30000);
     return () => { cancelled = true; clearInterval(id); };
-  }, []);
+  }, [drives]);
 
-  // Group ALL drives by source_machine (so offline machines still appear)
-  const machines = {};
-  for (const d of drives) {
-    const machine = d.sourceMachine || 'Unknown Device';
-    if (!machines[machine]) {
-      machines[machine] = { name: machine, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: null, isHeartbeatOnline: false };
-    }
-    machines[machine].allDrives.push(d);
-    if (d.connected) {
-      machines[machine].connectedDrives.push(d);
-      machines[machine].totalUsed += d.used || 0;
-      machines[machine].totalSize += d.total || 0;
-    }
-  }
+  // Derive drive lists per machine
+  const enriched = mergedMachines.map(m => {
+    const mDrives = drives.filter(d => d.sourceMachine === m.name);
+    const totalUsed = mDrives.filter(d => d.connected).reduce((s, d) => s + d.used, 0);
+    const totalCap  = mDrives.filter(d => d.connected).reduce((s, d) => s + d.total, 0);
+    return { ...m, mDrives, totalUsed, totalCap };
+  });
 
-  // Merge in heartbeat-only machines that aren't already represented by a drive
-  for (const hb of heartbeatMachines) {
-    const name = hb.name;
-    if (!name || name === 'Unknown') continue;
-    if (!machines[name]) {
-      machines[name] = { name, allDrives: [], connectedDrives: [], totalUsed: 0, totalSize: 0, lastHeartbeat: hb.lastSeen, isHeartbeatOnline: !!hb.isOnline, scannerVersion: hb.scannerVersion || null };
-    } else {
-      machines[name].lastHeartbeat = hb.lastSeen;
-      machines[name].isHeartbeatOnline = !!hb.isOnline;
-      if (hb.scannerVersion) machines[name].scannerVersion = hb.scannerVersion;
-    }
-  }
-
-  const machineList = Object.values(machines).sort((a, b) => a.name.localeCompare(b.name));
-
-  if (machineList.length === 0) {
+  if (enriched.length === 0) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
-        <p style={{ fontSize: 18 }}>No devices found yet.</p>
-        <p style={{ fontSize: 14 }}>Install the scanner on your Macs and Windows PCs to see them here.</p>
+      <div className="fade-in">
+        <div className="page-header">
+          <div className="page-title"><h1>Machines</h1></div>
+          <div className="page-sub">Scanner agents on each Mac and Windows PC.</div>
+        </div>
+        <Empty title="No machines found" sub="Install the scanner on your Macs and Windows PCs to see them here." />
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="devices-grid">
-        {machineList.map((machine) => (
-          <div key={machine.name} className="scroll-reveal">
-            <MachineCard machine={machine} />
-          </div>
-        ))}
+    <div className="fade-in">
+      <div className="page-header">
+        <div className="page-title"><h1>Machines</h1></div>
+        <div className="page-sub">
+          Scanner agents on each Mac and Windows. The download PC is the one that pulls bytes from the cloud.
+        </div>
       </div>
+
+      {enriched.map(m => (
+        <MachineCard key={m.name} m={m} drives={drives} />
+      ))}
     </div>
   );
 }
 
-function MachineCard({ machine }) {
-  const [expanded, setExpanded] = useState(false);
-  const [showHardDrives, setShowHardDrives] = useState(false);
-  const connectedDrives = machine.connectedDrives;
-  // Online if either: (a) drives are connected, or (b) heartbeat is fresh
-  const isOnline = connectedDrives.length > 0 || machine.isHeartbeatOnline;
-  const driveLastSeen = machine.allDrives.reduce((latest, d) => {
-    if (!d.lastSeen) return latest;
-    const t = new Date(d.lastSeen).getTime();
-    return t > latest ? t : latest;
-  }, 0);
-  const heartbeatTime = machine.lastHeartbeat ? new Date(machine.lastHeartbeat).getTime() : 0;
-  const lastSeen = Math.max(driveLastSeen, heartbeatTime);
-
-  const lastSeenText = lastSeen
-    ? new Date(lastSeen).toLocaleString('en-US', {
-        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
-      })
-    : 'Never';
+function MachineCard({ m, drives }) {
+  const [open, setOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   return (
-    <div className="device-card">
-      <div className="device-card-top">
-        <div className="device-card-info">
-          <div className={`device-icon ${isOnline ? 'online' : 'offline'}`}>
-            {'\uD83D\uDCBB'}
-          </div>
-          <div>
-            <div className="device-name" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>{machine.name}</span>
-              {machine.scannerVersion && (
-                <span style={{
-                  fontSize: 10,
-                  fontWeight: 600,
-                  padding: '2px 7px',
-                  borderRadius: 4,
-                  background: '#eef2ff',
-                  color: '#4f46e5',
-                  letterSpacing: 0.3,
-                }}>
-                  v{machine.scannerVersion}
-                </span>
-              )}
+    <div className="machine-card">
+      <div className="machine-top">
+        <LED state={m.isOnline ? 'on' : 'alert'} />
+
+        <div>
+          <span className="nm">
+            {m.name}
+            {m.scannerVersion && <span className="ver">v{m.scannerVersion}</span>}
+          </span>
+        </div>
+
+        <div className="os">{m.platform === 'win' ? 'Windows' : 'macOS'}</div>
+
+        <div className="stat">
+          <span className="l">Drives</span>
+          <span className="v">
+            {m.mDrives.filter(d => d.connected).length}
+            <span style={{ color: 'var(--ink-mute)' }}> of {m.mDrives.length}</span>
+            <span style={{ color: 'var(--ink-mute)', marginLeft: 8 }}>
+              · {fmtTB(m.totalUsed)} / {fmtTB(m.totalCap)} TB
+            </span>
+          </span>
+        </div>
+
+        <div className="stat">
+          <span className="l">Heartbeat</span>
+          <span className="v">
+            {m.isOnline ? heartbeatAgo(m.lastSeen) : 'Stale (> 6h)'}
+          </span>
+        </div>
+
+        <div className={`role${m.is_download_pc ? ' dl' : ''}`}>
+          {m.is_download_pc ? 'Download PC' : 'Scan only'}
+        </div>
+      </div>
+
+      <div className="row gap-16" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--rule-soft)' }}>
+        <div className="row gap-8">
+          <span className="label">Dropbox</span>
+          <span className="t-mono" style={{ fontSize: 12, color: m.dropbox_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
+            {m.dropbox_path || 'Not set'}
+          </span>
+        </div>
+        <div className="row gap-8">
+          <span className="label">Google Drive</span>
+          <span className="t-mono" style={{ fontSize: 12, color: m.gdrive_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
+            {m.gdrive_path || 'Not set'}
+          </span>
+        </div>
+        <div style={{ flex: 1 }} />
+        <button className="btn ghost sm" onClick={() => setOpen(!open)}>
+          {open ? 'Collapse' : 'Show drives →'}
+        </button>
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--rule)' }}>
+          {m.mDrives.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--ink-mute)', padding: 10 }}>
+              No drives reporting from this machine.
             </div>
-            <div className="device-lastseen">Last seen: {lastSeenText}</div>
-          </div>
-        </div>
-        <div className={`device-status ${isOnline ? 'online' : 'offline'}`}>
-          {isOnline ? 'Online' : 'Offline'}
-        </div>
-      </div>
+          ) : (
+            m.mDrives.map(d => {
+              const pct = fmtPct(d.used, d.total);
+              return (
+                <div className="bay-row" key={d.id || d.name}>
+                  <LED state={d.connected ? 'on' : 'off'} />
+                  <div>
+                    <div className="nm">{d.name}</div>
+                    <div className="machine">
+                      {d.letter ? `${d.letter}:\\ · ` : ''}
+                      {(d.clients || []).reduce((s, c) => s + c.couples.length, 0)} couples
+                    </div>
+                  </div>
+                  <div className="use">{fmtTB(d.used)} / {fmtTB(d.total)} TB</div>
+                  <Gauge pct={pct} sm />
+                  <div className="meta-2">{fmtBytes(d.free)} free</div>
+                  <div className="pct">{pct}<span className="pct-sign">%</span></div>
+                </div>
+              );
+            })
+          )}
 
-      <div className="device-meta">
-        {connectedDrives.length} drive{connectedDrives.length !== 1 ? 's' : ''} connected &nbsp;|&nbsp; {formatTB(machine.totalSize)} total &nbsp;|&nbsp; {formatTB(machine.totalUsed)} used
-      </div>
-
-      {connectedDrives.length > 0 && (
-        <div className="device-expand-buttons">
-          <button
-            className={`device-expand-btn ${showHardDrives ? 'expanded' : ''}`}
-            onClick={() => setShowHardDrives(!showHardDrives)}
-          >
-            <span className="device-expand-arrow">{showHardDrives ? '\u25B2' : '\u25BC'}</span>
-            {showHardDrives ? 'Hide Hard Drives' : 'Show Hard Drives'}
-          </button>
-          <button
-            className={`device-expand-btn ${expanded ? 'expanded' : ''}`}
-            onClick={() => setExpanded(!expanded)}
-          >
-            <span className="device-expand-arrow">{expanded ? '\u25B2' : '\u25BC'}</span>
-            {expanded ? 'Hide Clients & Couples' : 'Show Clients & Couples'}
-          </button>
-        </div>
-      )}
-
-      {showHardDrives && (
-        <div className="device-details-panel">
-          <div className="device-drives">
-            {connectedDrives.map((d, i) => (
-              <DeviceDriveRow key={i} drive={d} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {expanded && (
-        <div className="device-details-panel">
-          {connectedDrives.map((drive, di) => (
-            <DriveDetails key={di} drive={drive} />
+          {/* Show clients/couples for each drive */}
+          {m.mDrives.filter(d => d.connected && (d.clients || []).length > 0).map(drive => (
+            <DriveDetail key={drive.id || drive.name} drive={drive} />
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function DriveDetails({ drive }) {
-  const [openClients, setOpenClients] = useState({});
-  const [deleteTarget, setDeleteTarget] = useState(null);
-  const clients = drive.clients || [];
-  const totalCouples = clients.reduce((s, c) => s + (c.couples || []).length, 0);
-
-  const toggleClient = (idx) => {
-    setOpenClients(prev => ({ ...prev, [idx]: !prev[idx] }));
-  };
-
-  const handleDeleteCouple = (client, couple) => {
-    setDeleteTarget({
-      type: 'couple',
-      driveName: drive.name,
-      clientName: client.name,
-      coupleName: couple.name,
-      size: couple.size || 0,
-      sourceMachine: drive.sourceMachine,
-    });
-  };
-
-  const handleDeleteClient = (client) => {
-    const clientSize = (client.couples || []).reduce((s, c) => s + (c.size || 0), 0);
-    setDeleteTarget({
-      type: 'client',
-      driveName: drive.name,
-      clientName: client.name,
-      coupleName: '',
-      size: clientSize,
-      coupleCount: (client.couples || []).length,
-      sourceMachine: drive.sourceMachine,
-    });
-  };
-
-  return (
-    <div className="device-drive-detail">
-      <div className="device-drive-detail-header">
-        <span className="device-drive-detail-name">{drive.name}</span>
-        <span className="device-drive-detail-count">{clients.length} clients, {totalCouples} couples</span>
-      </div>
-
-      {clients.length === 0 && (
-        <div className="device-no-data">No client data available</div>
-      )}
-
-      {clients.map((client, ci) => {
-        const isOpen = openClients[ci];
-        const clientSize = (client.couples || []).reduce((s, c) => s + (c.size || 0), 0);
-        return (
-          <div key={ci} className="device-client-block">
-            <button className="device-client-header" onClick={() => toggleClient(ci)}>
-              <span className="device-client-arrow">{isOpen ? '\u25BE' : '\u25B8'}</span>
-              <span className="device-client-icon">{'\uD83D\uDCC1'}</span>
-              <span className="device-client-name">{client.name}</span>
-              <span className="device-client-count">{(client.couples || []).length} couples</span>
-              <span className="device-client-size">{formatSize(clientSize)}</span>
-              {drive.connected && (
-                <span
-                  className="delete-btn-small"
-                  onClick={(e) => { e.stopPropagation(); handleDeleteClient(client); }}
-                  title="Delete entire client folder"
-                >
-                  {'\uD83D\uDDD1'}
-                </span>
-              )}
-            </button>
-
-            {isOpen && (
-              <div className="device-couple-list">
-                {(client.couples || []).map((couple, coi) => (
-                  <div key={coi} className="device-couple-row">
-                    <span className="device-couple-dot"></span>
-                    <span className="device-couple-name">{couple.name}</span>
-                    <span className="device-couple-size">{formatSize(couple.size || 0)}</span>
-                    {drive.connected && (
-                      <span
-                        className="delete-btn-small"
-                        onClick={() => handleDeleteCouple(client, couple)}
-                        title="Delete this couple folder"
-                      >
-                        {'\uD83D\uDDD1'}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
 
       {deleteTarget && (
         <DeleteConfirmModal
@@ -271,30 +218,97 @@ function DriveDetails({ drive }) {
   );
 }
 
-function DeviceDriveRow({ drive }) {
-  const pct = drive.total > 0 ? Math.round(drive.used / drive.total * 100) : 0;
-  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #eab308, #ca8a04)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
-  const totalClients = drive.clients ? drive.clients.length : 0;
-  const totalCouples = drive.clients ? drive.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
+function DriveDetail({ drive }) {
+  const [openClients, setOpenClients] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const clients = drive.clients || [];
+
+  const toggleClient = idx => setOpenClients(prev => ({ ...prev, [idx]: !prev[idx] }));
+
+  if (clients.length === 0) return null;
 
   return (
-    <div className="device-drive-row">
-      <div className="device-drive-top">
-        <div className="device-drive-name-row">
-          <span className="device-drive-name">{drive.name}</span>
-          {!drive.connected && <span className="device-drive-disconnected">(disconnected)</span>}
-        </div>
-        <span className="device-drive-stats">{totalClients} clients, {totalCouples} couples</span>
+    <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--rule-soft)' }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-mute)', fontWeight: 500, marginBottom: 8 }}>
+        {drive.name} — client folders
       </div>
-      <div className="device-drive-bar-row">
-        <div className="device-drive-bar">
-          <div className="device-drive-bar-fill" style={{ width: `${pct}%`, background: barColor }}></div>
-        </div>
-        <span className="device-drive-pct">{pct}%</span>
-      </div>
-      <div className="device-drive-size">
-        {formatSize(drive.used)} / {formatSize(drive.total)}
-      </div>
+      {clients.map((client, ci) => {
+        const isOpen = openClients[ci];
+        const clientSize = (client.couples || []).reduce((s, c) => s + (c.size || 0), 0);
+        return (
+          <div key={ci} style={{ marginBottom: 6 }}>
+            <button
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '6px 0', background: 'none', border: 0, cursor: 'pointer', textAlign: 'left',
+              }}
+              onClick={() => toggleClient(ci)}
+            >
+              <span style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{isOpen ? '▾' : '▸'}</span>
+              <span style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500 }}>{client.name}</span>
+              <span style={{ fontSize: 11, color: 'var(--ink-mute)', marginLeft: 4 }}>
+                {(client.couples || []).length} couples · {fmtBytes(clientSize)}
+              </span>
+              {drive.connected && (
+                <button
+                  className="btn ghost sm"
+                  style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--alert-fg)' }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    setDeleteTarget({
+                      type: 'client',
+                      driveName: drive.name,
+                      clientName: client.name,
+                      coupleName: '',
+                      size: clientSize,
+                      coupleCount: (client.couples || []).length,
+                      sourceMachine: drive.sourceMachine,
+                    });
+                  }}
+                >
+                  Delete client
+                </button>
+              )}
+            </button>
+            {isOpen && (client.couples || []).map((couple, coi) => (
+              <div
+                key={coi}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '3px 0 3px 20px',
+                  borderBottom: '1px solid var(--rule-soft)',
+                }}
+              >
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--ink-faint)', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--ink-3)', flex: 1 }}>{couple.name}</span>
+                <span className="t-mono" style={{ fontSize: 11, color: 'var(--ink-mute)' }}>{fmtBytes(couple.size || 0)}</span>
+                {drive.connected && (
+                  <button
+                    className="btn ghost sm"
+                    style={{ fontSize: 11, color: 'var(--alert-fg)' }}
+                    onClick={() => setDeleteTarget({
+                      type: 'couple',
+                      driveName: drive.name,
+                      clientName: client.name,
+                      coupleName: couple.name,
+                      size: couple.size || 0,
+                      sourceMachine: drive.sourceMachine,
+                    })}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }

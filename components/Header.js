@@ -1,63 +1,131 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-const pageTitles = {
-  dashboard: 'Dashboard',
-  drives: 'Drives',
-  devices: 'Devices',
-  search: 'Search Couples',
-  history: 'History',
-};
+function ClockTime() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return (
+    <span className="t-mono" style={{ fontSize: 13, letterSpacing: '0.06em', color: 'var(--ink)' }}>
+      {hh}:{mm}<span style={{ color: 'var(--ink-mute)' }}>:{ss}</span>
+    </span>
+  );
+}
 
-export default function Header({ currentPage, onNavigate, onQuickSearch, refreshCountdown, refreshInterval = 300, lastRefreshed, onRefreshNow }) {
+function PulseRing({ value, total, label }) {
+  const R = 12;
+  const C = 2 * Math.PI * R;
+  const off = C * (1 - value / total);
+  return (
+    <div className="pulse-ring">
+      <svg width="28" height="28" style={{ display: 'block', transform: 'rotate(-90deg)' }}>
+        <circle cx="14" cy="14" r={R} fill="none" stroke="var(--rule)" strokeWidth="1.5" />
+        <circle
+          cx="14" cy="14" r={R}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeDasharray={C}
+          strokeDashoffset={off}
+          strokeLinecap="butt"
+          style={{ transition: 'stroke-dashoffset 1s linear' }}
+        />
+      </svg>
+      <div className="ring-num">{label}</div>
+    </div>
+  );
+}
+
+export default function Header({
+  currentPage,
+  onNavigate,
+  onQuickSearch,
+  refreshCountdown,
+  refreshInterval,
+  lastRefreshed,
+  onRefreshNow,
+}) {
   const [query, setQuery] = useState('');
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && query.trim()) {
-      onQuickSearch(query.trim());
-      onNavigate('search');
+      if (onQuickSearch) onQuickSearch(query.trim());
+      if (onNavigate) onNavigate('search');
     }
   };
 
-  const formatCountdown = (sec) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
-  };
+  const cdTotal = refreshInterval || 300;
+  const cdValue = refreshCountdown || 0;
+  const m = Math.floor(cdValue / 60);
+  const s = cdValue % 60;
+  const cdLabel = m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
 
   return (
-    <div className="header">
-      <h1>{pageTitles[currentPage] || 'Dashboard'}</h1>
-      <div className="header-right">
-        <div className="search-box">
-          <span className="search-icon">{'\u2315'}</span>
-          <input
-            type="text"
-            placeholder="Search couple name..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
+    <div className="strip">
+      <div className="strip-cell">
+        <span className="label">Time</span>
+        <ClockTime />
+      </div>
+
+      <div className="strip-cell grow">
+        <div className="row gap-8" style={{ alignItems: 'center' }}>
+          <span className="led on" />
+          <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>All systems online</span>
+        </div>
+      </div>
+
+      <div className="strip-cell" style={{ minWidth: 180 }}>
+        <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>⌕</span>
+        <input
+          type="text"
+          placeholder="Search couple name…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          style={{
+            border: 0,
+            background: 'transparent',
+            fontSize: 13,
+            color: 'var(--ink)',
+            outline: 0,
+            flex: 1,
+          }}
+        />
+      </div>
+
+      <div className="strip-cell">
+        <button
+          className="btn ghost sm"
+          onClick={onRefreshNow}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          title="Click to refresh now"
+        >
+          <PulseRing
+            value={cdTotal - cdValue}
+            total={cdTotal}
+            label={cdLabel}
           />
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <div className="strip-cell" style={{ borderRight: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: 999,
+            display: 'grid', placeItems: 'center',
+            fontWeight: 600, fontSize: 13,
+            color: 'var(--panel)', background: 'var(--ink)',
+          }}>B</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500, lineHeight: 1.2 }}>Bilal</span>
+            <span style={{ fontSize: 11.5, color: 'var(--ink-mute)' }}>TXB Studios</span>
+          </div>
         </div>
-        <div className="refresh-timer" onClick={onRefreshNow} title="Click to refresh now">
-          <svg className="refresh-ring" width="28" height="28" viewBox="0 0 28 28">
-            <circle cx="14" cy="14" r="12" fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
-            <circle
-              cx="14" cy="14" r="12" fill="none"
-              stroke="#c8e600" strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeDasharray={`${2 * Math.PI * 12}`}
-              strokeDashoffset={`${2 * Math.PI * 12 * (1 - (refreshCountdown || 0) / refreshInterval)}`}
-              style={{ transition: 'stroke-dashoffset 1s linear', transform: 'rotate(-90deg)', transformOrigin: 'center' }}
-            />
-          </svg>
-          <span className="refresh-seconds">{formatCountdown(refreshCountdown || 0)}</span>
-          <span className="refresh-label">Refresh</span>
-        </div>
-        <div className="status-indicator">
-          <div className="status-dot"></div>
-          Live
-        </div>
-        <div className="user-avatar">B</div>
       </div>
     </div>
   );

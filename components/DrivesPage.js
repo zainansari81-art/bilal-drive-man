@@ -1,37 +1,26 @@
 import { useState } from 'react';
-import { formatSize, formatTB } from '../lib/format';
+import { LED, Gauge, Spool, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 export default function DrivesPage({ drives }) {
-  // Optimistic-hide state: keys for clients/couples the user just deleted.
-  // Key format: "drive|client|*" for a whole client, "drive|client|couple" for a couple.
+  const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState('fullness');
   const [hidden, setHidden] = useState(() => new Set());
-  // 2026-05-04: optimistic-ignore — drive ids the user just clicked
-  // "Ignore Permanently" on. Hides instantly while the PATCH is in flight.
   const [ignoredIds, setIgnoredIds] = useState(() => new Set());
 
   const handleDeleted = ({ driveName, clientName, coupleName, type }) => {
     const key = type === 'client'
       ? `${driveName}|${clientName}|*`
       : `${driveName}|${clientName}|${coupleName}`;
-    setHidden(prev => {
-      const next = new Set(prev);
-      next.add(key);
-      return next;
-    });
+    setHidden(prev => new Set([...prev, key]));
   };
 
   const handleIgnore = async (driveId, driveName) => {
     if (!driveId) return;
     if (!window.confirm(
-      `Ignore "${driveName}" permanently?\n\nIt will be hidden from this dashboard, the wizard, and stat counts. The scanner still detects it physically — this only affects display. You can un-ignore via SQL if needed.`
+      `Ignore "${driveName}" permanently?\n\nIt will be hidden from the dashboard. You can un-ignore via SQL if needed.`
     )) return;
-    // Optimistic hide
-    setIgnoredIds(prev => {
-      const next = new Set(prev);
-      next.add(driveId);
-      return next;
-    });
+    setIgnoredIds(prev => new Set([...prev, driveId]));
     try {
       const res = await fetch('/api/drives', {
         method: 'PATCH',
@@ -40,7 +29,6 @@ export default function DrivesPage({ drives }) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      // Revert optimistic hide on failure
       setIgnoredIds(prev => {
         const next = new Set(prev);
         next.delete(driveId);
@@ -50,134 +38,164 @@ export default function DrivesPage({ drives }) {
     }
   };
 
-  // Apply hidden filter so just-deleted items disappear without a refresh
   const visibleDrives = drives
     .filter(d => !ignoredIds.has(d.id))
-    .map(d => {
-      const clients = (d.clients || [])
+    .map(d => ({
+      ...d,
+      clients: (d.clients || [])
         .filter(c => !hidden.has(`${d.name}|${c.name}|*`))
         .map(c => ({
           ...c,
-          couples: (c.couples || []).filter(cp =>
-            !hidden.has(`${d.name}|${c.name}|${cp.name}`)
-          ),
-        }));
-      return { ...d, clients };
-    });
+          couples: (c.couples || []).filter(cp => !hidden.has(`${d.name}|${c.name}|${cp.name}`)),
+        })),
+    }));
 
-  // 2026-05-05: sort by fullness (most-full first) so operators can see at
-  // a glance which drives need swapping. Tiebreak alphabetically for a stable
-  // ordering on identical-fullness drives.
-  const byFullness = (a, b) => {
+  const filtered = visibleDrives.filter(d =>
+    filter === 'all' ? true : filter === 'connected' ? d.connected : !d.connected
+  );
+
+  const sorted = [...filtered].sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'machine') return (a.sourceMachine || '').localeCompare(b.sourceMachine || '');
     const pa = a.total > 0 ? a.used / a.total : 0;
     const pb = b.total > 0 ? b.used / b.total : 0;
     if (pb !== pa) return pb - pa;
     return a.name.localeCompare(b.name);
-  };
-  const connected = visibleDrives.filter(d => d.connected).sort(byFullness);
-  const disconnected = visibleDrives.filter(d => !d.connected).sort(byFullness);
+  });
 
-  if (visibleDrives.length === 0) {
-    return (
-      <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8ca1' }}>
-        <p style={{ fontSize: 18 }}>No drives found yet.</p>
-        <p style={{ fontSize: 14 }}>Connect an external drive and run the scanner to get started.</p>
-      </div>
-    );
-  }
+  const connCount = visibleDrives.filter(d => d.connected).length;
+  const offCount = visibleDrives.length - connCount;
 
   return (
-    <div>
-      {connected.length > 0 && (
-        <>
-          <h3 style={{ color: '#22c55e', margin: '10px 0' }}>Connected ({connected.length})</h3>
-          {connected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} onIgnore={handleIgnore} /></div>)}
-        </>
-      )}
-      {disconnected.length > 0 && (
-        <>
-          <h3 style={{ color: '#8c8ca1', margin: '20px 0 10px' }}>Disconnected ({disconnected.length})</h3>
-          {disconnected.map((d, i) => <div key={i} className="scroll-reveal" style={{ transitionDelay: `${i * 60}ms` }}><DriveCard drive={d} onDeleted={handleDeleted} onIgnore={handleIgnore} /></div>)}
-        </>
+    <div className="fade-in">
+      <div className="page-header">
+        <div className="page-title">
+          <h1>Drives</h1>
+        </div>
+        <div className="page-sub">
+          External drives across the fleet. Sort by fullness to spot what needs swapping.
+        </div>
+      </div>
+
+      {/* Filter / sort strip */}
+      <div className="filter-strip" style={{ marginBottom: 22 }}>
+        {[
+          { id: 'all', label: 'All', count: visibleDrives.length },
+          { id: 'connected', label: 'Connected', count: connCount },
+          { id: 'disconnected', label: 'Offline', count: offCount },
+        ].map(chip => (
+          <div
+            key={chip.id}
+            className={`filter-chip ${filter === chip.id ? 'active' : ''}`}
+            onClick={() => setFilter(chip.id)}
+          >
+            <span className="l">{chip.label}</span>
+            <span className="v">{chip.count}</span>
+          </div>
+        ))}
+        <div style={{ flex: 1 }} />
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 14px',
+          background: 'var(--panel)',
+          border: '1px solid var(--rule)',
+          borderRadius: 'var(--r)',
+        }}>
+          <span style={{ fontSize: 12, color: 'var(--ink-mute)' }}>Sort by</span>
+          <select
+            value={sort}
+            onChange={e => setSort(e.target.value)}
+            style={{ background: 'transparent', border: 0, color: 'var(--ink)', fontSize: 13, fontWeight: 500, outline: 0, cursor: 'pointer' }}
+          >
+            <option value="fullness">Fullness</option>
+            <option value="name">Name</option>
+            <option value="machine">Machine</option>
+          </select>
+        </div>
+      </div>
+
+      {sorted.length === 0 ? (
+        <Empty title="No drives" sub="No drives match the current filter." />
+      ) : (
+        <div className="drives-grid">
+          {sorted.map(d => (
+            <DriveCard
+              key={d.id || d.name}
+              drive={d}
+              onDeleted={handleDeleted}
+              onIgnore={handleIgnore}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function DriveCard({ drive, onDeleted, onIgnore }) {
+function DriveCard({ drive: d, onDeleted, onIgnore }) {
   const [open, setOpen] = useState(false);
-  const d = drive;
-  const pct = d.total > 0 ? Math.round(d.used / d.total * 100) : 0;
-  const barColor = pct < 70 ? 'linear-gradient(135deg, #22c55e, #16a34a)' : pct < 90 ? 'linear-gradient(135deg, #eab308, #ca8a04)' : 'linear-gradient(135deg, #ef4444, #dc2626)';
-  const statusColor = d.connected ? '#22c55e' : '#ef4444';
-  const statusText = d.connected ? `Connected (${d.letter})` : 'Disconnected';
-  const totalCouples = d.clients ? d.clients.reduce((s, c) => s + c.couples.length, 0) : 0;
-  const lowThreshold = 100 * 1024 * 1024 * 1024; // 100 GB in bytes
-  const lowSpace = d.free > 0 && d.free < lowThreshold;
+  const pct = fmtPct(d.used, d.total);
+  const clientsCount = (d.clients || []).length;
+  const couplesCount = (d.clients || []).reduce((s, c) => s + c.couples.length, 0);
 
   return (
-    <div className="drive-detail-card">
-      <div
-        className="drive-detail-row"
-        onClick={() => setOpen(!open)}
-        style={onIgnore ? { gridTemplateColumns: '14px 220px 1fr 100px 180px auto' } : undefined}
-      >
-        <span className="drive-detail-caret">{open ? '\u25BC' : '\u25B6'}</span>
-        <span className="drive-detail-name">{d.name}</span>
-        <span className="drive-detail-meta">
-          {formatTB(d.used)} / {formatTB(d.total)} &nbsp;·&nbsp; {pct}% &nbsp;·&nbsp; {d.clients ? d.clients.length : 0}C / {totalCouples}Cp
-          {lowSpace && <span className="drive-low-inline"> &nbsp;·&nbsp; {'\u26A0'} {formatSize(d.free)} left</span>}
-        </span>
-        <div className="drive-progress-bar-mini">
-          <div className="drive-progress-fill-mini" style={{ background: barColor, width: `${pct}%` }}></div>
+    <div className={`drive-card${!d.connected ? ' dim' : ''}`}>
+      <div className="drive-card-top">
+        <div>
+          <div className="nm">{d.name}</div>
+          <div className="machine">{d.sourceMachine}</div>
         </div>
-        <span className="drive-detail-status" style={{ color: statusColor }}>{statusText}</span>
-        {/* 2026-05-04: ignore-permanently per-drive button. e.stopPropagation
-            prevents the row's expand-toggle from firing on click. */}
-        {onIgnore && (
-          <button
-            type="button"
-            className="drive-ignore-btn"
-            title="Hide this drive from the dashboard permanently"
-            onClick={(e) => {
-              e.stopPropagation();
-              onIgnore(d.id, d.name);
-            }}
-            style={{
-              padding: '5px 12px',
-              fontSize: 11,
-              fontWeight: 500,
-              border: '1px solid #d4d4d8',
-              borderRadius: 6,
-              background: '#fff',
-              color: '#9ca3af',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'color 0.15s ease, border-color 0.15s ease',
-              alignSelf: 'center',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.opacity = '1';
-              e.currentTarget.style.borderColor = '#ef4444';
-              e.currentTarget.style.color = '#ef4444';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = '0.7';
-              e.currentTarget.style.borderColor = '#4a4a5a';
-              e.currentTarget.style.color = '#9ca3af';
-            }}
-          >
-            Ignore Permanently
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <LED state={d.connected ? 'on' : 'off'} />
+          <span style={{ fontSize: 11.5, color: d.connected ? 'var(--accent-fg)' : 'var(--ink-mute)', fontWeight: 500 }}>
+            {d.connected ? `${d.letter}:\\` : 'Offline'}
+          </span>
+        </div>
       </div>
+
+      <Spool pct={pct} />
+
+      <div className="row-detail">
+        <span className="l">Used</span>
+        <span className="v">{fmtTB(d.used)} TB</span>
+      </div>
+      <div className="row-detail">
+        <span className="l">Free</span>
+        <span className="v">{fmtTB(d.free)} TB</span>
+      </div>
+      <div className="row-detail">
+        <span className="l">Capacity</span>
+        <span className="v">{fmtTB(d.total)} TB</span>
+      </div>
+
+      <div className="drive-card-foot">
+        <div className="stats">
+          <strong>{clientsCount}</strong> clients · <strong>{couplesCount}</strong> couples
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {onIgnore && (
+            <button
+              className="btn ghost sm"
+              onClick={e => { e.stopPropagation(); onIgnore(d.id, d.name); }}
+              title="Hide this drive permanently"
+              style={{ color: 'var(--ink-mute)', fontSize: 11 }}
+            >
+              Ignore
+            </button>
+          )}
+          <button className="btn ghost sm" onClick={() => setOpen(!open)}>
+            {open ? 'Collapse' : 'Inspect →'}
+          </button>
+        </div>
+      </div>
+
       {open && (
-        <div className="drive-detail-expanded">
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--rule-soft)' }}>
           {(d.clients || []).length === 0 ? (
-            <div className="drive-empty-note">No clients on this drive.</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-mute)', padding: '8px 0' }}>No clients on this drive.</div>
           ) : (
-            (d.clients || []).map((client, ci) => (
-              <ClientBlock key={ci} client={client} drive={d} onDeleted={onDeleted} />
+            (d.clients || []).map((c, ci) => (
+              <ClientBlock key={ci} client={c} drive={d} onDeleted={onDeleted} />
             ))
           )}
         </div>
@@ -189,68 +207,66 @@ function DriveCard({ drive, onDeleted, onIgnore }) {
 function ClientBlock({ client, drive, onDeleted }) {
   const [open, setOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const clientTotal = client.couples.reduce((s, c) => s + c.size, 0);
-
-  const handleDeleteCouple = (couple) => {
-    setDeleteTarget({
-      type: 'couple',
-      driveName: drive.name,
-      clientName: client.name,
-      coupleName: couple.name,
-      size: couple.size,
-      sourceMachine: drive.sourceMachine,
-    });
-  };
-
-  const handleDeleteClient = () => {
-    setDeleteTarget({
-      type: 'client',
-      driveName: drive.name,
-      clientName: client.name,
-      coupleName: '',
-      size: clientTotal,
-      coupleCount: client.couples.length,
-      sourceMachine: drive.sourceMachine,
-    });
-  };
+  const clientTotal = (client.couples || []).reduce((s, cp) => s + (cp.size || 0), 0);
 
   return (
-    <div className="client-block">
-      <div className="client-header" onClick={() => setOpen(!open)}>
-        <div className="client-icon">{open ? '\u25BC' : '\u25B6'}</div>
-        <span className="client-name">{client.name}</span>
-        <span className="client-count">({client.couples.length} couples)</span>
-        <span className="client-size">{formatSize(clientTotal)}</span>
+    <div style={{ marginBottom: 10 }}>
+      <div
+        style={{ fontSize: 12, color: 'var(--ink-2)', fontWeight: 500, marginBottom: 4, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+        onClick={() => setOpen(!open)}
+      >
+        <span>{open ? '▾' : '▸'}</span>
+        <span>{client.name}</span>
+        <span style={{ color: 'var(--ink-mute)', fontWeight: 400 }}>({(client.couples || []).length} couples · {fmtBytes(clientTotal)})</span>
         {drive.connected && (
           <button
-            className="delete-btn-small"
-            onClick={(e) => { e.stopPropagation(); handleDeleteClient(); }}
-            title="Delete entire client folder"
+            className="btn ghost sm"
+            style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--alert-fg)' }}
+            onClick={e => {
+              e.stopPropagation();
+              setDeleteTarget({
+                type: 'client',
+                driveName: drive.name,
+                clientName: client.name,
+                coupleName: '',
+                size: clientTotal,
+                coupleCount: (client.couples || []).length,
+                sourceMachine: drive.sourceMachine,
+              });
+            }}
           >
-            {'\uD83D\uDDD1'}
+            Delete client
           </button>
         )}
       </div>
-      {open && (
-        <div className="couple-list">
-          {client.couples.map((couple, i) => (
-            <div className="couple-row" key={i}>
-              <div className="couple-dot"></div>
-              <span className="couple-name">{couple.name}</span>
-              <span className="couple-size">{formatSize(couple.size)}</span>
-              {drive.connected && (
-                <button
-                  className="delete-btn-small"
-                  onClick={() => handleDeleteCouple(couple)}
-                  title="Delete this couple folder"
-                >
-                  {'\uD83D\uDDD1'}
-                </button>
-              )}
-            </div>
-          ))}
+      {open && (client.couples || []).map((cp, cpi) => (
+        <div
+          key={cpi}
+          className="row between"
+          style={{ padding: '4px 0 4px 18px', borderBottom: '1px solid var(--rule-soft)', alignItems: 'center' }}
+        >
+          <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>{cp.name}</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="t-mono" style={{ fontSize: 11.5, color: 'var(--ink-mute)' }}>{fmtBytes(cp.size)}</span>
+            {drive.connected && (
+              <button
+                className="btn ghost sm"
+                style={{ fontSize: 11, color: 'var(--alert-fg)' }}
+                onClick={() => setDeleteTarget({
+                  type: 'couple',
+                  driveName: drive.name,
+                  clientName: client.name,
+                  coupleName: cp.name,
+                  size: cp.size || 0,
+                  sourceMachine: drive.sourceMachine,
+                })}
+              >
+                Delete
+              </button>
+            )}
+          </div>
         </div>
-      )}
+      ))}
       {deleteTarget && (
         <DeleteConfirmModal
           target={deleteTarget}

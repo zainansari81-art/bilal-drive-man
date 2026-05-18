@@ -1,10 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { formatSize } from '../lib/format';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { LED, Empty, fmtBytes } from './atoms';
 
-export default function SearchPage({ initialQuery }) {
+export default function SearchPage({ initialQuery, drives }) {
   const [query, setQuery] = useState(initialQuery || '');
-  const [results, setResults] = useState(null);
-  const [searching, setSearching] = useState(false);
   const inputRef = useRef(null);
 
   useEffect(() => {
@@ -12,78 +10,106 @@ export default function SearchPage({ initialQuery }) {
   }, []);
 
   useEffect(() => {
-    if (initialQuery) {
-      setQuery(initialQuery);
-      doSearch(initialQuery);
-    }
+    setQuery(initialQuery || '');
   }, [initialQuery]);
 
-  const doSearch = async (q) => {
-    const searchQuery = q || query;
-    if (!searchQuery.trim()) return;
-    setSearching(true);
-    try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery.trim())}`);
-      const data = await res.json();
-      setResults(Array.isArray(data) ? data : []);
-    } catch {
-      setResults([]);
-    }
-    setSearching(false);
-  };
+  // Build couple index from drives passed in (fleet-wide from page-level state)
+  const index = useMemo(() => {
+    const rows = [];
+    (drives || []).forEach(d => {
+      (d.clients || []).forEach(c => {
+        (c.couples || []).forEach(cp => {
+          rows.push({
+            couple: cp.name,
+            client: c.name,
+            drive: d.name,
+            connected: d.connected,
+            size: cp.size,
+            machine: d.sourceMachine,
+            letter: d.letter,
+          });
+        });
+      });
+    });
+    return rows;
+  }, [drives]);
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') doSearch();
-  };
+  const results = query.trim()
+    ? index.filter(r => {
+        const needle = query.trim().toLowerCase();
+        return (
+          r.couple.toLowerCase().includes(needle) ||
+          r.client.toLowerCase().includes(needle) ||
+          r.drive.toLowerCase().includes(needle)
+        );
+      })
+    : null;
 
   return (
-    <div>
-      <div className="search-bar-large">
-        <span style={{ fontSize: 20, color: '#b0b0c0' }}>{'\u2315'}</span>
+    <div className="fade-in">
+      <div className="page-header">
+        <div className="page-title"><h1>Search</h1></div>
+        <div className="page-sub">Type a couple, client, or drive — searches the full fleet.</div>
+      </div>
+
+      <div className="search-frame">
+        <div className="label-cell">
+          <span style={{ fontSize: 16, color: 'var(--ink-mute)' }}>⌕</span>
+        </div>
         <input
           ref={inputRef}
           type="text"
-          placeholder="Search by client or couple name across all drives..."
+          placeholder="Search couples, clients, or drives…"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
         />
-        <button onClick={() => doSearch()} disabled={searching}>
-          {searching ? 'Searching...' : 'Search'}
-        </button>
+        <span style={{ fontSize: 12, color: 'var(--ink-mute)', whiteSpace: 'nowrap' }}>
+          {index.length.toLocaleString()} couples indexed
+        </span>
+        {query && (
+          <button className="btn ghost sm" onClick={() => setQuery('')}>Clear</button>
+        )}
       </div>
 
-      <div>
+      <div style={{ marginTop: 20 }}>
         {results === null && (
-          <p style={{ color: '#8c8ca1', textAlign: 'center', padding: '40px 0', fontSize: 14 }}>
-            Type a client or couple name and press Enter to search across all drives
-          </p>
+          <div className="empty">
+            <p>Type a name above to search across all drives.</p>
+          </div>
         )}
 
         {results !== null && results.length === 0 && (
-          <p style={{ color: '#8c8ca1', textAlign: 'center', padding: '40px 0' }}>
-            No results found for &quot;{query}&quot;
-          </p>
+          <Empty title="No matches" sub={`Nothing in the fleet matches "${query}".`} />
         )}
 
         {results !== null && results.length > 0 && (
           <>
-            <p style={{ fontWeight: 700, marginBottom: 12 }}>
-              Found {results.length} result(s) for &quot;{query}&quot;
-            </p>
-            {results.map((r, i) => (
-              <div className="result-card scroll-reveal" key={i} style={{ transitionDelay: `${i * 50}ms` }}>
-                <div>
-                  <div className="result-name">{r.couple}</div>
-                  <div className="result-meta">
-                    Client: <strong>{r.client}</strong> &nbsp;|&nbsp; Drive: <strong>{r.drive}</strong> &nbsp;|&nbsp; Size: {formatSize(r.size)}
+            <div style={{ fontSize: 12.5, color: 'var(--ink-mute)', marginBottom: 10 }}>
+              {results.length} match{results.length !== 1 ? 'es' : ''} for &ldquo;{query}&rdquo;
+            </div>
+            <div className="panel flush">
+              {results.map((r, i) => (
+                <div className="result-row" key={i}>
+                  <LED state={r.connected ? 'on' : 'off'} />
+                  <div>
+                    <div className="nm">{r.couple}</div>
+                    <div className="meta">{r.client}</div>
+                  </div>
+                  <div className="t-mono" style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>
+                    {r.drive}
+                    {r.letter && <span style={{ color: 'var(--ink-mute)' }}> · {r.letter}:\</span>}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-mute)' }}>{r.machine}</div>
+                  <div className="sz">{fmtBytes(r.size)}</div>
+                  <div style={{
+                    fontSize: 11.5, fontWeight: 500, textAlign: 'right',
+                    color: r.connected ? 'var(--accent-fg)' : 'var(--ink-mute)',
+                  }}>
+                    {r.connected ? 'Online' : 'Offline'}
                   </div>
                 </div>
-                <div className={`result-status ${r.connected ? 'connected' : 'disconnected'}`}>
-                  {r.connected ? 'On Drive (Connected)' : 'On Drive (Disconnected)'}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </>
         )}
       </div>
