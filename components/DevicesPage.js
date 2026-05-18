@@ -106,9 +106,11 @@ export default function DevicesPage({ drives }) {
         </div>
       </div>
 
-      {enriched.map(m => (
-        <MachineCard key={m.name} m={m} drives={drives} />
-      ))}
+      <div className="stagger">
+        {enriched.map(m => (
+          <MachineCard key={m.name} m={m} drives={drives} />
+        ))}
+      </div>
     </div>
   );
 }

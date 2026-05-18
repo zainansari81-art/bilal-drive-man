@@ -13,6 +13,7 @@ export async function getServerSideProps(context) {
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -137,26 +138,50 @@ export default function LoginPage() {
               <label style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-2, #3F3F46)' }}>
                 Password
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="Enter password"
-                required
-                style={{
-                  padding: '9px 12px',
-                  borderRadius: 6,
-                  border: '1px solid var(--rule, #E5E4E1)',
-                  fontSize: 13.5,
-                  fontFamily: 'inherit',
-                  color: 'var(--ink, #18181B)',
-                  outline: 'none',
-                  background: 'var(--panel, #fff)',
-                  transition: 'border-color 0.12s',
-                }}
-                onFocus={e => { e.target.style.borderColor = 'var(--ink, #18181B)'; e.target.style.boxShadow = '0 0 0 3px rgba(24,24,27,0.05)'; }}
-                onBlur={e => { e.target.style.borderColor = 'var(--rule, #E5E4E1)'; e.target.style.boxShadow = 'none'; }}
-              />
+              <div style={{ position: 'relative', display: 'flex' }}>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  required
+                  style={{
+                    flex: 1,
+                    padding: '9px 56px 9px 12px',
+                    borderRadius: 6,
+                    border: '1px solid var(--rule, #E5E4E1)',
+                    fontSize: 13.5,
+                    fontFamily: 'inherit',
+                    color: 'var(--ink, #18181B)',
+                    outline: 'none',
+                    background: 'var(--panel, #fff)',
+                    transition: 'border-color 0.12s',
+                  }}
+                  onFocus={e => { e.target.style.borderColor = 'var(--ink, #18181B)'; e.target.style.boxShadow = '0 0 0 3px rgba(24,24,27,0.05)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'var(--rule, #E5E4E1)'; e.target.style.boxShadow = 'none'; }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  tabIndex={-1}
+                  style={{
+                    position: 'absolute',
+                    right: 6,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: '4px 8px',
+                    fontSize: 11.5,
+                    fontWeight: 500,
+                    color: 'var(--ink-mute, #71717A)',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </div>
 
             <button

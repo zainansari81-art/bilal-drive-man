@@ -1,4 +1,5 @@
 import { LED, Gauge, Fuel, Runway, Src, SectionHead, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
+import CountUp from './CountUp';
 
 const EVENT_CONF = {
   drive_connected:    { tag: 'Drive on',    cls: 'signal' },
@@ -83,7 +84,7 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
             <span className="ch">Couples</span>
             <LED state="on" />
           </div>
-          <div className="v">{allCouples}</div>
+          <div className="v"><CountUp value={allCouples} /></div>
           <div className="lbl">Across all drives</div>
           <div className="micro">From {allClients.size} clients</div>
         </div>
@@ -94,7 +95,7 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
             <LED state={connected.length > 0 ? 'on' : 'off'} />
           </div>
           <div className="v">
-            {connected.length}
+            <CountUp value={connected.length} />
             <span className="small"> of {drives.length}</span>
           </div>
           <div className="lbl">Drives mounted and visible</div>
@@ -106,7 +107,7 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
             <LED state={totalPct > 90 ? 'alert' : totalPct > 70 ? 'warn' : 'on'} />
           </div>
           <div className="v">
-            {totalPct}
+            <CountUp value={totalPct} />
             <span className="small">%</span>
           </div>
           <div className="lbl">Across the fleet</div>
@@ -118,7 +119,7 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
             <span className="ch">Recent events</span>
             <LED state="info" />
           </div>
-          <div className="v">{activities.length}</div>
+          <div className="v"><CountUp value={activities.length} /></div>
           <div className="lbl">In the last scan</div>
         </div>
       </div>
@@ -170,7 +171,7 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
         }
       />
       <div className="panel flush">
-        <div className="log">
+        <div className="log stagger">
           {activities.slice(0, 8).map((a, i) => {
             const conf = EVENT_CONF[a.type] || { tag: a.type, cls: 'info' };
             return (

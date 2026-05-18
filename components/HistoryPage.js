@@ -53,7 +53,7 @@ export default function HistoryPage({ activities: initialActivities }) {
           sub="Activity will appear here when drives are connected, scanned, or modified."
         />
       ) : (
-        <div className="panel flush">
+        <div className="panel flush stagger">
           {activities.map((a, i) => {
             const c = TAG[a.type] || { tag: a.type, cls: 'info' };
             return (

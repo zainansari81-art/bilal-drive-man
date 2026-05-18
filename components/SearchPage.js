@@ -87,7 +87,7 @@ export default function SearchPage({ initialQuery, drives }) {
             <div style={{ fontSize: 12.5, color: 'var(--ink-mute)', marginBottom: 10 }}>
               {results.length} match{results.length !== 1 ? 'es' : ''} for &ldquo;{query}&rdquo;
             </div>
-            <div className="panel flush">
+            <div className="panel flush stagger">
               {results.map((r, i) => (
                 <div className="result-row" key={i}>
                   <LED state={r.connected ? 'on' : 'off'} />

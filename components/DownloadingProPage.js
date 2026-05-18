@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { LED, Runway, Fuel, Src, Empty, fmtBytes, sourceFromLink } from './atoms';
+import CountUp from './CountUp';
 import DownloadWizardModal from './DownloadWizardModal';
 import DownloadMagicAnimation from './DownloadMagicAnimation';
 import LiveDownloadProgress from './LiveDownloadProgress';
@@ -245,19 +246,23 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
           title="Nothing here"
           sub="Try a different filter above, or sync from Notion to pull in new projects."
         />
-      ) : sorted.map(p => (
-        <FullLane
-          key={p.id}
-          project={p}
-          expanded={expanded === p.id}
-          onToggle={() => setExpanded(expanded === p.id ? null : p.id)}
-          onAction={action => handleAction(p.id, action)}
-          onDownloadClick={() => handleDownloadClick(p)}
-          connectedDrives={connectedDrives}
-          machines={machines}
-          fetchProjects={fetchProjects}
-        />
-      ))}
+      ) : (
+        <div className="stagger">
+          {sorted.map(p => (
+            <FullLane
+              key={p.id}
+              project={p}
+              expanded={expanded === p.id}
+              onToggle={() => setExpanded(expanded === p.id ? null : p.id)}
+              onAction={action => handleAction(p.id, action)}
+              onDownloadClick={() => handleDownloadClick(p)}
+              connectedDrives={connectedDrives}
+              machines={machines}
+              fetchProjects={fetchProjects}
+            />
+          ))}
+        </div>
+      )}
 
       {wizardProject && (
         <DownloadWizardModal
@@ -354,7 +359,7 @@ function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, c
           </div>
           {(p.progress_bytes > 0 || p.total_bytes_expected > 0) && (
             <div className="bytes">
-              {fmtBytes(p.progress_bytes || 0)}
+              <CountUp value={p.progress_bytes || 0} duration={1200} format={(v) => fmtBytes(v)} />
               <span className="of"> / {fmtBytes(p.total_bytes_expected || 0)}</span>
             </div>
           )}
@@ -365,7 +370,7 @@ function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, c
 
       {(active || status === 'paused' || status === 'completed' || status === 'failed') && (
         <>
-          <Fuel pct={pct} copying={status === 'copying'} failed={failed} />
+          <Fuel pct={pct} copying={status === 'copying'} failed={failed} shimmer={active} />
           <div className="row between" style={{ fontSize: 12, color: 'var(--ink-mute)', marginTop: 4 }}>
             <span className="t-mono">{pct.toFixed(1)}%</span>
           </div>

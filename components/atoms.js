@@ -140,10 +140,10 @@ export function Runway({ status, phase, failed }) {
 
 // ---------- Lane progress bar ----------
 
-export function Fuel({ pct, copying, failed }) {
+export function Fuel({ pct, copying, failed, shimmer }) {
   return (
     <div
-      className={`fuel${copying ? ' copying' : ''}${failed ? ' failed' : ''}`}
+      className={`fuel${copying ? ' copying' : ''}${failed ? ' failed' : ''}${shimmer ? ' shimmer' : ''}`}
       style={{ '--fuel-pct': `${Math.max(0, Math.min(100, pct))}%` }}
     />
   );

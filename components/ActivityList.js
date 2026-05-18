@@ -49,7 +49,7 @@ export default function ActivityList({ activities }) {
       <div className="list-header">
         <div className="list-title">{'\u29D6'} Recent Activity</div>
       </div>
-      <div>
+      <div className="stagger">
         {items.map((a, i) => {
           const info = iconMap[a.type] || { symbol: '?', cls: 'blue' };
           return (

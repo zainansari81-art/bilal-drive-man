@@ -117,7 +117,7 @@ export default function DrivesPage({ drives }) {
       {sorted.length === 0 ? (
         <Empty title="No drives" sub="No drives match the current filter." />
       ) : (
-        <div className="drives-grid">
+        <div className="drives-grid stagger">
           {sorted.map(d => (
             <DriveCard
               key={d.id || d.name}
