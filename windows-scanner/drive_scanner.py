@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.51.0'  # 2026-05-04 reverted from 3.53.0 — main had source bumped to 3.53.0 (live-progress) but no .exe was ever rebuilt, so the running 3.51.0 .exe hit zombie defense (SHA matches remote, VERSION mismatches) and self-killed every ~5min. live_progress code stays in source; bump back to 3.53.0 only AFTER a paired .exe rebuild lands in dist/.
+VERSION = '3.52.0'  # 2026-05-18 — add_to_cloud now runs in a background thread (was blocking the whole scanner for the entire GDrive list+download). MUST be paired with a .exe rebuild on the scanner-3.52.0-add-to-cloud-threading branch before merging to main, or the running 3.51.0 .exe hits zombie defense.
 
 import os
 import sys
@@ -1347,6 +1347,9 @@ def add_gdrive_shared_folder(access_token, shared_link, project_id=None, cancel_
     else:
         logging.info(f"Listing gdrive folder '{root_meta.get('name')}' recursively...")
         files = _gdrive_list_recursive(access_token, file_id)
+        # v3.52.0: log completion of the recursive walk. Without this a slow
+        # listing of a large folder tree looked identical to a hang.
+        logging.info(f"gdrive listing complete: {len(files)} files under '{root_meta.get('name')}'")
 
     # v3.46.0 refinement (Mac): sum up total_bytes_expected so portal
     # download_progress can emit bytes_done/bytes_total for mid-file
@@ -2211,7 +2214,7 @@ def poll_download_commands(config, known_drives):
             # (project_id, command). Background-thread commands (copy_to_drive,
             # start_download) use _register_handler; foreground commands don't
             # need it because the poll loop is single-threaded.
-            if command in ('copy_to_drive', 'start_download') and project_id:
+            if command in ('copy_to_drive', 'start_download', 'add_to_cloud') and project_id:
                 claimed, _evt = _register_handler(project_id, command)
                 if not claimed:
                     logging.warning(
@@ -2242,7 +2245,18 @@ def poll_download_commands(config, known_drives):
             elif command == 'delete_data':
                 handle_delete_data(config, payload, known_drives, cmd_id)
             elif command == 'add_to_cloud':
-                handle_add_to_cloud(config, project_id, payload, cmd_id)
+                # v3.52.0: run in a background thread. For Google Drive
+                # direct-download, handle_add_to_cloud does the full recursive
+                # folder listing + file download — minutes to hours. Running it
+                # synchronously here froze the entire scanner for that whole
+                # time: no heartbeats (portal showed the PC offline), no drive
+                # scanning, no other commands. Threading it (like start_download
+                # / copy_to_drive) keeps the main loop alive throughout.
+                threading.Thread(
+                    target=_safe_run_command,
+                    args=(handle_add_to_cloud, config, project_id, payload, known_drives, cmd_id, command),
+                    daemon=True
+                ).start()
             elif command == 'check_cloud_status':
                 handle_check_cloud_status(config, project_id, payload, cmd_id)
             elif command == 'cancel_download':
@@ -2327,8 +2341,13 @@ def _safe_run_command(handler, config, project_id, payload, known_drives, cmd_id
             _unregister_handler(project_id, command)
 
 
-def handle_add_to_cloud(config, project_id, payload, cmd_id):
-    """Add a shared Dropbox/Google Drive link to the user's cloud account."""
+def handle_add_to_cloud(config, project_id, payload, known_drives, cmd_id):
+    """Add a shared Dropbox/Google Drive link to the user's cloud account.
+
+    v3.52.0: `known_drives` is accepted (unused) so the signature matches the
+    other background-thread handlers and this can run through _safe_run_command
+    in a daemon thread instead of blocking the main command loop."""
+    del known_drives  # unused — signature-compat with _safe_run_command
     download_link = payload.get('download_link', '')
     link_type = payload.get('link_type', '')
     couple_name = payload.get('couple_name', '')
