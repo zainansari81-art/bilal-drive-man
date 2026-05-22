@@ -138,28 +138,58 @@ export default requireAuth(async function handler(req, res) {
       });
     }
 
-    // Folder logic — TWO ways a share can be "in" the user's Dropbox:
+    // Folder logic — TWO ways a share can be genuinely "in" the user's
+    // Dropbox (i.e. the scanner's mount/copy will succeed):
     //
-    //  (a) Cross-account mountable share — `shared_folder_id` is present in
-    //      the link metadata; Rafay just needs to call mount_folder. Scanner
-    //      already does this.
+    //  (a) Cross-account mountable share that has ALREADY been mounted —
+    //      `shared_folder_id` is present AND `sharing/get_folder_metadata`
+    //      reports a `path_lower`, meaning the folder exists in Rafay's tree.
+    //      A `shared_folder_id` ALONE only means the share is *mountable*,
+    //      NOT that it is mounted — so we must verify before claiming joined.
     //
     //  (b) "Add to my Dropbox" via web UI on an scl share — Dropbox copies
     //      the folder into Rafay's root namespace. The link metadata stays
-    //      identical (no `shared_folder_id`), so we have to check
-    //      `files/get_metadata` against `/<folder_name>` to detect the
-    //      saved copy.
+    //      identical (no `shared_folder_id`), so we check `files/get_metadata`
+    //      against `/<folder_name>` to detect the saved copy.
     //
-    // We treat either as `joined: true` so the wizard advances.
+    // Only a verified-present folder yields `joined: true`; otherwise the
+    // wizard MUST show the "Add to Dropbox" step.
 
     if (sharedFolderId) {
-      return res.status(200).json({
-        joined: true,
-        shared_folder_id: sharedFolderId,
-        folder_name: folderName,
-        link_type: 'dropbox',
-        error: null,
-      });
+      // Verify the share is actually mounted in the account — not merely
+      // mountable. A mounted shared folder has a `path_lower`.
+      let mounted = false;
+      try {
+        const folderMetaResp = await fetch('https://api.dropboxapi.com/2/sharing/get_folder_metadata', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ shared_folder_id: sharedFolderId }),
+        });
+        if (folderMetaResp.ok) {
+          const folderMeta = await folderMetaResp.json();
+          // `path_lower` is only set when the folder is mounted in the
+          // caller's Dropbox; absent for mountable-but-not-mounted shares.
+          mounted = Boolean(folderMeta.path_lower);
+        }
+      } catch (folderMetaErr) {
+        console.error('Dropbox get_folder_metadata failed:', folderMetaErr.message);
+      }
+
+      if (mounted) {
+        return res.status(200).json({
+          joined: true,
+          shared_folder_id: sharedFolderId,
+          folder_name: folderName,
+          link_type: 'dropbox',
+          error: null,
+        });
+      }
+      // Not mounted yet — fall through to the name-probe below, which also
+      // catches the "Add to my Dropbox" copy case. If neither matches, the
+      // wizard keeps showing the join step (joined: false).
     }
 
     if (!folderName) {
@@ -212,7 +242,7 @@ export default requireAuth(async function handler(req, res) {
 
     return res.status(200).json({
       joined: savedInUserTree,
-      shared_folder_id: null,
+      shared_folder_id: sharedFolderId,
       // Return the matched name (e.g. "AUR NEW SONGS (1)") so the scanner's
       // find_cloud_folder substring match resolves to the right local folder.
       folder_name: matchedFolderName,
