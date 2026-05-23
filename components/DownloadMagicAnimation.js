@@ -43,6 +43,19 @@ export default function DownloadMagicAnimation({
     };
   }, []);
 
+  // Safety fallback — the primary dismissal is the CSS `magicWrapFade`
+  // animation firing onAnimationEnd, but if those rules go missing (e.g.
+  // dropped from globals.css during a port), the overlay would stick on
+  // screen forever. This timeout matches the original animation duration
+  // (4.8s) plus a small buffer so the dismissal still happens cleanly even
+  // with no CSS animation.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (onDone) onDone();
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
   const handleAnimationEnd = (e) => {
     if (e.target !== e.currentTarget) return;
     if (onDone) onDone();
