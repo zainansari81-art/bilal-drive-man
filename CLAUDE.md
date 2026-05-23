@@ -444,6 +444,46 @@ Three footguns learned shipping it — DO NOT regress these:
    `animation: none; opacity: 1`; per-list `.stagger` animations provide entry
    motion instead.
 
+4. **The redesign port wholesale-replaced `globals.css` and silently dropped CSS
+   classes still referenced in JSX.** Found 2026-05-23 — clicking Download did
+   "nothing" because `.delete-modal-overlay` (used by `DownloadWizardModal`,
+   `DeleteConfirmModal`, `DownloadMagicAnimation`) had no rules, so the modal
+   rendered as a normal block at the bottom of the document flow (~y:30,823px
+   below the viewport). The user never saw it. Same class of bug bit the
+   `.magic-anim-*` keyframes — the download-fired animation never ran
+   `onAnimationEnd`, so the overlay stuck on screen until refresh. Restored
+   rules in `040828d`; added a safety `setTimeout` fallback for
+   `DownloadMagicAnimation.onDone` in `fb80de9`. **Audit rule**: when porting
+   a stylesheet wholesale, `grep -r 'className="<class>"' components/ pages/`
+   for every class used in JSX and confirm each one has rules in the new CSS.
+
+## Dropbox wizard regression — joined-status check (2026-05-23, commits 2995209, 0134c7d)
+
+Two separate bugs in the same flow shipped today; both made the wizard skip
+the "Add to Dropbox" step and silently fire `download_now` for folders that
+weren't actually in Rafay's Dropbox, leading to scanner failures at the
+`pinning` / `add_to_cloud` step.
+
+1. **Server side (`pages/api/dropbox-share-status.js`)**: a share's
+   `shared_folder_id` being present in the link metadata only means the share
+   is *mountable*, NOT mounted in the account. The old code treated any
+   `shared_folder_id` as `joined: true`. Fix: when `shared_folder_id` is set,
+   verify mount via `sharing/get_folder_metadata` → only `joined: true` if the
+   response has `path_lower` (i.e. the folder really lives in the user's tree).
+
+2. **Client side (`components/DownloadingProPage.js: handleDownloadClick`)**:
+   the wizard only opened when machine OR drive was missing. For Dropbox
+   projects where machine + drive were both already set but the folder still
+   wasn't in the account, the click fired `download_now` directly, bypassing
+   the Add-to-Dropbox step. Fix: for `link_type === 'dropbox'`, fetch
+   `dropbox-share-status` synchronously on click and route to the wizard
+   whenever `joined: false`, regardless of machine/drive state.
+
+**Invariant for any future Download-trigger path**: a Dropbox project must
+never enter `download_now` with `joined: false`. If you add a new way to
+fire a download (button, action, bulk operation, etc.), guard it with the
+same share-status check.
+
 ## .env.local footgun — `$` in values
 
 Next.js loads `.env.local` through dotenv-expand, which treats `$NAME` as a
