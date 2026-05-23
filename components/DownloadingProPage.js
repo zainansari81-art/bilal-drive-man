@@ -127,10 +127,38 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
     }
   };
 
-  const handleDownloadClick = (project) => {
+  const handleDownloadClick = async (project) => {
+    // Always show the wizard if machine or drive is missing.
     if (!project.assigned_machine || !project.target_drive) {
       setWizardProject(project);
       return;
+    }
+    // For Dropbox projects, we ALSO need to ensure the folder is actually in
+    // Rafay's Dropbox. If it isn't, the wizard's Add-to-Dropbox step is
+    // required even when machine + drive are already picked — otherwise the
+    // scanner gets a command for a folder it can't reach and fails downstream.
+    // This was the regression behind "click Download, nothing useful happens"
+    // for Dropbox projects with pre-filled machine/drive.
+    if (project.link_type === 'dropbox') {
+      try {
+        const res = await fetch(
+          `/api/dropbox-share-status?project_id=${encodeURIComponent(project.id)}&_=${Date.now()}`,
+          { credentials: 'include' }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          // joined=false → folder not in Rafay's Dropbox; wizard must run.
+          // Errors and unreadable shares also route through the wizard so
+          // the user sees the cause instead of a silent scanner failure.
+          if (!data.joined) {
+            setWizardProject(project);
+            return;
+          }
+        }
+      } catch (_) {
+        // Network error checking share status — fall through to fire the
+        // download; the scanner will surface any failure.
+      }
     }
     setMagicProjectName(project.couple_name || 'Project');
     handleAction(project.id, 'download_now');
