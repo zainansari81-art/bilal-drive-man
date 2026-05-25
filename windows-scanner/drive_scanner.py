@@ -16,6 +16,7 @@ import hashlib
 import logging
 import subprocess
 import threading
+import socket
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -43,6 +44,56 @@ except Exception as _e:
                 def stop(self, **kw): pass
             return _N()
     _live_progress = _LPShim()
+
+# ─── Single-instance lock ────────────────────────────────────────────────────
+#
+# v3.55.0: refuse to start if another scanner is already running on this PC.
+#
+# Why: even though the auto-update flow already calls sys.exit(0) before
+# launching the new .exe via shim, several other paths can produce a "two
+# scanners" state that we want to defend against:
+#
+#   - User double-clicks the .exe while one's already in the tray
+#   - Auto-start (setup_autostart.bat) + a manual launch
+#   - Auto-update shim race: if the old process somehow fails to exit
+#     before the shim's 3-second timer elapses, both can briefly coexist
+#   - User installs the .exe in a second location and launches that one
+#
+# Two scanners on one PC duplicates downloads, fights for the same config
+# file, and produces incoherent progress reports back to the portal.
+#
+# Strategy: bind a TCP listener on 127.0.0.1:49981 at startup. The OS gives
+# this atomic exclusivity — only one process can hold a given port. If our
+# bind fails, another scanner already owns the port; we exit immediately.
+# On exit (clean OR crash), the OS releases the port for the next launch.
+#
+# We pick the safer "new defers to old" pattern instead of "new kills old"
+# because the old process may be mid-write to a download (progress row,
+# Notion sync, etc.) — killing it could corrupt that state. The existing
+# zombie-defense check (see Auto-Update section below) cleans up any old
+# instance whose binary on disk has already been replaced.
+#
+# Port choice: 49981. Arbitrary, in the dynamic/private range (49152-65535)
+# so no chance of colliding with a registered service. Keep it 127.0.0.1
+# only — never expose to network. The socket is held in a module-level
+# variable for the lifetime of the process; do NOT close it anywhere.
+_singleton_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _singleton_lock.bind(('127.0.0.1', 49981))
+    # listen() is needed for the bind to be considered "in use" by other
+    # processes. Backlog of 1 is fine — we never actually accept().
+    _singleton_lock.listen(1)
+except OSError:
+    # Use print rather than logging because logging may not be configured
+    # yet at this early-startup point. The new scanner shouldn't make any
+    # noise — exiting silently is the right outcome.
+    print(
+        'Another BilalDriveMan scanner is already running on this PC '
+        '(127.0.0.1:49981 is bound). Exiting.',
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 
 # ─── Auto-Update ─────────────────────────────────────────────────────────────
 #
