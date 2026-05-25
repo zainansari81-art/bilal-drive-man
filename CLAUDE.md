@@ -502,7 +502,14 @@ Per Zain's consolidation directive: **mac-Claude (this Claude) owns all dev work
 
 Coordination via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` / `[win]` prefix.
 
-**Build cycle for scanner changes** (since mac can't build Windows .exe):
+**Build cycle for scanner changes (2026-05-25 update — prefer GitHub Actions):**
+The GitHub Actions workflow (`.github/workflows/build-windows-scanner.yml`)
+is now the canonical Windows-build path. Trigger via the Actions tab with
+an optional `target_version` input; the workflow bumps VERSION, runs
+PyInstaller on a windows-latest runner, and commits the .exe + .sha256
+sidecar back to main in one atomic commit. No Windows PC needed.
+
+Legacy path (when GitHub Actions is unavailable, e.g. runner outage):
 1. Mac commits source change to a `scanner-X.Y.Z-<feature>` branch (NEVER push directly to main without paired .exe)
 2. Win pulls branch, runs `./build.sh` (or `ALLOW_DIRTY=1 ./build.sh`), commits + pushes new `.exe` + `.sha256` to same branch
 3. Mac merges branch → main with `--no-ff`, deletes branch from origin
@@ -531,3 +538,179 @@ Coordination via Slack `#claude-coord` (channel ID `C0AUX615GQK`) using `[mac]` 
 - **No time/random values in SSR render.** `new Date()`/`Date.now()`/`Math.random()` during render → hydration mismatch. Start state `null`, set in `useEffect`.
 - **`.env.local` `$`-escaping.** Escape every `$` as `\$` in `.env.local` values (bcrypt hashes etc.) — dotenv-expand mangles unescaped `$`.
 - **Dropbox shared-folder "(1)" suffix.** When a folder is re-added to Dropbox and one of that name already exists, Dropbox appends ` (1)`/` (2)`. `dropbox-share-status.js` detection probes the base name + numbered variants; the operator-facing fix is to rename the folder to drop the suffix so the scanner's exact-path `cloud_folder_path` resolves.
+
+## Multi-Dropbox-account routing (2026-05-24, v3.54.0+)
+
+Bilal has more than one Dropbox account in play. PC1 (DOWNLOADING-PRO) uses
+the original BilalDriveMan app on Bilal's main Dropbox. PC2 (DOWNLOADINGPC2)
+uses a second Dropbox app on a different account (`filmsbyrafay@gmail.com`).
+The routing has to live on BOTH the portal side (so share-status/add-to-Dropbox
+hit the right account) AND the scanner side (so it pulls the right creds).
+
+**Architecture — single source of truth: `lib/dropboxAccount.js`.**
+`getDropboxAccountForMachine(machineName)` is the only thing that decides
+which account a machine uses. Add a new machine to the `ACCOUNT_2_MACHINES`
+const inside it; no other code changes needed. **Never duplicate this
+mapping anywhere else** — every consumer (share-status, scanner-credentials,
+future flows) must go through this helper.
+
+Env vars on Vercel (per-account, additive — don't touch the account-1 vars
+that already work):
+- Account 1 (default): `DROPBOX_REFRESH_TOKEN`, `DROPBOX_APP_KEY`, `DROPBOX_APP_SECRET`
+- Account 2: `DROPBOX_REFRESH_TOKEN_2`, `DROPBOX_APP_KEY_2`, `DROPBOX_APP_SECRET_2`, `DROPBOX_ACCOUNT_2_EMAIL`
+
+**Scanner-side wiring:** `fetch_credentials_from_portal` in
+`windows-scanner/drive_scanner.py` passes `?machine=<get_machine_name()>` to
+`/api/scanner-credentials`. Old scanners that don't send the param still get
+account-#1 creds — back-compat preserved. Bumping a machine's account
+without a scanner rebuild requires editing PC's local `config.json` manually
+and disabling the auto-fetch; far easier to just let the GitHub Actions
+build ship a new .exe.
+
+**Portal-side wizard hint:** `DownloadWizardModal` shows a blue banner on the
+Add-to-Dropbox step when the project routes to account #2, telling the
+operator which Dropbox login to use in the popup. Account #1 doesn't render
+the banner (avoid noise on the common path). Both `dropbox-share-status` and
+`scanner-credentials` return `dropbox_account_email` + `dropbox_account_index`
+so the UI can render the banner without re-querying.
+
+**Token cache must be keyed by `account_index`.** A single shared
+`cachedAccessToken` will get clobbered when alternating PC1 and PC2 lookups;
+use a `Map` keyed by account index so each account keeps its own cached
+bearer token.
+
+**Local Dropbox sign-in must match the OAuth account.** If PC2's local
+Dropbox app is signed into the wrong email, the scanner adds the share to
+account #2 in the cloud but the folder never appears at `dropbox_path`
+locally (because that local folder syncs a *different* account). Operator
+must verify: right-click Dropbox tray icon → confirm email matches
+`DROPBOX_ACCOUNT_2_EMAIL`.
+
+## GitHub Actions Windows scanner builder (2026-05-25)
+
+`.github/workflows/build-windows-scanner.yml` builds the Windows .exe on
+`windows-latest` runners on `workflow_dispatch`. Bumps `VERSION` in source,
+runs PyInstaller (mirrors `build.bat`), computes SHA256 sidecar, commits
+all three (`drive_scanner.py` + `dist/.exe` + `dist/.exe.sha256`) in **one
+atomic commit** so the auto-updater never sees a VERSION-without-exe state
+(the zombie-defense self-kill trap). Replaces the old "spin up a Windows PC,
+build manually, push" dance. **Manual trigger only** — Zain decides when to
+ship. Optional `target_version` input pins an exact semver; blank
+auto-bumps the patch.
+
+**Pushing the workflow file itself requires `workflow` OAuth scope.** Plain
+`gh auth login` or git-https without `workflow` will reject the push with
+"refusing to allow an OAuth App to create or update workflow ... without
+workflow scope". Fix: `gh auth refresh -s workflow`. Or create the file via
+the GitHub web UI which doesn't need that scope.
+
+**Clipboard paste mojibake (operator note).** Pasting UTF-8 with em-dashes
+into GitHub's web editor via macOS clipboard sometimes corrupts characters
+(`—` → `‚Äî`). Harmless in `Write-Host` strings but ugly in comments.
+Don't bother fixing — it'll get cleaned up next time the file is edited.
+
+## Single-instance lock — TCP port 49981 (2026-05-25, v3.55.0+)
+
+Right after the singleton lock shipped, PC1 ran into a **zombie auto-update
+loop** that accumulated 40+ scanner processes in the tray. Root cause: the
+v3.51.0 auto-update shim downloads `.exe.new`, sleeps 3s, then `move /Y` to
+overwrite the running .exe. If PyInstaller still holds the file lock when
+the shim fires (very common — the bootloader keeps it open for as long as
+the Python child runs), the move silently fails, then `start "" exe`
+launches the *old* .exe again. New .exe starts, sees version mismatch,
+writes shim, exits, shim launches old again → infinite loop, +1 tray icon
+per cycle, ~every 5 min.
+
+**Singleton lock fix:** at the top of `drive_scanner.py` (before any other
+work), bind a TCP listener on `127.0.0.1:49981`. The OS gives atomic
+exclusivity — if our bind fails, another scanner already owns the port, so
+we exit silently. On any exit (clean or crash) the OS releases the port for
+the next launch. Pure stdlib, no `pywin32`, no `ctypes` mutex needed.
+Survives any failure mode that doesn't crash the OS.
+
+Picked the "new defers to old" pattern over "new kills old" because the
+running scanner may be mid-write to a download progress row; killing it
+risks state corruption. The existing zombie-defense already handles
+already-replaced-binary cleanup.
+
+**Acid test for future regressions:**
+```
+Start-Process <exe>; Start-Sleep -Seconds 10
+Get-Process BilalDriveMan-Scanner | Select Id, StartTime
+```
+Should yield the same PID pair (bootloader + child) you had before
+launching. If new PIDs appear, the lock is broken.
+
+**PyInstaller --onefile produces a parent + child process pair.** Bootloader
+parent extracts the bundled Python runtime, then forks the actual Python
+code as a child. Both show up under `Get-Process BilalDriveMan-Scanner` —
+two PIDs is normal for ONE scanner instance. The singleton lock lives in
+the Python code, so only the child binds the port. Don't panic when you see
+two PIDs from a clean launch.
+
+## Recovery — zombie scanner loop on Windows (operator runbook, 2026-05-25)
+
+Visible signature: tray full of stacked tray icons, `taskkill` fails with
+"Access is denied" from non-admin PowerShell, `BilalDriveMan-Scanner-update.bat`
+windows pop up every few seconds.
+
+Recovery sequence (admin PowerShell required for everything except step 1):
+
+1. **Disconnect PC's internet first** — kills the auto-update loop at the
+   source. Without internet the scanner can't fetch GitHub VERSION, so
+   no new shims get written.
+2. Loop-kill until clean (PowerShell as Admin):
+   ```powershell
+   while ($true) {
+       Stop-Process -Name BilalDriveMan-Scanner -Force -ErrorAction SilentlyContinue
+       Get-Process cmd -ErrorAction SilentlyContinue | Where-Object {
+           $_.MainWindowTitle -like "*BilalDriveMan*"
+       } | Stop-Process -Force -ErrorAction SilentlyContinue
+       $bats = Get-ChildItem -Path C:\ -Filter "BilalDriveMan-Scanner-update.bat" -Recurse -ErrorAction SilentlyContinue
+       if ($bats) { $bats | Remove-Item -Force -ErrorAction SilentlyContinue }
+       $procs = Get-Process BilalDriveMan-Scanner -ErrorAction SilentlyContinue
+       if (-not $procs -and -not $bats) { Write-Host "ALL CLEAR"; break }
+       Start-Sleep -Milliseconds 300
+   }
+   ```
+3. **Verify the on-disk .exe matches remote v3.55.0+ SHA** before reconnecting
+   internet. If the .exe is still the old version (likely — the file lock
+   may have blocked every shim), `Invoke-WebRequest` the new .exe to a
+   `.new` sidecar, verify SHA against the GitHub raw `.sha256` sidecar,
+   then `Move-Item` to overwrite. Only THEN reconnect internet and launch.
+
+The v3.55.0 singleton lock makes this whole class of problem impossible
+going forward, but the runbook stays here because old PCs running 3.51.0
+will hit it during their first upgrade.
+
+## Scanner config.json gotchas (2026-05-25)
+
+Hit two distinct failure modes when editing `%APPDATA%\BilalDriveMan\config.json`
+from PowerShell:
+
+1. **`Set-Content -Encoding UTF8` writes a BOM** (bytes `EF BB BF` at the
+   start of the file). Python's `json.load` may or may not handle the BOM
+   depending on stdlib version; if it errors, `load_config()`'s
+   `except: pass` falls through to `save_config(DEFAULT_CONFIG)` which
+   **wipes every field back to defaults**. Use
+   `[System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))`
+   to write without BOM. Verify with
+   `[System.IO.File]::ReadAllBytes($path)[0..2]` — first 3 bytes should NOT
+   be `239 187 191`.
+2. **Stop-Process doesn't guarantee the child died.** If you edit
+   `config.json` while a scanner process is still alive, the scanner's next
+   `save_config()` (e.g. via `fetch_credentials_from_portal`) overwrites
+   your edits with its in-memory snapshot. Always:
+   - `Stop-Process -Force` first
+   - `Start-Sleep 5`
+   - `Get-Process BilalDriveMan-Scanner` — must return nothing
+   - THEN edit config, verify, restart.
+
+## Live machines widget (2026-05-25)
+
+`components/LiveMachines.js` at the top of the Dashboard self-polls
+`/api/devices` every 5s, shows every machine with `isOnline=true` and
+`lastSeen ≤ 60s`, plus pill chips for each connected drive. Lets Zain
+glance at what's actually live without scrolling to the Machines page.
+Independent of the page's 5-min refresh cycle so it stays fresh between
+manual refreshes.
