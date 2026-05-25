@@ -1,0 +1,156 @@
+name: Build Windows scanner
+
+# Manual-trigger only. Zain decides when to ship a new scanner build ‚Äî
+# avoids accidentally triggering the zombie-defense kill loop on PC1 from
+# a stray commit. To run: Actions tab ‚Üí "Build Windows scanner" ‚Üí Run
+# workflow ‚Üí optionally enter a target version (defaults to bumping the
+# patch component of the current VERSION).
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Version to bake into the .exe (e.g. 3.54.0). Leave blank to auto-bump the patch component.'
+        required: false
+        default: ''
+
+# We commit back to the same branch the workflow ran on, so we need write
+# permission on contents. No other scopes needed.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows-scanner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history + a real (non-detached) ref so we can push
+          # the resulting commit back to main.
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve target version
+        id: version
+        shell: pwsh
+        run: |
+          # Pull the current VERSION constant out of drive_scanner.py with a
+          # regex that matches both single + double quotes. If the user gave
+          # an explicit target_version, use that verbatim; otherwise bump
+          # the patch component (e.g. 3.51.0 ‚Üí 3.51.1).
+          $source = Get-Content drive_scanner.py -Raw
+          if ($source -match "VERSION\s*=\s*['""]([^'""]+)['""]") {
+            $current = $matches[1]
+          } else {
+            Write-Error "Could not find VERSION constant in drive_scanner.py"
+            exit 1
+          }
+          Write-Host "Current VERSION: $current"
+
+          $input = "${{ inputs.target_version }}".Trim()
+          if ($input) {
+            $target = $input
+            Write-Host "Using explicit target version: $target"
+          } else {
+            $parts = $current -split '\.'
+            if ($parts.Count -ne 3) {
+              Write-Error "Current VERSION '$current' is not a 3-part semver; pass an explicit target_version."
+              exit 1
+            }
+            $parts[2] = [int]$parts[2] + 1
+            $target = $parts -join '.'
+            Write-Host "Auto-bumped to: $target"
+          }
+          if ($target -eq $current) {
+            Write-Error "Target version equals current ($target) ‚Äî nothing to ship."
+            exit 1
+          }
+          "current=$current"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "target=$target"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Bump VERSION in source
+        shell: pwsh
+        run: |
+          # Replace the first VERSION = '...' assignment in drive_scanner.py,
+          # preserving the trailing comment (which carries the changelog).
+          # We don't touch the comment ‚Äî Zain edits that by hand when
+          # something noteworthy changes; the workflow only flips the
+          # version string.
+          $path = "drive_scanner.py"
+          $target = "${{ steps.version.outputs.target }}"
+          $content = Get-Content $path -Raw
+          $pattern = "VERSION\s*=\s*'([^']+)'"
+          if ($content -notmatch $pattern) {
+            Write-Error "VERSION line not found"; exit 1
+          }
+          $new = [regex]::Replace($content, $pattern, "VERSION = '$target'", 1)
+          # ASCII encoding without BOM keeps the file byte-identical to
+          # what a human edit would produce ‚Äî PyInstaller doesn't care but
+          # diff noise is annoying.
+          [System.IO.File]::WriteAllText((Resolve-Path $path), $new)
+          Write-Host "Bumped VERSION ‚Üí $target"
+
+      - name: Build .exe with PyInstaller
+        shell: pwsh
+        run: |
+          # Mirrors windows-scanner/build.bat. --windowed = no console,
+          # --onefile = single .exe (auto_update assumes that shape).
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "BilalDriveMan-Scanner" `
+            --hidden-import pystray `
+            --hidden-import PIL `
+            --hidden-import pystray._win32 `
+            drive_scanner.py
+
+      - name: Compute SHA256 sidecar
+        shell: pwsh
+        run: |
+          # The auto-updater fetches this file and compares it against the
+          # downloaded .exe before swapping ‚Äî must be present in dist/ next
+          # to the .exe and contain the lowercase hex digest on a single
+          # line. The trailing newline is harmless (auto_update strips
+          # whitespace).
+          $hash = (Get-FileHash "dist/BilalDriveMan-Scanner.exe" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/BilalDriveMan-Scanner.exe.sha256" -Value $hash -NoNewline
+          Write-Host "SHA256: $hash"
+
+      - name: Commit and push
+        shell: pwsh
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # We're in windows-scanner/; the files we touched live here too.
+          git add drive_scanner.py dist/BilalDriveMan-Scanner.exe dist/BilalDriveMan-Scanner.exe.sha256
+
+          $target = "${{ steps.version.outputs.target }}"
+          $current = "${{ steps.version.outputs.current }}"
+
+          # If nothing changed (e.g. someone re-ran the workflow with the
+          # same target as already committed), don't make an empty commit.
+          $diff = git diff --cached --name-only
+          if (-not $diff) {
+            Write-Host "No changes to commit ‚Äî workflow likely re-ran on a no-op input."
+            exit 0
+          }
+
+          git commit -m "Build Windows scanner v$target`n`nAuto-built by .github/workflows/build-windows-scanner.yml.`nBumps source VERSION $current ‚Üí $target and ships the matching .exe + SHA sidecar in one atomic commit so the scanner auto-updater can self-replace without zombie-defense triggering.`n`nCo-Authored-By: GitHub Actions <noreply@github.com>"
+
+          # Push back to whichever branch dispatched the workflow.
+          git push origin HEAD:${{ github.ref_name }}
+          Write-Host "Pushed scanner build v$target to ${{ github.ref_name }}"
