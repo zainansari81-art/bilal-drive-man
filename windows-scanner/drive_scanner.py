@@ -4,7 +4,7 @@ Runs in system tray, auto-detects external drives,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.51.0'  # 2026-05-04 reverted from 3.53.0 — main had source bumped to 3.53.0 (live-progress) but no .exe was ever rebuilt, so the running 3.51.0 .exe hit zombie defense (SHA matches remote, VERSION mismatches) and self-killed every ~5min. live_progress code stays in source; bump back to 3.53.0 only AFTER a paired .exe rebuild lands in dist/. 2026-05-24: source now includes multi-Dropbox-account routing too (fetch_credentials_from_portal passes ?machine=); keep VERSION at 3.51.0 until next paired .exe rebuild — then bump to 3.54.0 in the same commit as dist/ update.
+VERSION = '3.54.0'  # 2026-05-04 reverted from 3.53.0 — main had source bumped to 3.53.0 (live-progress) but no .exe was ever rebuilt, so the running 3.51.0 .exe hit zombie defense (SHA matches remote, VERSION mismatches) and self-killed every ~5min. live_progress code stays in source; bump back to 3.53.0 only AFTER a paired .exe rebuild lands in dist/. 2026-05-24: source now includes multi-Dropbox-account routing too (fetch_credentials_from_portal passes ?machine=); keep VERSION at 3.51.0 until next paired .exe rebuild — then bump to 3.54.0 in the same commit as dist/ update.
 
 import os
 import sys
