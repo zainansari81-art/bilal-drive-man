@@ -46,6 +46,11 @@ export default function DownloadWizardModal({
   const [joinStatus, setJoinStatus] = useState('checking');
   const [joinFolderName, setJoinFolderName] = useState(null);
   const [joinErrorText, setJoinErrorText] = useState(null);
+  // Which Dropbox account this project routes to. Surfaced as a banner on
+  // the Add-to-Dropbox step so Zain knows which browser/Dropbox login the
+  // popup needs (PC2 uses a different Dropbox account than PC1).
+  const [dropboxAccountEmail, setDropboxAccountEmail] = useState(null);
+  const [dropboxAccountIndex, setDropboxAccountIndex] = useState(null);
   // Tracks whether the user has clicked "Open Dropbox" at least once, so we
   // can show different copy and a re-open option on subsequent polls.
   const [popupOpened, setPopupOpened] = useState(false);
@@ -142,6 +147,15 @@ export default function DownloadWizardModal({
         return null;
       }
       const data = await res.json();
+      // Cache the Dropbox account routing info so the join-step banner can
+      // tell Zain which Dropbox login to use. Only relevant for Dropbox
+      // projects — Google Drive / WeTransfer leave these null.
+      if (data.dropbox_account_email !== undefined) {
+        setDropboxAccountEmail(data.dropbox_account_email || null);
+      }
+      if (data.dropbox_account_index !== undefined) {
+        setDropboxAccountIndex(data.dropbox_account_index || null);
+      }
       if (data.link_type === 'other') {
         setJoinStatus('skip');
         return data;
@@ -336,6 +350,32 @@ export default function DownloadWizardModal({
             )}
             {joinStatus === 'needed' && (
               <>
+                {/* Account-2 banner — only shows when this project routes
+                    to the secondary Dropbox account. Tells Zain which
+                    Dropbox login the popup expects. We skip it for the
+                    default account #1 since that's the original behavior
+                    and adding banner noise on every download would be
+                    annoying. */}
+                {dropboxAccountIndex && dropboxAccountIndex !== 1 && dropboxAccountEmail && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    marginTop: 16,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    background: '#eef4ff',
+                    border: '1px solid #b9d0ff',
+                  }}>
+                    <span style={{ fontSize: 16, lineHeight: '20px' }}>{'⚠️'}</span>
+                    <span style={{ fontSize: 13, color: '#1a3a7a', lineHeight: '20px' }}>
+                      This project uses Dropbox account #{dropboxAccountIndex}.
+                      Make sure you're signed into <strong>{dropboxAccountEmail}</strong> in
+                      this browser before clicking "Add to my Dropbox" — otherwise the
+                      folder will get added to the wrong account.
+                    </span>
+                  </div>
+                )}
                 <p className="delete-modal-desc" style={{ textAlign: 'left', marginTop: 16, marginBottom: 8 }}>
                   {joinFolderName ? (
                     <>

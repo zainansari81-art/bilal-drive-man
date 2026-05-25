@@ -1,31 +1,28 @@
 import { supabaseFetch } from '../../lib/supabase';
 import { requireAuth } from '../../lib/auth';
-
-// Dropbox OAuth credentials (same BilalDriveMan app the scanner uses).
-// In Vercel: DROPBOX_REFRESH_TOKEN, DROPBOX_APP_KEY, DROPBOX_APP_SECRET.
-const DROPBOX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
-const DROPBOX_APP_KEY = process.env.DROPBOX_APP_KEY;
-const DROPBOX_APP_SECRET = process.env.DROPBOX_APP_SECRET;
+import { getDropboxAccountForMachine } from '../../lib/dropboxAccount';
 
 // In-memory token cache. The Dropbox access_token is good for ~4h; we cache
 // for 3h to leave a safety margin. This survives across requests within a
 // single Vercel function instance (cold starts will refresh).
-let cachedAccessToken = null;
-let cachedAccessTokenExpiresAt = 0;
+//
+// Keyed by account_index so account #1 and account #2 don't trample each
+// other's tokens — checking a PC1 share right after a PC2 share would
+// otherwise mint a fresh token every time.
+const tokenCache = new Map();
 
-async function getDropboxAccessToken() {
+async function getDropboxAccessToken(account) {
+  if (!account) throw new Error('Dropbox OAuth env vars not configured');
   const now = Date.now();
-  if (cachedAccessToken && now < cachedAccessTokenExpiresAt) {
-    return cachedAccessToken;
-  }
-  if (!DROPBOX_REFRESH_TOKEN || !DROPBOX_APP_KEY || !DROPBOX_APP_SECRET) {
-    throw new Error('Dropbox OAuth env vars not configured');
+  const cached = tokenCache.get(account.account_index);
+  if (cached && now < cached.expiresAt) {
+    return cached.token;
   }
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
-    refresh_token: DROPBOX_REFRESH_TOKEN,
-    client_id: DROPBOX_APP_KEY,
-    client_secret: DROPBOX_APP_SECRET,
+    refresh_token: account.refresh_token,
+    client_id: account.app_key,
+    client_secret: account.app_secret,
   });
   const resp = await fetch('https://api.dropbox.com/oauth2/token', {
     method: 'POST',
@@ -37,10 +34,10 @@ async function getDropboxAccessToken() {
     throw new Error(`Dropbox token refresh failed (${resp.status}): ${errText.slice(0, 200)}`);
   }
   const data = await resp.json();
-  cachedAccessToken = data.access_token;
   // expires_in is seconds; cache for 3h to be safe.
-  cachedAccessTokenExpiresAt = now + Math.min((data.expires_in || 14400) - 300, 3 * 60 * 60) * 1000;
-  return cachedAccessToken;
+  const expiresAt = now + Math.min((data.expires_in || 14400) - 300, 3 * 60 * 60) * 1000;
+  tokenCache.set(account.account_index, { token: data.access_token, expiresAt });
+  return data.access_token;
 }
 
 /**
@@ -73,7 +70,7 @@ export default requireAuth(async function handler(req, res) {
 
   try {
     const projects = await supabaseFetch(
-      `download_projects?id=eq.${projectId}&select=download_link,link_type`
+      `download_projects?id=eq.${projectId}&select=download_link,link_type,assigned_machine`
     );
     const project = projects && projects[0];
     if (!project) {
@@ -91,9 +88,15 @@ export default requireAuth(async function handler(req, res) {
       });
     }
 
+    // Route Dropbox API calls to the account that matches this project's
+    // assigned machine. PC2 uses account #2; everything else stays on the
+    // original (account #1). If assigned_machine isn't set yet (e.g. project
+    // was just created), default to account #1 — the wizard will recheck once
+    // the user picks a machine.
+    const dropboxAccount = getDropboxAccountForMachine(project.assigned_machine);
     let accessToken;
     try {
-      accessToken = await getDropboxAccessToken();
+      accessToken = await getDropboxAccessToken(dropboxAccount);
     } catch (tokenErr) {
       console.error('Dropbox token error:', tokenErr.message);
       return res.status(500).json({ error: 'Dropbox auth not configured on server' });
@@ -118,6 +121,8 @@ export default requireAuth(async function handler(req, res) {
         shared_folder_id: null,
         folder_name: null,
         link_type: 'dropbox',
+        dropbox_account_email: dropboxAccount.email,
+        dropbox_account_index: dropboxAccount.account_index,
         error: 'Could not read share metadata — check the link is valid and reachable',
       });
     }
@@ -134,6 +139,8 @@ export default requireAuth(async function handler(req, res) {
         shared_folder_id: null,
         folder_name: folderName,
         link_type: 'dropbox',
+        dropbox_account_email: dropboxAccount.email,
+        dropbox_account_index: dropboxAccount.account_index,
         error: null,
       });
     }
@@ -184,6 +191,8 @@ export default requireAuth(async function handler(req, res) {
           shared_folder_id: sharedFolderId,
           folder_name: folderName,
           link_type: 'dropbox',
+          dropbox_account_email: dropboxAccount.email,
+          dropbox_account_index: dropboxAccount.account_index,
           error: null,
         });
       }
@@ -199,6 +208,8 @@ export default requireAuth(async function handler(req, res) {
         shared_folder_id: null,
         folder_name: null,
         link_type: 'dropbox',
+        dropbox_account_email: dropboxAccount.email,
+        dropbox_account_index: dropboxAccount.account_index,
         error: null,
       });
     }
@@ -247,6 +258,8 @@ export default requireAuth(async function handler(req, res) {
       // find_cloud_folder substring match resolves to the right local folder.
       folder_name: matchedFolderName,
       link_type: 'dropbox',
+      dropbox_account_email: dropboxAccount.email,
+      dropbox_account_index: dropboxAccount.account_index,
       error: null,
     });
   } catch (err) {

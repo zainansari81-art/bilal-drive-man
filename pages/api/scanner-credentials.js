@@ -1,4 +1,5 @@
 import { requireApiKey } from '../../lib/auth';
+import { getDropboxAccountForMachine } from '../../lib/dropboxAccount';
 
 /**
  * GET /api/scanner-credentials[?provider=dropbox|google_drive]
@@ -53,16 +54,22 @@ export default requireApiKey(async function handler(req, res) {
 
   // Build the response. Each provider is null if any of its three keys is
   // missing — that's a clearer signal to the scanner than partial creds.
-  const dropbox =
-    process.env.DROPBOX_REFRESH_TOKEN &&
-    process.env.DROPBOX_APP_KEY &&
-    process.env.DROPBOX_APP_SECRET
-      ? {
-          refresh_token: process.env.DROPBOX_REFRESH_TOKEN,
-          app_key: process.env.DROPBOX_APP_KEY,
-          app_secret: process.env.DROPBOX_APP_SECRET,
-        }
-      : null;
+  //
+  // Dropbox: route by machine. The scanner passes `?machine=<NAME>` so PC2
+  // gets account #2 creds (filmsbyrafay@gmail.com) and PC1 / everything else
+  // gets account #1. Scanners that haven't been updated to send the param
+  // get account #1 (current behavior preserved).
+  const machineName = (req.query.machine || '').toString().trim();
+  const dbxAccount = getDropboxAccountForMachine(machineName);
+  const dropbox = dbxAccount
+    ? {
+        refresh_token: dbxAccount.refresh_token,
+        app_key: dbxAccount.app_key,
+        app_secret: dbxAccount.app_secret,
+        account_email: dbxAccount.email,
+        account_index: dbxAccount.account_index,
+      }
+    : null;
 
   const google_drive =
     process.env.GDRIVE_REFRESH_TOKEN &&
