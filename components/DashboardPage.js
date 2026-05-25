@@ -1,5 +1,6 @@
 import { LED, Gauge, Fuel, Runway, Src, SectionHead, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
 import CountUp from './CountUp';
+import LiveMachines from './LiveMachines';
 
 const EVENT_CONF = {
   drive_connected:    { tag: 'Drive on',    cls: 'signal' },
@@ -36,6 +37,9 @@ export default function DashboardPage({ drives, activities, onNavigate }) {
 
   return (
     <div className="fade-in">
+      {/* ── LIVE NOW (self-polls /api/devices every 5s) ── */}
+      <LiveMachines />
+
       {/* ── HERO ── */}
       <div className="hero-block">
         <div className="hero-stat">
