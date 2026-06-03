@@ -761,6 +761,118 @@ def check_folder_offline_status(folder_path):
     return is_ready, total_files, offline_files, total_size
 
 
+def get_ondisk_size(filepath):
+    """Bytes physically allocated on local disk for a file.
+
+    For a Dropbox/OneDrive cloud-only placeholder this is ~0; for a fully
+    hydrated (downloaded) file it equals the logical size. Used only for
+    verification logging — NOT to gate completion (the read-through below is
+    the authoritative signal). Returns None if it can't be read.
+    """
+    try:
+        high = ctypes.c_ulong(0)
+        low = ctypes.windll.kernel32.GetCompressedFileSizeW(
+            ctypes.c_wchar_p(filepath), ctypes.byref(high)
+        )
+        if low == 0xFFFFFFFF and ctypes.windll.kernel32.GetLastError() != 0:
+            return None
+        return (high.value << 32) + low
+    except Exception:
+        return None
+
+
+def force_full_download(config, project_id, folder_path, cmd_id, live):
+    """Force every file in a cloud folder to fully download to local disk.
+
+    SCOPED to the no-target-drive path. The copy-to-drive path is intentionally
+    NOT changed: there, copying each file reads it through, which already
+    hydrates it. On a download-only job nothing reads the files, so the modern
+    Dropbox Cloud Files API leaves them as online-only placeholders even after a
+    pin is *requested* — and the placeholder attribute clears on pin-request,
+    not on byte arrival, which is why the old code falsely reported "completed"
+    with bytes that were never downloaded.
+
+    Here we hydrate explicitly by reading every file end-to-end (the read
+    streams the bytes down from the cloud and persists them locally). A
+    successful full read is the authoritative proof the file is on disk.
+    Reports progress as it goes. Returns total bytes read.
+    """
+    files = []
+    logical_total = 0
+    for dirpath, _, names in os.walk(folder_path):
+        for n in names:
+            fp = os.path.join(dirpath, n)
+            files.append(fp)
+            try:
+                logical_total += os.path.getsize(fp)
+            except OSError:
+                pass
+
+    logging.info(
+        f"Force-download: hydrating {len(files)} files "
+        f"(~{format_size(logical_total)}) in {folder_path}"
+    )
+
+    CHUNK = 8 * 1024 * 1024
+
+    def read_through(fp):
+        """Read a whole file in chunks, forcing cloud hydration. Returns bytes."""
+        got = 0
+        with open(fp, 'rb') as fh:
+            while True:
+                _check_cancelled(project_id)
+                chunk = fh.read(CHUNK)
+                if not chunk:
+                    break
+                got += len(chunk)
+        return got
+
+    read_bytes = 0
+    last_report = 0
+    failed = []
+    for fp in files:
+        _check_cancelled(project_id)
+        try:
+            read_bytes += read_through(fp)
+        except (OSError, PermissionError) as e:
+            logging.warning(f"Hydration read failed for {fp}: {e}")
+            failed.append(fp)
+        if read_bytes - last_report >= 256 * 1024 * 1024:
+            last_report = read_bytes
+            api_request(config, 'download-progress', {
+                'project_id': project_id,
+                'status': 'downloading',
+                'phase': 'syncing',
+                'progress_bytes': read_bytes,
+            })
+
+    # One retry pass for files that failed to hydrate the first time (Dropbox
+    # can be transiently slow to serve a placeholder).
+    if failed:
+        logging.info(f"Force-download: retrying {len(failed)} files")
+        still_failed = []
+        for fp in failed:
+            _check_cancelled(project_id)
+            try:
+                read_through(fp)
+            except (OSError, PermissionError) as e:
+                logging.warning(f"Hydration retry failed for {fp}: {e}")
+                still_failed.append(fp)
+        failed = still_failed
+
+    if failed:
+        logging.warning(
+            f"Force-download: {len(failed)}/{len(files)} files could not be "
+            f"hydrated — they remain online-only."
+        )
+    else:
+        logging.info(
+            f"Force-download complete: all {len(files)} files on disk "
+            f"({format_size(read_bytes)})."
+        )
+    return read_bytes
+
+
 def find_cloud_folder(config, link_type, couple_name):
     """
     Find the cloud sync folder for a project based on its link type.
@@ -3055,11 +3167,21 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
             except Exception:
                 pass
     else:
-        # No target drive specified — just mark as ready
+        # No target drive — the user wants the project fully downloaded to THIS
+        # machine ("download only, copy to a drive manually later"). The
+        # readiness check above only confirms the placeholder flag cleared (a
+        # pin was *requested*) — NOT that the bytes physically arrived. On the
+        # modern Dropbox Cloud Files API that leaves files as online-only
+        # placeholders, so we force a real, full download here and report the
+        # bytes that actually landed on disk. (Scoped to the no-drive path; the
+        # copy-to-drive branch above is unchanged — copying hydrates as it reads.)
+        downloaded_bytes = force_full_download(
+            config, project_id, cloud_folder, cmd_id, live
+        )
         api_request(config, 'download-progress', {
             'project_id': project_id,
             'status': 'completed',
-            'progress_bytes': total_size,
+            'progress_bytes': downloaded_bytes,
         })
         api_patch(config, 'download-commands', {
             'id': cmd_id, 'status': 'completed'
@@ -3068,7 +3190,10 @@ def handle_start_download(config, project_id, payload, known_drives, cmd_id):
             live.stop(success=True)
         except Exception:
             pass
-        logging.info(f"Files offline for {couple_name} but no target drive specified")
+        logging.info(
+            f"Fully downloaded {couple_name} to this PC "
+            f"({format_size(downloaded_bytes)}); no target drive."
+        )
 
 
 def handle_check_cloud_status(config, project_id, payload, cmd_id):
