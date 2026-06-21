@@ -17,6 +17,8 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
   const [expanded, setExpanded] = useState(null);
   const [wizardProject, setWizardProject] = useState(null);
   const [magicProjectName, setMagicProjectName] = useState(null);
+  // project_id → location rows array (keyed by project UUID)
+  const [locationsByProject, setLocationsByProject] = useState({});
 
   const connectedDrives = (drives || []).filter(d => d.connected);
 
@@ -54,6 +56,19 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
     }
   }, [onProjectsChange]);
 
+  // Fetch locations for a single project and merge into state.
+  // Called on mount (for all visible projects) and after a Locate action.
+  const fetchLocationsForProject = useCallback(async (projectId) => {
+    try {
+      const res = await fetch(`/api/project-locations?project_id=${encodeURIComponent(projectId)}`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      setLocationsByProject(prev => ({ ...prev, [projectId]: rows || [] }));
+    } catch (_) {
+      // Non-fatal — locations panel just stays empty
+    }
+  }, []);
+
   const autoSync = useCallback(async () => {
     try {
       const res = await fetch('/api/notion-sync', { method: 'POST' });
@@ -84,6 +99,16 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
       clearInterval(cloudInterval);
     };
   }, [fetchProjects, autoSync, fetchMachines, fetchCloudAccounts]);
+
+  // Fetch locations once per visible project when the project list first populates.
+  // Only fires on mount (projects goes from [] to a real list) — uses a state guard
+  // so we don't re-fetch every 10s poll.
+  const [locationsFetched, setLocationsFetched] = useState(false);
+  useEffect(() => {
+    if (projects.length === 0 || locationsFetched) return;
+    setLocationsFetched(true);
+    projects.forEach(p => fetchLocationsForProject(p.id));
+  }, [projects, locationsFetched, fetchLocationsForProject]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -287,6 +312,15 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
               connectedDrives={connectedDrives}
               machines={machines}
               fetchProjects={fetchProjects}
+              locations={locationsByProject[p.id] || null}
+              onLocate={async (machineName) => {
+                await handleAction(p.id, 'locate', { machine_name: machineName });
+                // Refresh locations after a short delay to let the command
+                // propagate — the FDM will write back via POST /api/project-locations.
+                // We do an optimistic "searching…" state via null → [] distinction.
+                setLocationsByProject(prev => ({ ...prev, [p.id]: [] }));
+              }}
+              onRefreshLocations={() => fetchLocationsForProject(p.id)}
             />
           ))}
         </div>
@@ -315,7 +349,7 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
 
 // ── Full Transfer Lane ──────────────────────────────────────────────────────
 
-function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, connectedDrives, machines, fetchProjects }) {
+function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, connectedDrives, machines, fetchProjects, locations, onLocate, onRefreshLocations }) {
   const status = p.download_status || 'idle';
   const phase = p.download_phase;
   const failed = status === 'failed';
@@ -415,6 +449,20 @@ function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, c
         </div>
       )}
 
+      {/* Locations panel — shown when there are known locations or the project
+          has been located and came back empty */}
+      {locations !== null && (
+        <div className="dp-locations">
+          {locations.length === 0 ? (
+            <span className="dp-locations-empty">No folders found on connected accounts</span>
+          ) : (
+            locations.map((loc, i) => (
+              <LocationRow key={i} loc={loc} />
+            ))
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       <div className="lane-actions">
         {status === 'idle' && (
@@ -459,6 +507,12 @@ function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, c
         <button className="btn ghost" onClick={onToggle}>
           {expanded ? 'Hide details' : 'Show details'}
         </button>
+        <LocateButton
+          project={p}
+          machines={machines}
+          onLocate={onLocate}
+          onRefreshLocations={onRefreshLocations}
+        />
       </div>
 
       {/* Expanded detail */}
@@ -582,6 +636,69 @@ function FullLane({ project: p, expanded, onToggle, onAction, onDownloadClick, c
         </div>
       )}
     </div>
+  );
+}
+
+// ── Project location row ─────────────────────────────────────────────────
+
+function fmtProvider(provider) {
+  if (provider === 'google_drive') return 'Google Drive';
+  if (provider === 'dropbox') return 'Dropbox';
+  return provider || 'Cloud';
+}
+
+function fmtLocationSize(loc) {
+  const parts = [];
+  if (loc.file_count != null) parts.push(`${loc.file_count} file${loc.file_count !== 1 ? 's' : ''}`);
+  if (loc.total_bytes != null && loc.total_bytes > 0) parts.push(fmtBytes(loc.total_bytes));
+  return parts.join(' · ');
+}
+
+function LocationRow({ loc }) {
+  const providerLabel = fmtProvider(loc.provider);
+  const accountLabel = loc.account_email || loc.account_label || providerLabel;
+  const sizeLabel = fmtLocationSize(loc);
+
+  return (
+    <div className="dp-loc-row">
+      <span className="dp-loc-pin">📍</span>
+      <span className="dp-loc-account">{accountLabel}</span>
+      <span className="dp-loc-sep">›</span>
+      <span className="dp-loc-path" title={loc.path}>{loc.path || '—'}</span>
+      {sizeLabel ? <span className="dp-loc-size">{sizeLabel}</span> : null}
+    </div>
+  );
+}
+
+// ── Locate button ─────────────────────────────────────────────────────────
+
+function LocateButton({ project, machines, onLocate, onRefreshLocations }) {
+  const [locating, setLocating] = useState(false);
+
+  const handleLocate = async () => {
+    // Use the project's assigned machine, or the first known machine as fallback.
+    const machineName = project.assigned_machine || (machines[0] && machines[0].machine_name);
+    if (!machineName) {
+      alert('Assign a machine to this project first, then click Locate.');
+      return;
+    }
+    setLocating(true);
+    try {
+      await onLocate(machineName);
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  return (
+    <button
+      className="btn ghost dp-locate-btn"
+      onClick={handleLocate}
+      disabled={locating}
+      title="Ask the downloading machine to search for this project in connected Drive/Dropbox accounts"
+    >
+      {locating ? '⟳ Locating…' : '📍 Locate'}
+    </button>
   );
 }
 

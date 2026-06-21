@@ -1698,3 +1698,86 @@ a { color: inherit; text-decoration: none; }
 .delete-modal-btn.danger.final:disabled { opacity: 0.6; cursor: not-allowed; }
 .delete-modal-btn.done { background: #f0f2f5; color: #1a1a2e; }
 .delete-modal-btn.done:hover { background: #e5e7eb; }
+
+/* ============================================================
+   LOCATE FEATURE — project_locations display on the transfer lane
+   ============================================================ */
+
+/* Container for all location rows on a card */
+.dp-locations {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--rule-soft);
+  border-radius: var(--r);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Single location row */
+.dp-loc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dp-loc-pin {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.dp-loc-account {
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dp-loc-sep {
+  color: var(--ink-dim);
+  flex-shrink: 0;
+}
+
+.dp-loc-path {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dp-loc-size {
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Empty state text when located but nothing found */
+.dp-locations-empty {
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-style: italic;
+}
+
+/* Locate button — unobtrusive, sits at the end of lane-actions */
+.dp-locate-btn {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 5px 10px;
+  color: var(--ink-mute);
+  border-color: transparent;
+}
+.dp-locate-btn:hover {
+  color: var(--ink-2);
+  background: var(--bg-1);
+  border-color: var(--rule);
+}

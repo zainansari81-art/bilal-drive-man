@@ -633,6 +633,46 @@ export default requireAuthOrApiKey(async function handler(req, res) {
         return res.status(200).json({ success: true });
       }
 
+      if (action === 'locate') {
+        // Enqueue a `locate` command so the FDM searches its connected
+        // Drive/Dropbox accounts for folders matching this project's
+        // client_name / couple_name and reports back via /api/project-locations.
+        const pid = req.body.projectId || req.body.id;
+        if (!pid || typeof pid !== 'string' || !/^[a-f0-9-]+$/i.test(pid)) {
+          return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        const projects = await supabaseFetch(`download_projects?id=eq.${pid}`);
+        const project = projects && projects[0];
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        // machine_name is required — the caller must specify which machine
+        // should run the locate scan (there is no meaningful default because
+        // different machines have different cloud accounts connected).
+        const machineName = req.body.machine_name
+          ? sanitizeString(req.body.machine_name)
+          : project.assigned_machine
+            ? sanitizeString(project.assigned_machine)
+            : null;
+
+        if (!machineName) {
+          return res.status(400).json({ error: 'machine_name required for locate' });
+        }
+
+        await supabasePost('download_commands', {
+          machine_name: machineName,
+          command:      'locate',
+          project_id:   pid,
+          payload: {
+            client_name: project.client_name || '',
+            couple_name: project.couple_name || '',
+          },
+          status: 'pending',
+        });
+
+        return res.status(200).json({ ok: true, machine_name: machineName });
+      }
+
       return res.status(400).json({ error: `Unknown action: ${action}` });
     }
 
