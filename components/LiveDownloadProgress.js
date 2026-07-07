@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatSize } from '../lib/format';
 
-const POLL_INTERVAL_MS = 1500;
+const POLL_INTERVAL_MS = 5000;
 
 function formatSpeed(bps) {
   if (!bps || bps <= 0) return '—';

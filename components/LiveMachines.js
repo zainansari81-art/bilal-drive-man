@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { LED, SectionHead, Empty } from './atoms';
 
-const REFRESH_MS = 5000;
+const REFRESH_MS = 20000;
 const ONLINE_THRESHOLD_S = 60;
 
 /**

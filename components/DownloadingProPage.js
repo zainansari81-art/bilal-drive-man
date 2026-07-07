@@ -88,7 +88,7 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
     fetchMachines();
     fetchCloudAccounts();
     autoSync();
-    const refreshInterval = setInterval(fetchProjects, 10000);
+    const refreshInterval = setInterval(fetchProjects, 30000);
     const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
     const machineInterval = setInterval(fetchMachines, 30000);
     const cloudInterval = setInterval(fetchCloudAccounts, 60 * 1000);
