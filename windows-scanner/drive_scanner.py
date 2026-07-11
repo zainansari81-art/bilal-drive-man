@@ -2410,6 +2410,8 @@ def poll_download_commands(config, known_drives):
                 ).start()
             elif command == 'delete_data':
                 handle_delete_data(config, payload, known_drives, cmd_id)
+            elif command == 'list_directory':
+                handle_list_directory(config, payload, known_drives, cmd_id)
             elif command == 'add_to_cloud':
                 handle_add_to_cloud(config, project_id, payload, cmd_id)
             elif command == 'check_cloud_status':
@@ -3335,6 +3337,107 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
             logging.info(f"Post-delete rescan and sync complete for {drive_label}")
     except Exception as rescan_err:
         logging.error(f"Post-delete rescan failed (will sync on next cycle): {rescan_err}")
+
+
+# ─── Finder Browser (list_directory) ────────────────────────────────────────
+
+# Junk the portal Finder should never show. Dotfiles and Windows
+# hidden/system-attribute entries are filtered too — see _fs_entry_hidden.
+_FS_BROWSE_SKIP_NAMES = {
+    'System Volume Information', '$RECYCLE.BIN', '$Recycle.Bin', 'RECYCLER',
+    'Recovery', 'Boot', 'found.000',
+}
+
+# Cap per-folder payload so the result JSONB stays well under the portal's
+# size guard even for dump folders with thousands of files.
+_FS_BROWSE_MAX_ENTRIES = 1500
+
+
+def _fs_entry_hidden(entry):
+    name = entry.name
+    if name.startswith('.') or name.startswith('~$') or name in _FS_BROWSE_SKIP_NAMES:
+        return True
+    try:
+        attrs = getattr(entry.stat(follow_symlinks=False), 'st_file_attributes', 0)
+        # FILE_ATTRIBUTE_HIDDEN (0x2) | FILE_ATTRIBUTE_SYSTEM (0x4)
+        return bool(attrs & 0x6)
+    except OSError:
+        return False
+
+
+def handle_list_directory(config, payload, known_drives, cmd_id):
+    """Portal Finder-browser query: list one folder on a connected drive.
+
+    Payload: { drive_label, rel_path } — rel_path is '/'-separated and
+    relative to the drive root ('' = root). The listing goes back through
+    the download-commands result column; the portal polls /api/fs-browse.
+    Read-only and bounded (one scandir, capped entries), so it runs
+    synchronously on the poll loop like delete_data.
+    """
+    drive_label = payload.get('drive_label', '')
+    rel_path = payload.get('rel_path', '') or ''
+
+    if not drive_label:
+        raise Exception("Missing drive_label in payload")
+
+    # Case-insensitive label match — portal may lowercase drive labels
+    # (same rationale as handle_delete_data's v3.50.0 fix).
+    norm_drive_label = (drive_label or '').strip().casefold()
+    root = None
+    for label, drive in known_drives.items():
+        if (label or '').strip().casefold() == norm_drive_label:
+            root = drive.get('path') or (drive.get('letter', '') + os.sep)
+            break
+
+    if not root:
+        raise Exception(f"Drive not found or not connected: {drive_label}")
+
+    segments = [s for s in rel_path.split('/') if s not in ('', '.')]
+    if any(s == '..' for s in segments):
+        raise Exception("Path traversal detected — refusing to list outside drive")
+    target = os.path.join(root, *segments) if segments else root
+
+    real_root = os.path.realpath(root)
+    real_target = os.path.realpath(target)
+    if real_target != real_root and not real_target.startswith(real_root.rstrip(os.sep) + os.sep):
+        raise Exception("Path traversal detected — refusing to list outside drive")
+
+    if not os.path.isdir(target):
+        raise Exception(f"Folder not found on {drive_label}: /{rel_path}")
+
+    entries = []
+    total = 0
+    with os.scandir(target) as it:
+        for entry in it:
+            try:
+                if _fs_entry_hidden(entry):
+                    continue
+                total += 1
+                if len(entries) >= _FS_BROWSE_MAX_ENTRIES:
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                st = entry.stat(follow_symlinks=False)
+                entries.append({
+                    'name': entry.name,
+                    'is_dir': is_dir,
+                    'size': 0 if is_dir else int(st.st_size),
+                    'mtime': int(st.st_mtime),
+                })
+            except OSError:
+                continue
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id,
+        'status': 'completed',
+        'result': {
+            'drive_label': drive_label,
+            'path': rel_path,
+            'entries': entries,
+            'total_items': total,
+            'truncated': total > len(entries),
+        },
+    })
+    logging.info(f"list_directory: {drive_label}/{rel_path} -> {len(entries)} of {total} entries")
 
 
 # ─── Drive Monitor ──────────────────────────────────────────────────────────

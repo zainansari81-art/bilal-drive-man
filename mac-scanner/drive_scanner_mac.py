@@ -4,7 +4,7 @@ Runs in the background, detects external drives on macOS,
 scans folders (Client > Couple structure), and syncs to the online dashboard.
 """
 
-VERSION = '3.49.0'
+VERSION = '3.50.0'  # 2026-07-11: list_directory command for the portal's Drives-page Finder browser
 
 import os
 import sys
@@ -593,6 +593,8 @@ def poll_download_commands(config, known_drives):
                 handle_copy_to_drive(config, project_id, payload, known_drives, cmd_id)
             elif command == 'delete_data':
                 handle_delete_data(config, payload, known_drives, cmd_id)
+            elif command == 'list_directory':
+                handle_list_directory(config, payload, known_drives, cmd_id)
             elif command == 'cancel_download':
                 # Just mark complete — actual cancellation handled by status check
                 api_patch(config, 'download-commands', {
@@ -787,6 +789,88 @@ def handle_delete_data(config, payload, known_drives, cmd_id):
             logging.info(f"Post-delete rescan and sync complete for {drive_label}")
     except Exception as rescan_err:
         logging.error(f"Post-delete rescan failed (will sync on next cycle): {rescan_err}")
+
+
+# ─── Finder Browser (list_directory) ────────────────────────────────────────
+
+# Cap per-folder payload so the result JSONB stays well under the portal's
+# size guard even for dump folders with thousands of files.
+_FS_BROWSE_MAX_ENTRIES = 1500
+
+
+def handle_list_directory(config, payload, known_drives, cmd_id):
+    """Portal Finder-browser query: list one folder on a connected drive.
+
+    Payload: { drive_label, rel_path } — rel_path is '/'-separated and
+    relative to the drive root ('' = root). The listing goes back through
+    the download-commands result column; the portal polls /api/fs-browse.
+    Read-only and bounded (one scandir, capped entries), so it runs
+    synchronously on the poll loop like delete_data.
+    """
+    drive_label = payload.get('drive_label', '')
+    rel_path = payload.get('rel_path', '') or ''
+
+    if not drive_label:
+        raise Exception("Missing drive_label in payload")
+
+    # Case-insensitive label match — portal may lowercase drive labels.
+    norm_drive_label = (drive_label or '').strip().casefold()
+    root = None
+    for label, drive in known_drives.items():
+        if (label or '').strip().casefold() == norm_drive_label:
+            root = drive.get('path') or f"/Volumes/{label}"
+            break
+
+    if not root or not os.path.exists(root):
+        raise Exception(f"Drive not found or not connected: {drive_label}")
+
+    segments = [s for s in rel_path.split('/') if s not in ('', '.')]
+    if any(s == '..' for s in segments):
+        raise Exception("Path traversal detected — refusing to list outside drive")
+    target = os.path.join(root, *segments) if segments else root
+
+    real_root = os.path.realpath(root)
+    real_target = os.path.realpath(target)
+    if real_target != real_root and not real_target.startswith(real_root.rstrip(os.sep) + os.sep):
+        raise Exception("Path traversal detected — refusing to list outside drive")
+
+    if not os.path.isdir(target):
+        raise Exception(f"Folder not found on {drive_label}: /{rel_path}")
+
+    entries = []
+    total = 0
+    with os.scandir(target) as it:
+        for entry in it:
+            try:
+                # Hide dotfiles (.DS_Store, .Spotlight-V100, …) like Finder does
+                if entry.name.startswith('.'):
+                    continue
+                total += 1
+                if len(entries) >= _FS_BROWSE_MAX_ENTRIES:
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                st = entry.stat(follow_symlinks=False)
+                entries.append({
+                    'name': entry.name,
+                    'is_dir': is_dir,
+                    'size': 0 if is_dir else int(st.st_size),
+                    'mtime': int(st.st_mtime),
+                })
+            except OSError:
+                continue
+
+    api_patch(config, 'download-commands', {
+        'id': cmd_id,
+        'status': 'completed',
+        'result': {
+            'drive_label': drive_label,
+            'path': rel_path,
+            'entries': entries,
+            'total_items': total,
+            'truncated': total > len(entries),
+        },
+    })
+    logging.info(f"list_directory: {drive_label}/{rel_path} -> {len(entries)} of {total} entries")
 
 
 def watch_cloud_sync_folder(config, known_drives):

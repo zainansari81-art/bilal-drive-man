@@ -1781,3 +1781,355 @@ a { color: inherit; text-decoration: none; }
   background: var(--bg-1);
   border-color: var(--rule);
 }
+
+/* ============================================================
+   FINDER BROWSER — Drives-page live drive browser (finder- prefix)
+   Opened from a drive card's Browse button; FinderModal.js.
+   ============================================================ */
+
+.finder-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: fadeIn 0.15s ease;
+}
+.finder-window {
+  width: min(1060px, 100%);
+  height: min(720px, 92vh);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: scaleIn 0.15s ease;
+}
+
+/* Title bar — macOS traffic lights + centered folder title */
+.finder-titlebar {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+.finder-lights { display: flex; gap: 7px; width: 90px; flex: none; }
+.finder-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  display: inline-block;
+}
+.finder-light.red { background: #FF5F57; cursor: pointer; }
+.finder-light.red:hover { filter: brightness(0.9); }
+.finder-light.yellow { background: #FEBC2E; }
+.finder-light.green { background: #28C840; }
+.finder-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  min-width: 0;
+}
+.finder-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.finder-titlebar-right { width: 90px; flex: none; }
+
+/* Toolbar */
+.finder-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  flex: none;
+}
+.finder-nav-btns { display: flex; gap: 4px; }
+.finder-tbtn {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+.finder-tbtn:hover:not(:disabled) { background: var(--panel-hover); border-color: var(--ink-dim); }
+.finder-tbtn:disabled { opacity: 0.35; cursor: default; }
+.finder-tbtn.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent-fg); }
+.finder-view-toggle { display: flex; gap: 4px; }
+.finder-toolbar-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+/* Body: sidebar + content */
+.finder-body { flex: 1; display: flex; min-height: 0; }
+.finder-sidebar {
+  width: 200px;
+  flex: none;
+  padding: 10px 8px;
+  background: var(--bg);
+  border-right: 1px solid var(--rule);
+  overflow-y: auto;
+}
+.finder-side-heading {
+  padding: 2px 8px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.finder-side-group { margin-bottom: 10px; }
+.finder-side-machine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-mute);
+}
+.finder-side-drive {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px 5px 14px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+.finder-side-drive:hover:not(:disabled) { background: var(--rule-soft); }
+.finder-side-drive.current { background: var(--accent-bg); color: var(--accent-fg); font-weight: 600; }
+.finder-side-drive:disabled { opacity: 0.4; cursor: default; }
+.finder-side-drive .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.finder-content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+}
+
+/* List view */
+.finder-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12.5px;
+}
+.finder-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panel);
+  padding: 7px 12px;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.finder-table thead th:hover { color: var(--ink); }
+.finder-table tbody tr:nth-child(even) { background: var(--bg); }
+.finder-table tbody tr.selected,
+.finder-table tbody tr.selected:nth-child(even) { background: var(--accent-bg); }
+.finder-table td {
+  padding: 5px 12px;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--rule-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.finder-table .w-date { width: 185px; }
+.finder-table .w-size { width: 95px; text-align: right; }
+.finder-table .w-kind { width: 140px; }
+.finder-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.finder-cell-name svg { flex: none; }
+.finder-cell-name .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Icon (grid) view */
+.finder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 6px;
+  padding: 14px;
+}
+.finder-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 6px;
+  border-radius: var(--r-md);
+  text-align: center;
+}
+.finder-grid-item:hover { background: var(--rule-soft); }
+.finder-grid-item.selected { background: var(--accent-bg); }
+.finder-grid-item .nm {
+  max-width: 100%;
+  font-size: 11.5px;
+  line-height: 1.25;
+  color: var(--ink-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+.finder-grid-item .sz { font-size: 10px; color: var(--ink-dim); }
+
+/* Loading / error / empty states */
+.finder-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 30px;
+  text-align: center;
+}
+.finder-state-icon { font-size: 30px; line-height: 1; }
+.finder-state-title { font-size: 14px; font-weight: 600; color: var(--ink-2); }
+.finder-state-sub {
+  max-width: 400px;
+  font-size: 12px;
+  color: var(--ink-mute);
+  line-height: 1.5;
+}
+.finder-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--rule);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: finderSpin 0.8s linear infinite;
+}
+@keyframes finderSpin { to { transform: rotate(360deg); } }
+
+/* Path bar (breadcrumbs) */
+.finder-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+  overflow-x: auto;
+  white-space: nowrap;
+  flex: none;
+}
+.finder-crumb-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.finder-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.finder-crumb:hover { background: var(--rule-soft); }
+.finder-crumb-sep { color: var(--ink-dim); font-size: 11px; }
+
+/* Status bar */
+.finder-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  background: var(--bg);
+  border-top: 1px solid var(--rule);
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  flex: none;
+}
+.finder-status-sel {
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Browse button on drive cards */
+.drive-browse-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--ink);
+  color: #fff;
+  border: 1px solid var(--ink);
+  border-radius: var(--r);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+.drive-browse-btn:hover:not(:disabled) { opacity: 0.85; }
+.drive-browse-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+@media (max-width: 768px) {
+  .finder-overlay { padding: 10px; }
+  .finder-window { height: min(720px, 94vh); }
+  .finder-sidebar { display: none; }
+  .finder-table .w-date,
+  .finder-table .w-kind { display: none; }
+  .finder-toolbar-label { display: none; }
+}

@@ -35,7 +35,7 @@ async function handler(req, res) {
 
     if (req.method === 'PATCH') {
       // Protected by requireApiKey - scanner updates command status
-      const { id, status, error_message } = req.body;
+      const { id, status, error_message, result } = req.body;
       if (!id || !status) {
         return res.status(400).json({ error: 'Missing required fields: id, status' });
       }
@@ -49,6 +49,14 @@ async function handler(req, res) {
       };
       if (error_message) {
         updateBody.error_message = sanitizeString(error_message, 1024);
+      }
+      // Query-style commands (list_directory) hand their answer back here.
+      // Scanners cap entry counts, so anything oversized is malformed.
+      if (result !== undefined && result !== null) {
+        if (typeof result !== 'object' || Array.isArray(result) || JSON.stringify(result).length > 600000) {
+          return res.status(400).json({ error: 'Invalid result' });
+        }
+        updateBody.result = result;
       }
 
       const updated = await supabasePatch(`download_commands?id=eq.${id}`, updateBody);

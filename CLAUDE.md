@@ -385,6 +385,10 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
   `?project_id=<uuid>` (normal flow) OR `?url=<wetransfer-link>` (ad-hoc QA mode for
   validating an arbitrary we.tl link without creating a Notion card first)
 - `/api/cloud-accounts` — list of available Dropbox/GDrive accounts (Gap 1)
+- `/api/fs-browse` — Drives-page Finder browser. POST queues a `list_directory`
+  command for a machine's scanner; GET `?id=` polls the command row until the
+  scanner PATCHes the listing into `download_commands.result` (JSONB). See
+  "Drives Finder browser" below.
 
 ## Diagnostic discipline on Windows (AAHIL)
 
@@ -705,6 +709,41 @@ from PowerShell:
    - `Start-Sleep 5`
    - `Get-Process BilalDriveMan-Scanner` — must return nothing
    - THEN edit config, verify, restart.
+
+## Drives Finder browser (2026-07-11)
+
+The Drives page has a macOS-Finder-style live browser (`components/FinderModal.js`,
+opened via each drive card's **Browse** button, enabled only when the drive is
+connected AND its machine is live per `/api/devices`). Folder listings are
+fetched live from the scanner through the existing command queue:
+
+1. Portal POST `/api/fs-browse` → inserts `list_directory` into
+   `download_commands` (payload: `{drive_label, rel_path}`, rel_path is
+   '/'-separated relative to the drive root)
+2. Scanner picks it up on its normal ~10s command poll, runs
+   `handle_list_directory` (single bounded `os.scandir`, hidden/system files
+   filtered, capped at 1500 entries), PATCHes the row with
+   `status=completed` + `result` JSONB
+3. Portal polls GET `/api/fs-browse?id=` every 2s (90s timeout) and renders
+
+Notes:
+- **Migration required:** `supabase-migration-fs-browse.sql` (adds
+  `download_commands.result` JSONB + widens the command CHECK constraint to
+  include `list_directory`). Until applied, POST /api/fs-browse returns 409
+  with a "server not ready" message; everything else is unaffected.
+- Both scanners implement the handler (Mac 3.50.0+, Windows source as of this
+  feature). **Old scanners ack unknown commands as completed with no result** —
+  the FinderModal detects that and tells the operator the machine needs a
+  scanner update.
+- Visited folders are cached for the lifetime of the Finder window; the ⟳
+  toolbar button forces a re-request. Stale `list_directory` rows (>1h) are
+  garbage-collected on each new POST so offline machines never replay a
+  backlog of dead listings.
+- Ship steps: merge to main ships the Mac scanner via raw-URL auto-update
+  (~5 min). For Windows, trigger the GitHub Actions "build-windows-scanner"
+  workflow — it bumps VERSION + rebuilds + commits the .exe/.sha256 atomically
+  (the Windows VERSION constant was deliberately NOT touched in the feature
+  commit, per the atomic-bump rule).
 
 ## Live machines widget (2026-05-25)
 

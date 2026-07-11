@@ -1,12 +1,59 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { LED, Gauge, Spool, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import FinderModal from './FinderModal';
+
+// Mount point as the operator would see it on the machine itself.
+// Mac drives sync a (truncated) /Volumes path into drive_letter; Windows
+// drives sync "D:"-style letters.
+function mountOf(d) {
+  if (!d.letter) return '—';
+  if (d.letter.includes('/')) return `/Volumes/${d.name}`;
+  return d.letter.endsWith(':') ? `${d.letter}\\` : `${d.letter}:\\`;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 export default function DrivesPage({ drives }) {
   const [filter, setFilter] = useState('all');
   const [sort, setSort] = useState('fullness');
   const [hidden, setHidden] = useState(() => new Set());
   const [ignoredIds, setIgnoredIds] = useState(() => new Set());
+  const [onlineMachines, setOnlineMachines] = useState(() => new Set());
+  const [browseDrive, setBrowseDrive] = useState(null);
+  // Time-relative strings only render after mount (SSR footgun #2 —
+  // Date.now() during server render causes hydration mismatches).
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    let stopped = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/devices');
+        const data = await res.json();
+        if (!stopped && Array.isArray(data)) {
+          setOnlineMachines(new Set(data.filter(m => m.isOnline).map(m => m.name)));
+        }
+      } catch {
+        // keep last known liveness on transient errors
+      }
+    };
+    load();
+    const t = setInterval(load, 15000);
+    return () => { stopped = true; clearInterval(t); };
+  }, []);
 
   const handleDeleted = ({ driveName, clientName, coupleName, type }) => {
     const key = type === 'client'
@@ -122,21 +169,39 @@ export default function DrivesPage({ drives }) {
             <DriveCard
               key={d.id || d.name}
               drive={d}
+              mounted={mounted}
+              machineOnline={onlineMachines.has(d.sourceMachine)}
+              onBrowse={() => setBrowseDrive(d)}
               onDeleted={handleDeleted}
               onIgnore={handleIgnore}
             />
           ))}
         </div>
       )}
+
+      {browseDrive && (
+        <FinderModal
+          drives={visibleDrives}
+          onlineMachines={onlineMachines}
+          initialDrive={browseDrive}
+          onClose={() => setBrowseDrive(null)}
+        />
+      )}
     </div>
   );
 }
 
-function DriveCard({ drive: d, onDeleted, onIgnore }) {
+function DriveCard({ drive: d, mounted, machineOnline, onBrowse, onDeleted, onIgnore }) {
   const [open, setOpen] = useState(false);
   const pct = fmtPct(d.used, d.total);
   const clientsCount = (d.clients || []).length;
   const couplesCount = (d.clients || []).reduce((s, c) => s + c.couples.length, 0);
+  const canBrowse = d.connected && machineOnline;
+  const browseHint = canBrowse
+    ? `Open ${d.name} in the browser (live from ${d.sourceMachine})`
+    : !d.connected
+      ? 'Drive is not connected to any machine'
+      : `${d.sourceMachine || 'Machine'} is not live right now`;
 
   return (
     <div className={`drive-card${!d.connected ? ' dim' : ''}`}>
@@ -148,7 +213,7 @@ function DriveCard({ drive: d, onDeleted, onIgnore }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <LED state={d.connected ? 'on' : 'off'} />
           <span style={{ fontSize: 11.5, color: d.connected ? 'var(--accent-fg)' : 'var(--ink-mute)', fontWeight: 500 }}>
-            {d.connected ? `${d.letter}:\\` : 'Offline'}
+            {d.connected ? mountOf(d) : 'Offline'}
           </span>
         </div>
       </div>
@@ -166,6 +231,21 @@ function DriveCard({ drive: d, onDeleted, onIgnore }) {
       <div className="row-detail">
         <span className="l">Capacity</span>
         <span className="v">{fmtTB(d.total)} TB</span>
+      </div>
+      <div className="row-detail">
+        <span className="l">Machine</span>
+        <span className="v" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {d.sourceMachine || '—'}
+          {d.sourceMachine && <LED state={machineOnline ? 'on' : 'off'} />}
+        </span>
+      </div>
+      <div className="row-detail">
+        <span className="l">Last scan</span>
+        <span className="v">{mounted ? timeAgo(d.lastScan) : '—'}</span>
+      </div>
+      <div className="row-detail">
+        <span className="l">Last seen</span>
+        <span className="v">{mounted ? timeAgo(d.lastSeen) : '—'}</span>
       </div>
 
       <div className="drive-card-foot">
@@ -185,6 +265,14 @@ function DriveCard({ drive: d, onDeleted, onIgnore }) {
           )}
           <button className="btn ghost sm" onClick={() => setOpen(!open)}>
             {open ? 'Collapse' : 'Inspect →'}
+          </button>
+          <button
+            className="drive-browse-btn"
+            disabled={!canBrowse}
+            onClick={onBrowse}
+            title={browseHint}
+          >
+            Browse ⌘
           </button>
         </div>
       </div>
