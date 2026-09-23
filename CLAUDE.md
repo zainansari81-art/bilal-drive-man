@@ -14,7 +14,7 @@
 - /pages/api       All backend endpoints
 - /components      React components — page components (DashboardPage, DrivesPage, DevicesPage, DownloadingProPage, SearchPage, HistoryPage), shell (Sidebar=Rail, Header=StatusStrip), shared primitives (atoms.js: LED/Gauge/Spool/Fuel/Runway/etc., CountUp.js)
 - /pages/_document.js  Document — font <link>s live HERE, not in next/head (see SSR footguns)
-- /lib             Shared utilities (supabase.js, auth.js, format.js)
+- /lib             Shared utilities (supabase.js, auth.js, format.js, features.js = feature switches, polling.js = hidden-tab-aware polling)
 - /styles          globals.css — single CSS file for all styling
 - /mac-scanner     Mac scanner Python script (synced to GitHub for auto-update)
 - /windows-scanner Windows scanner Python script + dist/BilalDriveMan-Scanner.exe + .sha256 sidecar
@@ -29,6 +29,34 @@
 - Accent color: #c8e600 (green), Dark: #1a1a2e, Background: #f4f5f7
 - CSS class naming: page-prefix pattern (dp- for downloading-pro, device- for devices)
 - Responsive breakpoints: 480px, 768px, 1024px, 1200px, 1440px, 1920px
+
+## Supabase free-tier quota — IMPORTANT (2026-09-23)
+
+We stay on the Supabase **free plan: 5 GB/month egress** (every byte PostgREST
+sends back, reads AND write echoes). On 2026-09-23 the project was restricted
+for `exceed_egress_quota`: reads return **HTTP 402** (API routes surface it as
+500, the portal goes empty) while writes/heartbeats keep succeeding. Only the
+next billing cycle or a plan upgrade lifts it. Quick check: a direct PostgREST
+GET — the 402 body names the violation. Rules so it doesn't happen again:
+
+- **Writes whose result you don't read → `{ returning: 'minimal' }`** on
+  `supabasePost` / `supabasePatch` (default is `representation`, which echoes
+  every row back). Need an id back? Pass `{ select: 'id' }`.
+- **Reads → always `select=` only the columns used.** Never `select=*` on
+  `couples`/`clients` — they're the big tables (soft-deleted couples,
+  `is_present=false`, accumulate forever; filter them in the DB).
+- **Nothing on a timer may re-send unchanged data.** Scanners upload a drive only
+  when its folder/size fingerprint changes, on plug-in, on Scan Now, or every
+  6h (`sync_fingerprint`, `SYNC_REFRESH_S`). History rows only for real events.
+- **Scanner network loop = 60s** (`LOOP_INTERVAL_S`; it overrides the
+  `check_interval: 10` pinned in every existing config.json). One request per
+  loop — pending commands ride on the heartbeat response (`include_commands`).
+  Portal "online" window is 150s to match (`ONLINE_WINDOW_MS`,
+  `ONLINE_THRESHOLD_S`) — change both together with the loop.
+- **Portal pollers use `whenVisible()`** (lib/polling.js) so hidden tabs don't
+  poll, and never poll faster than the data can change.
+- Supabase quotas are org-wide on the free plan — other projects in the same
+  org eat the same 5 GB. Check Organization → Usage → Egress per project.
 
 ## Scanner Files — IMPORTANT
 - After editing scanner Python files, MUST copy to BOTH locations:
@@ -228,6 +256,15 @@ OAuth credentials live in **one place**: Vercel env vars. The scanner pulls them
 
 ## Cloud Pipeline (Downloading-Pro feature)
 
+> **ARCHIVED 2026-09-23.** Zain only uses drive management. `DOWNLOADING_ENABLED
+> = false` in `lib/features.js` hides the Transfers page (lazy-loaded chunk, not
+> in the main bundle) and the Machines-page download-PC details, stops all their
+> polling (projects, Notion auto-sync, cloud accounts, live progress,
+> `/api/machines`), and makes `/api/heartbeat` + `GET /api/download-commands`
+> return no commands without a DB read. All code, API routes and Supabase tables
+> below are intact — set the flag to `true` and redeploy to restore. Everything
+> in this section documents the feature for when it comes back.
+
 Three link types supported: Dropbox + Google Drive + WeTransfer. All three flow
 through the wizard's link_type dispatch (DownloadWizardModal.fetchShareStatus →
 appropriate /api/*-share-status endpoint).
@@ -364,9 +401,9 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
 - Login rate limiting is DISABLED per user request — do not re-enable
 
 ### Notable scanner-auth endpoints
-- `/api/heartbeat` — scanner liveness
-- `/api/sync` — drive scan results
-- `/api/download-commands` — scanner polls for pending commands (filters by machine + status=pending)
+- `/api/heartbeat` — scanner liveness; with `include_commands: true` (Mac 3.50.0+ / Windows 3.56.0+) also returns this machine's pending commands
+- `/api/sync` — drive scan results (optional `reason: 'connected'` on plug-in)
+- `/api/download-commands` — GET fallback for pending commands (filters by machine + status=pending); pre-3.50 scanners still poll it
 - `/api/download-progress` — scanner reports phase/progress + persists cloud_folder_path
 - `/api/scanner-resume-check` — scanner asks "what should I resume on boot?" (returns orphaned downloading projects + counts resume_attempts)
 - `/api/scanner-reset-stale-acked` — scanner boot recovery: PATCH acked-but-stale commands back to pending (atomic, server-clock cutoff)
@@ -390,7 +427,7 @@ Pull via `vercel env pull --environment=production` and grep for `\\n"` to detec
 
 **Reading `config.json` to verify on-disk content:** use `cat path | python -c "..."`, **NOT** `python -c "open(path).read()"`. The latter has a Git-Bash + Python read-caching quirk on AAHIL that returns stale content even after fresh writes — caused us a 3-hour debugging chase in the 3.49.0 → 3.49.1 → 3.49.2 cycle (we thought scanner wasn't persisting credentials, when in fact disk was correct and the verification tool was lying). Always pipe through `cat` for live reads.
 
-**Heartbeat upsert footgun:** `pages/api/heartbeat.js` line 48 only calls `supabasePost('download_machines', …)` if `is_download_pc || dropbox_path || gdrive_path` is truthy. If all three are falsy in a heartbeat payload (e.g. scanner has empty config), the upsert is skipped entirely. *That means `download_machines.dropbox_path` in Supabase can show stale values that no longer reflect the live scanner config.* Don't trust the DB row as authoritative for live config — query the running scanner's heartbeat payload directly if you need ground truth.
+**Heartbeat upsert:** since 2026-05-04 `pages/api/heartbeat.js` upserts `download_machines` on EVERY heartbeat (it used to skip when `is_download_pc`, `dropbox_path` and `gdrive_path` were all falsy, which hid Macs with no drive attached). The row mirrors whatever the scanner last sent, so an empty scanner config blanks the stored paths.
 
 **Network-isolated scanner is still useful:** `googleapis.com`, `api.dropboxapi.com`, etc. resolve via separate DNS paths from `bilal-drive-man.vercel.app`. AAHIL can be portal-isolated (heartbeats failing, command poll dead) while still actively downloading from cloud APIs. When heartbeat is stale, **check `.staging-state.json.bytes_done` mtime** before assuming the download is dead — bytes may still be flowing locally.
 
@@ -709,8 +746,8 @@ from PowerShell:
 ## Live machines widget (2026-05-25)
 
 `components/LiveMachines.js` at the top of the Dashboard self-polls
-`/api/devices` every 5s, shows every machine with `isOnline=true` and
-`lastSeen ≤ 60s`, plus pill chips for each connected drive. Lets Zain
-glance at what's actually live without scrolling to the Machines page.
-Independent of the page's 5-min refresh cycle so it stays fresh between
-manual refreshes.
+`/api/devices` every 60s (paused while the tab is hidden), shows every
+machine with `isOnline=true` and `lastSeen ≤ 150s`, plus pill chips for each
+connected drive. Lets Zain glance at what's actually live without scrolling
+to the Machines page. Independent of the page's 5-min refresh cycle. Cadence
+matches the scanners' 60s heartbeat (see "Supabase free-tier quota").

@@ -1,9 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { LED, Runway, Fuel, Src, Empty, fmtBytes, sourceFromLink } from './atoms';
 import CountUp from './CountUp';
 import DownloadWizardModal from './DownloadWizardModal';
 import DownloadMagicAnimation from './DownloadMagicAnimation';
 import LiveDownloadProgress from './LiveDownloadProgress';
+import { whenVisible } from '../lib/polling';
+
+// Project list refresh: every 30s while something is moving (scanners push
+// progress), otherwise every 2 min. When nothing is queued/downloading/
+// copying, rows only change via this page's own actions (which refetch
+// immediately) or the 5-min Notion auto-sync (which refetches too).
+const ACTIVE_STATUSES = ['queued', 'downloading', 'copying'];
+const PROJECTS_ACTIVE_REFRESH_MS = 30 * 1000;
+const PROJECTS_IDLE_REFRESH_MS = 2 * 60 * 1000;
 
 export default function DownloadingProPage({ drives, onProjectsChange }) {
   const [projects, setProjects] = useState([]);
@@ -40,12 +49,17 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
     } catch {}
   }, []);
 
+  const hasActiveProjectsRef = useRef(true);
+  const lastProjectsFetchRef = useRef(0);
+
   const fetchProjects = useCallback(async () => {
     try {
       const res = await fetch('/api/download-projects');
       if (!res.ok) throw new Error('Failed to fetch projects');
       const data = await res.json();
       const list = data.projects || data || [];
+      hasActiveProjectsRef.current = list.some(p => ACTIVE_STATUSES.includes(p.download_status));
+      lastProjectsFetchRef.current = Date.now();
       setProjects(list);
       if (onProjectsChange) onProjectsChange(list);
       setError(null);
@@ -88,10 +102,18 @@ export default function DownloadingProPage({ drives, onProjectsChange }) {
     fetchMachines();
     fetchCloudAccounts();
     autoSync();
-    const refreshInterval = setInterval(fetchProjects, 30000);
-    const syncInterval = setInterval(autoSync, 5 * 60 * 1000);
-    const machineInterval = setInterval(fetchMachines, 30000);
-    const cloudInterval = setInterval(fetchCloudAccounts, 60 * 1000);
+    // All pollers pause while the tab is hidden (see lib/polling.js).
+    const refreshInterval = setInterval(whenVisible(() => {
+      const idleFor = Date.now() - lastProjectsFetchRef.current;
+      if (hasActiveProjectsRef.current || idleFor >= PROJECTS_IDLE_REFRESH_MS) {
+        fetchProjects();
+      }
+    }), PROJECTS_ACTIVE_REFRESH_MS);
+    const syncInterval = setInterval(whenVisible(autoSync), 5 * 60 * 1000);
+    // Machines heartbeat every 60s, so polling faster shows nothing new.
+    const machineInterval = setInterval(whenVisible(fetchMachines), 60 * 1000);
+    // Cloud accounts only change when an admin edits them.
+    const cloudInterval = setInterval(whenVisible(fetchCloudAccounts), 5 * 60 * 1000);
     return () => {
       clearInterval(refreshInterval);
       clearInterval(syncInterval);

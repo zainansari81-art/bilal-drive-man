@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { LED, Gauge, Empty, fmtBytes, fmtTB, fmtPct } from './atoms';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import { whenVisible } from '../lib/polling';
+import { DOWNLOADING_ENABLED } from '../lib/features';
 
 function heartbeatAgo(iso) {
   if (!iso) return 'Never';
@@ -19,12 +21,15 @@ export default function DevicesPage({ drives }) {
 
     const load = async () => {
       try {
+        // /api/machines only adds download-PC config (Dropbox/GDrive paths,
+        // role) — skip it while Transfers is archived. /api/devices already
+        // carries each machine's last_seen.
         const [devicesRes, machinesRes] = await Promise.all([
           fetch('/api/devices'),
-          fetch('/api/machines'),
+          DOWNLOADING_ENABLED ? fetch('/api/machines') : null,
         ]);
         const devicesData = devicesRes.ok ? await devicesRes.json() : [];
-        const machinesData = machinesRes.ok ? await machinesRes.json() : [];
+        const machinesData = machinesRes && machinesRes.ok ? await machinesRes.json() : [];
 
         const byName = new Map();
 
@@ -73,7 +78,8 @@ export default function DevicesPage({ drives }) {
     };
 
     load();
-    const id = setInterval(load, 30000);
+    // 60s = the scanners' heartbeat interval; faster polls show nothing new.
+    const id = setInterval(whenVisible(load), 60000);
     return () => { cancelled = true; clearInterval(id); };
   }, [drives]);
 
@@ -102,7 +108,9 @@ export default function DevicesPage({ drives }) {
       <div className="page-header">
         <div className="page-title"><h1>Machines</h1></div>
         <div className="page-sub">
-          Scanner agents on each Mac and Windows. The download PC is the one that pulls bytes from the cloud.
+          {DOWNLOADING_ENABLED
+            ? 'Scanner agents on each Mac and Windows. The download PC is the one that pulls bytes from the cloud.'
+            : 'Scanner agents on each Mac and Windows PC.'}
         </div>
       </div>
 
@@ -151,24 +159,30 @@ function MachineCard({ m, drives }) {
           </span>
         </div>
 
-        <div className={`role${m.is_download_pc ? ' dl' : ''}`}>
-          {m.is_download_pc ? 'Download PC' : 'Scan only'}
-        </div>
+        {DOWNLOADING_ENABLED && (
+          <div className={`role${m.is_download_pc ? ' dl' : ''}`}>
+            {m.is_download_pc ? 'Download PC' : 'Scan only'}
+          </div>
+        )}
       </div>
 
       <div className="row gap-16" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--rule-soft)' }}>
-        <div className="row gap-8">
-          <span className="label">Dropbox</span>
-          <span className="t-mono" style={{ fontSize: 12, color: m.dropbox_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
-            {m.dropbox_path || 'Not set'}
-          </span>
-        </div>
-        <div className="row gap-8">
-          <span className="label">Google Drive</span>
-          <span className="t-mono" style={{ fontSize: 12, color: m.gdrive_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
-            {m.gdrive_path || 'Not set'}
-          </span>
-        </div>
+        {DOWNLOADING_ENABLED && (
+          <>
+            <div className="row gap-8">
+              <span className="label">Dropbox</span>
+              <span className="t-mono" style={{ fontSize: 12, color: m.dropbox_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
+                {m.dropbox_path || 'Not set'}
+              </span>
+            </div>
+            <div className="row gap-8">
+              <span className="label">Google Drive</span>
+              <span className="t-mono" style={{ fontSize: 12, color: m.gdrive_path ? 'var(--ink-2)' : 'var(--ink-dim)' }}>
+                {m.gdrive_path || 'Not set'}
+              </span>
+            </div>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         <button className="btn ghost sm" onClick={() => setOpen(!open)}>
           {open ? 'Collapse' : 'Show drives →'}

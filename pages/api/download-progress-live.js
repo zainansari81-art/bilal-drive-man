@@ -156,7 +156,7 @@ export default requireAuthOrApiKey(async function handler(req, res) {
     // includes the PK and the request uses on_conflict + the
     // 'resolution=merge-duplicates' Prefer header that supabasePost
     // already sets.
-    await supabasePost('download_progress_live', body, 'project_id');
+    await supabasePost('download_progress_live', body, 'project_id', { returning: 'minimal' });
 
     return res.status(200).json({ ok: true });
   } catch (err) {

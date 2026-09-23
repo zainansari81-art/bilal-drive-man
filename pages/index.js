@@ -1,15 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Head from 'next/head';
+import dynamic from 'next/dynamic';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import DashboardPage from '../components/DashboardPage';
 import DrivesPage from '../components/DrivesPage';
 import DevicesPage from '../components/DevicesPage';
-import DownloadingProPage from '../components/DownloadingProPage';
 import SearchPage from '../components/SearchPage';
 import HistoryPage from '../components/HistoryPage';
 import { getSessionFromRequest } from '../lib/auth';
 import { getDrivesWithClients, formatDrivesForFrontend, getHistory } from '../lib/supabase';
+import { DOWNLOADING_ENABLED } from '../lib/features';
+
+// Transfers page (archived — see lib/features.js). Loaded as its own chunk so
+// its code (page, wizard, animations) isn't in every page load's bundle.
+const DownloadingProPage = dynamic(() => import('../components/DownloadingProPage'), { ssr: false });
 
 export async function getServerSideProps(context) {
   const session = getSessionFromRequest(context.req);
@@ -42,7 +47,8 @@ export async function getServerSideProps(context) {
   }
 }
 
-const VALID_PAGES = ['dashboard', 'drives', 'devices', 'downloading', 'search', 'history'];
+const VALID_PAGES = ['dashboard', 'drives', 'devices', 'downloading', 'search', 'history']
+  .filter(p => DOWNLOADING_ENABLED || p !== 'downloading'); // old #downloading links fall back to dashboard
 
 function getPageFromHash() {
   if (typeof window === 'undefined') return 'dashboard';
@@ -95,17 +101,34 @@ export default function Home({ username, initialDrives, initialActivities }) {
     setRefreshCountdown(REFRESH_INTERVAL);
   }, [REFRESH_INTERVAL]);
 
+  // Skip the 5-min refresh while the tab is hidden (the drive tree is the
+  // portal's biggest Supabase read); catch up as soon as it's visible again.
+  const missedRefreshRef = useRef(false);
   useEffect(() => {
     const tick = setInterval(() => {
       setRefreshCountdown(prev => {
         if (prev <= 1) {
-          fetchData();
+          if (document.hidden) {
+            missedRefreshRef.current = true;
+          } else {
+            fetchData();
+          }
           return REFRESH_INTERVAL;
         }
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(tick);
+    const onVisibilityChange = () => {
+      if (!document.hidden && missedRefreshRef.current) {
+        missedRefreshRef.current = false;
+        fetchData();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(tick);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [fetchData, REFRESH_INTERVAL]);
 
   const handleNavigate = (page) => {
@@ -162,7 +185,7 @@ export default function Home({ username, initialDrives, initialActivities }) {
             <DevicesPage drives={drives} />
           )}
 
-          {currentPage === 'downloading' && (
+          {DOWNLOADING_ENABLED && currentPage === 'downloading' && (
             <DownloadingProPage
               drives={drives}
               onProjectsChange={setProjects}

@@ -108,7 +108,9 @@ export default requireApiKey(async function handler(req, res) {
   }
 
   try {
-    const { drive, clients } = req.body;
+    // reason: 'connected' when the scanner just saw the drive plug in
+    // (v3.50.0+ Mac / v3.56.0+ Windows). Older scanners don't send it.
+    const { drive, clients, reason } = req.body;
 
     if (!drive || !drive.volume_label) {
       return res.status(400).json({ error: 'drive.volume_label is required' });
@@ -129,7 +131,7 @@ export default requireApiKey(async function handler(req, res) {
       source_machine: machineName,
       last_seen: new Date().toISOString(),
       last_scan: new Date().toISOString(),
-    }, 'volume_label');
+    }, 'volume_label', { select: 'id' });
 
     const driveId = driveResult?.[0]?.id;
     if (!driveId) {
@@ -148,15 +150,16 @@ export default requireApiKey(async function handler(req, res) {
         drive_id: driveId,
         client_name: sanitizeString(c.name, 255),
       }));
+      const clientOpts = { select: 'id,client_name' };
       let clientResults;
       try {
-        clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name');
+        clientResults = await supabasePost('clients', clientRows, 'drive_id,client_name', clientOpts);
       } catch (e) {
         console.error('Client batch upsert failed, trying one by one:', e.message);
         clientResults = [];
         for (const row of clientRows) {
           try {
-            const r = await supabasePost('clients', row, 'drive_id,client_name');
+            const r = await supabasePost('clients', row, 'drive_id,client_name', clientOpts);
             if (Array.isArray(r)) clientResults.push(...r);
             else if (r) clientResults.push(r);
           } catch (e2) {
@@ -195,14 +198,26 @@ export default requireApiKey(async function handler(req, res) {
         }
       }
 
-      // Get existing couples for current clients to detect new vs changed
-      const currentClientIds = Object.values(clientMap).filter(Boolean);
-      let existingCouples = [];
-      if (currentClientIds.length > 0) {
-        existingCouples = await supabaseGet(`couples?client_id=in.(${currentClientIds.join(',')})`);
+      // Read this drive's clients + couples ONCE, before the couples upsert,
+      // and only the columns we use. This single snapshot serves both the
+      // new-vs-changed check and the removed-folder check below (previously
+      // the full couples table for the drive was read twice per sync, all
+      // columns). Pre-upsert state gives the same removed set: couples in the
+      // current scan are excluded by currentCoupleKeys either way.
+      const allDriveClients = await supabaseGet(
+        `clients?drive_id=eq.${driveId}&select=id,client_name`
+      ) || [];
+      const allClientIds = allDriveClients.map(c => c.id).filter(Boolean);
+
+      let allDriveCouples = [];
+      if (allClientIds.length > 0) {
+        allDriveCouples = await supabaseGet(
+          `couples?client_id=in.(${allClientIds.join(',')})` +
+            `&select=id,client_id,couple_name,size_bytes,is_present`
+        ) || [];
       }
       const existingMap = {};
-      for (const ec of existingCouples) {
+      for (const ec of allDriveCouples) {
         existingMap[`${ec.client_id}:${ec.couple_name}`] = ec;
       }
 
@@ -214,13 +229,14 @@ export default requireApiKey(async function handler(req, res) {
             row.first_seen = new Date().toISOString();
           }
         }
+        const minimal = { returning: 'minimal' };
         try {
-          await supabasePost('couples', coupleRows, 'client_id,couple_name');
+          await supabasePost('couples', coupleRows, 'client_id,couple_name', minimal);
         } catch (e) {
           console.error('Couple batch upsert failed, trying one by one:', e.message);
           for (const row of coupleRows) {
             try {
-              await supabasePost('couples', row, 'client_id,couple_name');
+              await supabasePost('couples', row, 'client_id,couple_name', minimal);
             } catch (e2) {
               console.error(`Couple upsert failed for ${row.couple_name}:`, e2.message);
             }
@@ -260,16 +276,6 @@ export default requireApiKey(async function handler(req, res) {
         }
       }
 
-      // Get ALL clients for this drive (including ones no longer in scan)
-      const allDriveClients = await supabaseGet(`clients?drive_id=eq.${driveId}`);
-      const allClientIds = allDriveClients.map(c => c.id).filter(Boolean);
-
-      // Get ALL couples for this drive (not just current scan's clients)
-      let allDriveCouples = [];
-      if (allClientIds.length > 0) {
-        allDriveCouples = await supabaseGet(`couples?client_id=in.(${allClientIds.join(',')})`);
-      }
-
       // Build reverse map: client_id -> client_name
       const clientIdToName = {};
       for (const c of allDriveClients) {
@@ -298,7 +304,7 @@ export default requireApiKey(async function handler(req, res) {
             await supabasePatch(`couples?id=eq.${ec.id}`, {
               is_present: false,
               last_seen: new Date().toISOString(),
-            });
+            }, { returning: 'minimal' });
             removedCoupleNames.add(ec.couple_name);
           }
         }
@@ -323,20 +329,25 @@ export default requireApiKey(async function handler(req, res) {
       // Batch insert all history entries
       if (historyEntries.length > 0) {
         try {
-          await supabasePost('history', historyEntries);
+          await supabasePost('history', historyEntries, undefined, { returning: 'minimal' });
         } catch (e) {
           console.error('History batch insert failed:', e.message);
         }
       }
     }
 
-    // Log drive connection
-    await addHistory({
-      drive_id: driveId,
-      volume_label: volumeLabel,
-      event_type: 'drive_connected',
-      details: `Drive scanned from ${machineName}. Added: ${foldersAdded}, Updated: ${foldersUpdated}, Removed: ${foldersRemoved}`,
-    });
+    // Log drive connection — only on a real plug-in or when folders were
+    // added/removed. Previously this wrote a "Drive on" row on EVERY
+    // periodic sync (every 5-10 min per drive, 24/7), flooding History with
+    // no-op entries and burning quota on inserts + History-page reads.
+    if (reason === 'connected' || foldersAdded > 0 || foldersRemoved > 0) {
+      await addHistory({
+        drive_id: driveId,
+        volume_label: volumeLabel,
+        event_type: 'drive_connected',
+        details: `Drive scanned from ${machineName}. Added: ${foldersAdded}, Updated: ${foldersUpdated}, Removed: ${foldersRemoved}`,
+      });
+    }
 
     return res.status(200).json({
       success: true,

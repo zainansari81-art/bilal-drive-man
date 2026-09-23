@@ -2,7 +2,7 @@
 
 > **READ THIS FIRST at the start of every session.** This is the running source of truth for what the project is, how it works, what we've fixed, what's broken, and what's next. Update at the end of every task that changes behavior, ships code, or moves the architecture. CLAUDE.md (in repo root) is for stable conventions. This file is for evolving state.
 
-Last updated: 2026-04-26 — added §0 Standing Operating Procedure.
+Last updated: 2026-09-23 — Supabase free-tier quota fix + Transfers section archived (see §4 top entry).
 
 ---
 
@@ -156,6 +156,16 @@ Built for one user with high reliability requirements. No multi-tenancy, no publ
 ## 4. Recent fixes — running log (most recent first)
 
 > **Format:** `<commit>` — `<date> <author>` — short description. Add an entry every time you push.
+
+- **2026-09-23 mac — Supabase egress quota outage fixed at the source + Transfers archived.**
+  - **Incident:** portal showed no drive details for days. Root cause was NOT code: Supabase (project `dialxndobebudwexsubr`, free plan) was restricted for `exceed_egress_quota` (>5 GB/month out). Reads return HTTP 402 → API routes 500 → empty portal. Writes (heartbeats) still succeeded, so scanners looked alive in their logs. The restriction lifts at the next billing cycle — code changes can't lift it early (only a plan upgrade can). Diagnose with a direct PostgREST GET: the 402 body names the violation.
+  - **Main quota burner:** `/api/sync` ran every 5 min (Mac) / 10 min (Windows) per drive, 24/7, even with nothing changed, and read the drive's full couples list ~3× per run (two all-column reads + `return=representation` echo on the upsert), plus a "Drive on" history row every run.
+  - **Fixes (server):** `supabasePost/Patch` accept `{ returning: 'minimal' | select }`; every write whose result is unused is now `return=minimal` (heartbeat, sync couples/history, download-progress, live progress, command PATCH, notion-sync upsert, addHistory). Sync reads the drive's clients/couples ONCE, column-trimmed. "Drive on" history only on real plug-in (`reason: 'connected'`) or when folders were added/removed. Heartbeat does one `in.()` PATCH for all drives instead of one per drive and can return pending commands (`include_commands`). Dashboard drive tree pulls only rendered columns and filters `is_present=false` couples in the DB (falls back to the old full query if PostgREST rejects it). History read column-trimmed.
+  - **Fixes (scanners — Mac 3.50.0, Windows 3.56.0 via GitHub Actions build):** network loop 10s → 60s (`LOOP_INTERVAL_S`, overrides the `check_interval: 10` pinned in every config.json); one request per loop (commands ride on the heartbeat, GET fallback kept); a drive is re-uploaded only when its folder/size fingerprint changes, it was just plugged in, on manual Scan Now, or every 6h (`SYNC_REFRESH_S`).
+  - **Fixes (portal):** all pollers pause while the tab is hidden (`lib/polling.js`); online window 30/60s → 150s (`ONLINE_WINDOW_MS` in devices.js, `ONLINE_THRESHOLD_S` in LiveMachines) to match the 60s heartbeat; LiveMachines/Devices poll 60s.
+  - **Transfers (Downloading-Pro) ARCHIVED** — Zain only uses drive management. `lib/features.js` → `DOWNLOADING_ENABLED = false` hides the Transfers page + Machines-page download-PC details, stops their polling, and makes heartbeat / `GET /api/download-commands` answer "no commands" without a DB read. Code, routes and tables untouched; flip the flag + redeploy to restore. (If re-enabled: project list polls 30s only while something is queued/downloading/copying, else 2 min; live-progress card polls 30s until a live row exists.)
+  - **Verified:** `npm run build` clean; both scanners `py_compile` clean; fingerprint unit tests; real `sync`/`heartbeat`/`download-commands` handlers run against a mock PostgREST (add/change/remove/return-of-folders, history gating, odd drive labels, archived command path).
+  - **Found, not fixed (separate task):** commit `c12cb4a` (3.52.0 add_to_cloud threading fix) lives only on branch `scanner-3.52.0-add-to-cloud-threading` — never merged to main.
 
 - _(next commit)_ — 2026-05-05 mac — Mac scanner 3.48.0: removed macOS `display notification` popup for low-space warnings (was spamming operator laptops every scan cycle). Warning still logged + portal still shows "X GB left" inline. Added `mac-scanner/bootstrap.sh` for privacy-clean install (downloads only the 3 mac-scanner files, not full repo). Drives page now sorts by fullness descending (most-full at top of each section).
 - `0dac044` — 2026-05-05 mac — Drives page row layout fix: extended grid-template-columns to 6 cols when "Ignore Permanently" button is rendered (was wrapping onto a 2nd row).

@@ -272,13 +272,15 @@ export default requireAuth(async function handler(req, res) {
       for (let i = 0; i < projectRows.length; i += CHUNK_SIZE) {
         const chunk = projectRows.slice(i, i + CHUNK_SIZE);
         try {
-          await supabasePost('download_projects', chunk, 'notion_page_id');
+          // Minimal return: the upserted rows aren't read, and echoing every
+          // project back every 5 min was wasted Supabase egress.
+          await supabasePost('download_projects', chunk, 'notion_page_id', { returning: 'minimal' });
           synced += chunk.length;
         } catch (batchErr) {
           console.error(`Batch upsert failed:`, batchErr.message);
           for (const row of chunk) {
             try {
-              await supabasePost('download_projects', row, 'notion_page_id');
+              await supabasePost('download_projects', row, 'notion_page_id', { returning: 'minimal' });
               synced++;
             } catch (rowErr) {
               errors.push(`${row.couple_name}: ${rowErr.message}`);

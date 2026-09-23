@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { DOWNLOADING_ENABLED } from '../lib/features';
 
 const PAGES = [
   { id: 'dashboard',   glyph: '☰',  label: 'Dashboard' },
@@ -7,7 +8,7 @@ const PAGES = [
   { id: 'downloading', glyph: '↓',  label: 'Transfers' },
   { id: 'search',      glyph: '⌕',  label: 'Search' },
   { id: 'history',     glyph: '⏱',  label: 'History' },
-];
+].filter(p => DOWNLOADING_ENABLED || p.id !== 'downloading'); // Transfers archived
 
 export default function Sidebar({ currentPage, onNavigate, projects }) {
   const activeCount = (projects || []).filter(

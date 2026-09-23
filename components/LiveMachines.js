@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { LED, SectionHead, Empty } from './atoms';
+import { whenVisible } from '../lib/polling';
 
-const REFRESH_MS = 20000;
-const ONLINE_THRESHOLD_S = 60;
+const REFRESH_MS = 60000; // matches the scanners' 60s heartbeat
+// Scanners heartbeat every 60s — keep in step with ONLINE_WINDOW_MS in
+// pages/api/devices.js.
+const ONLINE_THRESHOLD_S = 150;
 
 /**
  * Live machines widget — shows every machine currently sending heartbeats
- * (last_seen ≤ 60s) plus its connected drives. Self-polls every 5s so the
- * dashboard reflects what's actually online right now, independent of the
- * page's main refresh cycle.
+ * (last_seen ≤ 150s) plus its connected drives. Self-polls every 60s while
+ * the tab is visible, independent of the page's main refresh cycle.
  */
 export default function LiveMachines() {
   const [rows, setRows] = useState([]);
@@ -52,7 +54,7 @@ export default function LiveMachines() {
     };
 
     fetchOnce();
-    const id = setInterval(fetchOnce, REFRESH_MS);
+    const id = setInterval(whenVisible(fetchOnce), REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(id);

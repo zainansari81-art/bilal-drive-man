@@ -2,6 +2,11 @@ import { requireAuth } from '../../lib/auth';
 import { supabaseFetch } from '../../lib/supabase';
 import { getDeviceHeartbeats } from './heartbeat';
 
+// Scanners heartbeat every 60s (v3.50.0 Mac / v3.56.0 Windows, down from
+// 10s to stay inside the Supabase free-tier quota). 150s = two missed
+// beats plus slack before a machine is shown offline.
+const ONLINE_WINDOW_MS = 150000;
+
 export default requireAuth(async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -42,7 +47,7 @@ export default requireAuth(async function handler(req, res) {
         const existingTs = machines[name].lastSeen ? new Date(machines[name].lastSeen).getTime() : 0;
         if (ts > existingTs) {
           machines[name].lastSeen = m.last_seen;
-          machines[name].isOnline = (now - ts) < 60000; // 60s freshness window
+          machines[name].isOnline = (now - ts) < ONLINE_WINDOW_MS;
         }
       }
     }
@@ -55,7 +60,7 @@ export default requireAuth(async function handler(req, res) {
       machines[name].platform = hb.platform;
       machines[name].lastSeen = hb.lastHeartbeat;
       const age = now - new Date(hb.lastHeartbeat).getTime();
-      machines[name].isOnline = age < 30000;
+      machines[name].isOnline = age < ONLINE_WINDOW_MS;
       if (hb.scannerVersion) machines[name].scannerVersion = hb.scannerVersion;
     }
 

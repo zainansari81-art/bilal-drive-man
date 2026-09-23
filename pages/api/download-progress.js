@@ -74,7 +74,9 @@ export default requireApiKey(async function handler(req, res) {
       }
     }
 
-    const updated = await supabasePatch(`download_projects?id=eq.${project_id}`, updateBody);
+    // Minimal return: scanners ignore this response, and echoing the full
+    // project row back on every progress tick was pure Supabase egress.
+    await supabasePatch(`download_projects?id=eq.${project_id}`, updateBody, { returning: 'minimal' });
 
     // Race-guard: when scanner tells us the resolved cloud_folder_path in the
     // same call that completes add_to_cloud, the start_download command that
@@ -182,7 +184,7 @@ export default requireApiKey(async function handler(req, res) {
       }
     }
 
-    return res.status(200).json(updated);
+    return res.status(200).json({ success: true });
   } catch (err) {
     console.error('Download Progress API error:', err);
     return res.status(500).json({ error: 'Internal server error' });

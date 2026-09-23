@@ -1,13 +1,19 @@
 // LiveDownloadProgress — high-cadence progress card (v3.53.0 + console-ui restyle).
 //
-// Polls /api/download-progress-live every 1500ms while status === 'downloading'.
+// Polls /api/download-progress-live while status === 'downloading': every 5s
+// once a live row exists, every 30s until then; paused while the tab is hidden.
 // Renders nothing when the live row doesn't exist (scanner off, or pre-feature build).
 // Restyled chrome to match .live-detail from styles/globals.css (console.css).
 
 import { useEffect, useRef, useState } from 'react';
 import { formatSize } from '../lib/format';
+import { whenVisible } from '../lib/polling';
 
 const POLL_INTERVAL_MS = 5000;
+// The scanner's live emitter is opt-in (LIVE_PROGRESS_ENABLED), so most
+// downloads never get a live row. Until one appears, check every 30s instead
+// of every 5s — the card shows up within 30s of live data starting.
+const NO_LIVE_ROW_POLL_INTERVAL_MS = 30000;
 
 function formatSpeed(bps) {
   if (!bps || bps <= 0) return '—';
@@ -63,14 +69,22 @@ export default function LiveDownloadProgress({ projectId, status }) {
     };
 
     const isActive = status === 'downloading';
-    tick();
-    if (isActive) {
-      timer = setInterval(tick, POLL_INTERVAL_MS);
-    }
+    const pollTick = whenVisible(tick);
+    // setTimeout chain (not setInterval) so the delay can follow whether a
+    // live row exists yet.
+    const scheduleNext = () => {
+      if (cancelled || !isActive) return;
+      const delay = lastSeenRef.current ? POLL_INTERVAL_MS : NO_LIVE_ROW_POLL_INTERVAL_MS;
+      timer = setTimeout(async () => {
+        await pollTick();
+        scheduleNext();
+      }, delay);
+    };
+    tick().then(scheduleNext);
 
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      if (timer) clearTimeout(timer);
     };
   }, [projectId, status]);
 

@@ -1,5 +1,6 @@
 import { supabaseFetch, supabasePost, supabasePatch } from '../../lib/supabase';
 import { requireAuth, requireApiKey, sanitizeString } from '../../lib/auth';
+import { DOWNLOADING_ENABLED } from '../../lib/features';
 
 async function handler(req, res) {
   try {
@@ -8,6 +9,11 @@ async function handler(req, res) {
       const { machine } = req.query;
       if (!machine) {
         return res.status(400).json({ error: 'Missing required query parameter: machine' });
+      }
+      // Transfers archived (lib/features.js): skip the DB read. Pre-3.50
+      // scanners still poll this every 10s until they auto-update.
+      if (!DOWNLOADING_ENABLED) {
+        return res.status(200).json([]);
       }
 
       const commands = await supabaseFetch(
@@ -51,8 +57,9 @@ async function handler(req, res) {
         updateBody.error_message = sanitizeString(error_message, 1024);
       }
 
-      const updated = await supabasePatch(`download_commands?id=eq.${id}`, updateBody);
-      return res.status(200).json(updated);
+      // Scanners ignore the response — don't pay egress to echo the row.
+      await supabasePatch(`download_commands?id=eq.${id}`, updateBody, { returning: 'minimal' });
+      return res.status(200).json({ success: true });
     }
 
     res.setHeader('Allow', ['GET', 'POST', 'PATCH']);

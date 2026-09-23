@@ -2231,7 +2231,35 @@ def get_machine_name():
     return os.environ.get('COMPUTERNAME', socket.gethostname())
 
 
-def sync_drive(config, drive_info, clients):
+# v3.56.0: stay inside the Supabase free tier (5 GB/month egress). The
+# network loop runs every LOOP_INTERVAL_S (was 10s), and a drive is only
+# re-uploaded when its folders/sizes change, it was just plugged in, or
+# SYNC_REFRESH_S has passed. Every sync makes the portal re-read the drive's
+# whole folder list from Supabase, so the old unchanged 10-minute re-syncs
+# were the main quota burner.
+LOOP_INTERVAL_S = 60
+SYNC_REFRESH_S = 6 * 3600
+
+
+def sync_fingerprint(drive_info, clients):
+    """Hash of what a sync uploads that the portal shows. Order-independent;
+    used bytes bucketed to 1 GB so small fluctuations don't force a sync."""
+    used_gb = int((drive_info.get('used') or 0) // (1024 ** 3))
+    normalized = sorted(
+        (
+            client.get('name', ''),
+            sorted(
+                (couple.get('name', ''), couple.get('size', 0), couple.get('file_count', 0))
+                for couple in client.get('couples', [])
+            ),
+        )
+        for client in clients
+    )
+    payload = json.dumps([used_gb, normalized], default=str)
+    return hashlib.sha1(payload.encode('utf-8')).hexdigest()
+
+
+def sync_drive(config, drive_info, clients, reason=None):
     """Push drive data to the online dashboard."""
     data = {
         'drive': {
@@ -2244,6 +2272,8 @@ def sync_drive(config, drive_info, clients):
         },
         'clients': clients,
     }
+    if reason:
+        data['reason'] = reason
 
     result = api_request(config, 'sync', data)
     if result and result.get('success'):
@@ -2268,8 +2298,19 @@ def send_heartbeat(config, connected_drive_labels):
         'dropbox_path': config.get('dropbox_path', ''),
         'gdrive_path': config.get('gdrive_path', ''),
         'scanner_version': VERSION,
+        # v3.56.0: ask for pending commands in the same round-trip
+        'include_commands': True,
     }
-    api_request(config, 'heartbeat', data)
+    return api_request(config, 'heartbeat', data)
+
+
+def commands_from_heartbeat(result):
+    """Pending commands piggybacked on the heartbeat response, or None when
+    the portal didn't include them (older deploy / fetch failed) so the
+    caller falls back to GET /api/download-commands."""
+    if isinstance(result, dict) and isinstance(result.get('commands'), list):
+        return result['commands']
+    return None
 
 
 def disconnect_drive(config, volume_label):
@@ -2355,10 +2396,12 @@ def _get_cancel_event(project_id):
         return _CANCEL_EVENTS.get(project_id)
 
 
-def poll_download_commands(config, known_drives):
-    """Check for pending download commands from the dashboard."""
-    machine = get_machine_name()
-    commands = api_get(config, f'download-commands?machine={machine}')
+def poll_download_commands(config, known_drives, commands=None):
+    """Run pending download commands from the dashboard. `commands` comes
+    from the heartbeat response when available; otherwise fetch them."""
+    if commands is None:
+        machine = get_machine_name()
+        commands = api_get(config, f'download-commands?machine={machine}')
     if not commands or not isinstance(commands, list):
         return
 
@@ -3345,6 +3388,8 @@ class DriveMonitor:
         self.running = False
         self.known_drives = {}
         self.last_scan = {}
+        self.last_sync_fp = {}  # { drive_label: fingerprint of last successful sync }
+        self.last_sync_at = {}  # { drive_label: time of last successful sync }
         self.last_update_check = 0
         self.on_status = on_status
 
@@ -3453,7 +3498,10 @@ class DriveMonitor:
                 self._check()
             except Exception as e:
                 logging.error(f"Monitor error: {e}")
-            time.sleep(self.config.get('check_interval', 10))
+            # config.json on every PC pins check_interval=10 (DEFAULT_CONFIG
+            # is saved on first run); never go below LOOP_INTERVAL_S or the
+            # quota fix silently doesn't apply.
+            time.sleep(max(self.config.get('check_interval', 10), LOOP_INTERVAL_S))
 
     def _check(self):
         current = get_external_drives()
@@ -3466,13 +3514,14 @@ class DriveMonitor:
                 disconnect_drive(self.config, label)
                 # Clear last_scan so reconnect triggers immediate rescan
                 self.last_scan.pop(label, None)
+                self.last_sync_fp.pop(label, None)
 
         # New or reconnected drives
         for drive in current:
             label = drive['label']
             if label not in self.known_drives:
                 self.status(f"Drive connected: {label} ({drive['letter']})")
-                self._scan_and_sync(drive)
+                self._scan_and_sync(drive, reason='connected')
 
         # Periodic rescan (every scan_interval seconds)
         for drive in current:
@@ -3484,11 +3533,14 @@ class DriveMonitor:
 
         # Send heartbeat
         connected_labels = [d['label'] for d in current]
-        send_heartbeat(self.config, connected_labels)
+        heartbeat_result = send_heartbeat(self.config, connected_labels)
 
-        # Poll for download commands from dashboard
+        # Run download commands from dashboard (delivered with the heartbeat)
         try:
-            poll_download_commands(self.config, self.known_drives)
+            poll_download_commands(
+                self.config, self.known_drives,
+                commands=commands_from_heartbeat(heartbeat_result),
+            )
         except Exception as e:
             logging.error(f"Download command poll error: {e}")
 
@@ -3497,7 +3549,7 @@ class DriveMonitor:
             self.last_update_check = time.time()
             threading.Thread(target=auto_update, daemon=True).start()
 
-    def _scan_and_sync(self, drive):
+    def _scan_and_sync(self, drive, reason=None, force=False):
         # Set low I/O priority so scanning doesn't block file copies
         try:
             import ctypes
@@ -3514,13 +3566,25 @@ class DriveMonitor:
         total_couples = sum(len(c['couples']) for c in clients)
         self.status(f"Found {len(clients)} clients, {total_couples} couples on {drive['label']}")
 
-        self.status(f"Syncing {drive['label']} to dashboard...")
-        success = sync_drive(self.config, drive, clients)
-
-        if success:
-            self.status(f"Synced {drive['label']} successfully")
+        label = drive['label']
+        fingerprint = sync_fingerprint(drive, clients)
+        unchanged = (
+            not force
+            and reason != 'connected'
+            and self.last_sync_fp.get(label) == fingerprint
+            and time.time() - self.last_sync_at.get(label, 0) < SYNC_REFRESH_S
+        )
+        if unchanged:
+            logging.debug(f"No changes on {label} since last sync — skipping upload")
         else:
-            self.status(f"Failed to sync {drive['label']} - will retry")
+            self.status(f"Syncing {label} to dashboard...")
+            success = sync_drive(self.config, drive, clients, reason=reason)
+            if success:
+                self.last_sync_fp[label] = fingerprint
+                self.last_sync_at[label] = time.time()
+                self.status(f"Synced {label} successfully")
+            else:
+                self.status(f"Failed to sync {label} - will retry")
 
         self.last_scan[drive['label']] = time.time()
 
@@ -3532,9 +3596,10 @@ class DriveMonitor:
             )
 
     def _scan_all(self):
+        # Manual "Scan Now": always upload, even if unchanged.
         drives = get_external_drives()
         for drive in drives:
-            self._scan_and_sync(drive)
+            self._scan_and_sync(drive, force=True)
 
 
 # ─── System Tray GUI ────────────────────────────────────────────────────────
